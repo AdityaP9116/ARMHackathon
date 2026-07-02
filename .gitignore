@@ -1,0 +1,39 @@
+# Rust
+/target/
+**/target/
+Cargo.lock
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# Build / native
+*.so
+*.dylib
+*.dll
+*.o
+*.a
+build/
+
+# Models / data (do not commit large weights or MRI data)
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+/data/
+/models/
+/checkpoints/
+
+# Benchmark outputs
+*.csv
+*.log
+/results/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
