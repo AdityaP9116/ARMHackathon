@@ -1,0 +1,22 @@
+[package]
+name = "arm-scan-core"
+description = "Arm-optimized Mamba selective-scan kernel (core library)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# The kernel itself is dependency-free. rayon lands in Phase 3.
+[dependencies]
+
+[dev-dependencies]
+ndarray = "0.16"
+ndarray-npy = { version = "0.9", features = ["npz"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+proptest = "1"
+criterion = "0.5"
+
+[[bench]]
+name = "scan"
+harness = false

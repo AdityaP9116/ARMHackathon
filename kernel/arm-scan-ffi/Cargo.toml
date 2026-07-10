@@ -1,0 +1,13 @@
+[package]
+name = "arm-scan-ffi"
+description = "C-ABI shim exposing arm-scan-core to Python/PyTorch"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+arm-scan-core = { path = "../arm-scan-core" }
