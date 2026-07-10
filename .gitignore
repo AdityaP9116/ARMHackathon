@@ -28,6 +28,10 @@ build/
 /models/
 /checkpoints/
 
+# Golden vectors: core cases ARE committed; large benchmark-shaped ones are
+# regenerated on demand via `python tests/gen_golden.py --large`
+tests/golden/large_*.npz
+
 # Benchmark outputs
 *.csv
 *.log
