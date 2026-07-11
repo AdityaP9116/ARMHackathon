@@ -9,7 +9,7 @@ use ndarray::{ArrayD, IxDyn, OwnedRepr};
 use ndarray_npy::NpzReader;
 use serde::Deserialize;
 
-use arm_scan_core::{selective_scan, ScanDims, ScanInput};
+use arm_scan_core::{selective_scan_with_backend, Backend, ScanDims, ScanInput};
 
 /// Kernel acceptance tolerance from INTEGRATION_PLAN.md.
 const MAX_ABS: f64 = 1e-4;
@@ -47,7 +47,13 @@ fn to_vec_f32(a: ArrayD<f32>) -> Vec<f32> {
     a.as_standard_layout().iter().copied().collect()
 }
 
-fn run_case(meta: &CaseMeta) -> (f64, f64) {
+struct CaseResult {
+    out: Vec<f32>,
+    out_err: f64,
+    last_rel_err: f64,
+}
+
+fn run_case(meta: &CaseMeta, backend: Backend) -> CaseResult {
     let path = golden_dir().join(format!("{}.npz", meta.name));
     let mut npz = NpzReader::new(
         File::open(&path).unwrap_or_else(|e| panic!("cannot open {}: {e}", path.display())),
@@ -85,7 +91,8 @@ fn run_case(meta: &CaseMeta) -> (f64, f64) {
     };
     let mut out = vec![0.0_f32; dims.batch * dims.dim * dims.len];
     let mut last = vec![0.0_f32; dims.batch * dims.dim * dims.state];
-    selective_scan(&dims, &input, &mut out, Some(&mut last)).expect("scan failed");
+    selective_scan_with_backend(&dims, &input, &mut out, Some(&mut last), backend)
+        .expect("scan failed");
 
     let out_err = out
         .iter()
@@ -100,7 +107,11 @@ fn run_case(meta: &CaseMeta) -> (f64, f64) {
         .map(|(k, r)| (*k as f64 - r).abs())
         .fold(0.0_f64, f64::max)
         / last_scale;
-    (out_err, last_err)
+    CaseResult {
+        out,
+        out_err,
+        last_rel_err: last_err,
+    }
 }
 
 #[test]
@@ -116,20 +127,44 @@ fn all_golden_cases() {
         .expect("bad manifest");
     assert!(!manifest.is_empty(), "empty manifest");
 
+    let auto_is_neon = cfg!(target_arch = "aarch64");
+    println!(
+        "backend Auto resolves to {} on this host",
+        if auto_is_neon { "NEON" } else { "scalar" }
+    );
+
     let mut failures = Vec::new();
     for meta in &manifest {
-        let (out_err, last_rel_err) = run_case(meta);
+        let scalar = run_case(meta, Backend::Scalar);
+        let auto = run_case(meta, Backend::Auto);
+
+        // parity between the dispatched backend and the scalar baseline
+        // (on aarch64 this is the NEON-vs-scalar cross-check on real data)
+        let out_scale = auto.out.iter().fold(1.0_f32, |m, v| m.max(v.abs())) as f64;
+        let parity = scalar
+            .out
+            .iter()
+            .zip(auto.out.iter())
+            .map(|(s, a)| (*s as f64 - *a as f64).abs())
+            .fold(0.0_f64, f64::max)
+            / out_scale;
+
         let floor_bound = (FLOOR_FACTOR * meta.f32_max_abs_err).max(1e-6);
-        let ok = out_err < MAX_ABS && out_err < floor_bound && last_rel_err < 1e-4;
+        let ok = |r: &CaseResult| {
+            r.out_err < MAX_ABS && r.out_err < floor_bound && r.last_rel_err < 1e-4
+        };
+        let pass = ok(&scalar) && ok(&auto) && parity < 1e-5;
         println!(
-            "  {:24} out_max_abs={:.3e} (floor {:.3e})  last_rel={:.3e}  {}",
+            "  {:24} scalar={:.3e} auto={:.3e} (floor {:.3e})  parity={:.3e}  last_rel={:.3e}  {}",
             meta.name,
-            out_err,
+            scalar.out_err,
+            auto.out_err,
             meta.f32_max_abs_err,
-            last_rel_err,
-            if ok { "ok" } else { "FAIL" }
+            parity,
+            auto.last_rel_err,
+            if pass { "ok" } else { "FAIL" }
         );
-        if !ok {
+        if !pass {
             failures.push(meta.name.clone());
         }
     }

@@ -5,7 +5,7 @@
 
 use proptest::prelude::*;
 
-use arm_scan_core::{selective_scan, ScanDims, ScanInput};
+use arm_scan_core::{selective_scan, selective_scan_with_backend, Backend, ScanDims, ScanInput};
 
 #[derive(Debug, Clone)]
 struct Case {
@@ -141,6 +141,87 @@ proptest! {
             );
             prop_assert!(k.is_finite(), "non-finite output at {i}: {k}");
         }
+    }
+
+    /// Dispatched backend (NEON on aarch64) vs scalar, on the same f32
+    /// inputs. Differences come only from the polynomial exp and 4-lane
+    /// summation order, so the scale-relative gap must stay tiny.
+    #[test]
+    fn auto_backend_matches_scalar(case in case_strategy()) {
+        let n_out = case.dims.batch * case.dims.dim * case.dims.len;
+        let n_last = case.dims.batch * case.dims.dim * case.dims.state;
+        let input = ScanInput {
+            u: &case.u, delta: &case.delta, a: &case.a, b: &case.b,
+            c: &case.c,
+            d_skip: case.d_skip.as_deref(),
+            z: case.z.as_deref(),
+            delta_bias: case.delta_bias.as_deref(),
+            delta_softplus: case.delta_softplus,
+        };
+
+        let mut out_scalar = vec![0.0_f32; n_out];
+        let mut last_scalar = vec![0.0_f32; n_last];
+        selective_scan_with_backend(
+            &case.dims, &input, &mut out_scalar, Some(&mut last_scalar),
+            Backend::Scalar,
+        ).unwrap();
+
+        let mut out_auto = vec![0.0_f32; n_out];
+        let mut last_auto = vec![0.0_f32; n_last];
+        selective_scan_with_backend(
+            &case.dims, &input, &mut out_auto, Some(&mut last_auto),
+            Backend::Auto,
+        ).unwrap();
+
+        let scale = out_scalar.iter().fold(1.0_f32, |m, v| m.max(v.abs()));
+        for (i, (s, a)) in out_scalar.iter().zip(out_auto.iter()).enumerate() {
+            let rel = (s - a).abs() / scale;
+            prop_assert!(
+                rel < 1e-5,
+                "out idx {i}: scalar={s} auto={a} rel={rel:.3e} dims={:?}",
+                case.dims
+            );
+        }
+        let ls_scale = last_scalar.iter().fold(1.0_f32, |m, v| m.max(v.abs()));
+        for (i, (s, a)) in last_scalar.iter().zip(last_auto.iter()).enumerate() {
+            let rel = (s - a).abs() / ls_scale;
+            prop_assert!(
+                rel < 1e-5,
+                "last_state idx {i}: scalar={s} auto={a} rel={rel:.3e}",
+            );
+        }
+    }
+}
+
+/// Explicitly requesting NEON must work on aarch64 and error elsewhere.
+#[test]
+fn neon_backend_availability() {
+    use arm_scan_core::ScanError;
+    let dims = ScanDims {
+        batch: 1,
+        dim: 1,
+        len: 1,
+        state: 1,
+        groups: 1,
+    };
+    let one = [0.5_f32];
+    let input = ScanInput {
+        u: &one,
+        delta: &one,
+        a: &[-1.0],
+        b: &one,
+        c: &one,
+        d_skip: None,
+        z: None,
+        delta_bias: None,
+        delta_softplus: false,
+    };
+    let mut out = [0.0_f32];
+    let res = selective_scan_with_backend(&dims, &input, &mut out, None, Backend::Neon);
+    if cfg!(target_arch = "aarch64") {
+        assert!(res.is_ok(), "NEON must be available on aarch64: {res:?}");
+    } else {
+        assert_eq!(res, Err(ScanError::BackendUnavailable(Backend::Neon)));
     }
 }
 

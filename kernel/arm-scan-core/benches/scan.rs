@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
-use arm_scan_core::{selective_scan, ScanDims, ScanInput};
+use arm_scan_core::{selective_scan_with_backend, Backend, ScanDims, ScanInput};
 
 /// Deterministic pseudo-random fill (xorshift), no rand dependency.
 fn fill(v: &mut [f32], mut seed: u32, lo: f32, hi: f32) {
@@ -21,11 +21,15 @@ fn fill(v: &mut [f32], mut seed: u32, lo: f32, hi: f32) {
 }
 
 fn bench_scan(crit: &mut Criterion) {
-    let mut group = crit.benchmark_group("selective_scan_scalar");
+    let mut group = crit.benchmark_group("selective_scan");
     group
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(3))
         .sample_size(10);
+
+    // On aarch64 this shows the scalar -> NEON rung of the optimization
+    // ladder; on x86 both rows are the scalar fallback.
+    let backends = [(Backend::Scalar, "scalar"), (Backend::Auto, "auto")];
 
     // (label, B, D, L, N)
     let shapes = [
@@ -76,12 +80,14 @@ fn bench_scan(crit: &mut Criterion) {
 
         // element-throughput: B*D*L cells, each doing N exp+FMA lanes
         group.throughput(Throughput::Elements(bdl as u64));
-        group.bench_with_input(BenchmarkId::from_parameter(label), &dims, |bch, dims| {
-            bch.iter(|| {
-                selective_scan(dims, &input, &mut out, None).unwrap();
-                std::hint::black_box(&out);
+        for (backend, bname) in backends {
+            group.bench_with_input(BenchmarkId::new(bname, label), &dims, |bch, dims| {
+                bch.iter(|| {
+                    selective_scan_with_backend(dims, &input, &mut out, None, backend).unwrap();
+                    std::hint::black_box(&out);
+                });
             });
-        });
+        }
     }
     group.finish();
 }

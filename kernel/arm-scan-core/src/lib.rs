@@ -16,9 +16,25 @@
 //!   last_state       : (batch, dim, state)
 
 mod float;
+#[cfg(target_arch = "aarch64")]
+mod neon;
 mod scalar;
 
 pub use float::Float;
+
+/// Which implementation to run. `Auto` picks the fastest correct backend
+/// for the platform and element type; the explicit variants exist for A/B
+/// parity testing and benchmark ladders.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Backend {
+    /// NEON for f32 on aarch64, scalar otherwise.
+    Auto,
+    /// Portable scalar implementation (any platform, f32 or f64).
+    Scalar,
+    /// NEON implementation. Errors with [`ScanError::BackendUnavailable`]
+    /// off aarch64 or for non-f32 element types.
+    Neon,
+}
 
 /// Problem dimensions. `groups` must divide `dim`; channel `d` reads
 /// b/c group `d / (dim / groups)` (matches `repeat_interleave` upstream).
@@ -59,6 +75,8 @@ pub enum ScanError {
         expected: usize,
         got: usize,
     },
+    /// The requested backend cannot run on this platform / element type.
+    BackendUnavailable(Backend),
 }
 
 impl core::fmt::Display for ScanError {
@@ -76,6 +94,12 @@ impl core::fmt::Display for ScanError {
                 write!(
                     f,
                     "tensor `{tensor}` has {got} elements, expected {expected}"
+                )
+            }
+            ScanError::BackendUnavailable(b) => {
+                write!(
+                    f,
+                    "backend {b:?} is unavailable on this platform/element type"
                 )
             }
         }
@@ -154,18 +178,89 @@ fn validate<T>(
     Ok(())
 }
 
-/// Run the selective scan. Writes the gated output into `out` and, when
-/// requested, the final SSM state into `last_state`.
-///
-/// This is the scalar implementation; NEON/chunked/threaded variants slot
-/// in behind this same signature in later phases.
+/// Run the selective scan with the best backend for this platform.
+/// Writes the gated output into `out` and, when requested, the final SSM
+/// state into `last_state`.
 pub fn selective_scan<T: Float>(
     dims: &ScanDims,
     input: &ScanInput<'_, T>,
     out: &mut [T],
     last_state: Option<&mut [T]>,
 ) -> Result<(), ScanError> {
+    selective_scan_with_backend(dims, input, out, last_state, Backend::Auto)
+}
+
+/// Run the selective scan on an explicitly chosen backend (for parity
+/// tests and benchmark ladders; use [`selective_scan`] otherwise).
+pub fn selective_scan_with_backend<T: Float>(
+    dims: &ScanDims,
+    input: &ScanInput<'_, T>,
+    out: &mut [T],
+    // `mut` is only exercised by the aarch64 NEON dispatch below
+    #[cfg_attr(not(target_arch = "aarch64"), allow(unused_mut))] mut last_state: Option<&mut [T]>,
+    backend: Backend,
+) -> Result<(), ScanError> {
     validate(dims, input, out, last_state.as_deref())?;
-    scalar::scan(dims, input, out, last_state);
-    Ok(())
+    match backend {
+        Backend::Scalar => {
+            scalar::scan(dims, input, out, last_state);
+            Ok(())
+        }
+        Backend::Auto => {
+            #[cfg(target_arch = "aarch64")]
+            if try_neon(dims, input, out, &mut last_state) {
+                return Ok(());
+            }
+            scalar::scan(dims, input, out, last_state);
+            Ok(())
+        }
+        Backend::Neon => {
+            #[cfg(target_arch = "aarch64")]
+            if try_neon(dims, input, out, &mut last_state) {
+                return Ok(());
+            }
+            Err(ScanError::BackendUnavailable(Backend::Neon))
+        }
+    }
+}
+
+/// Route to the NEON implementation when `T` is f32. The `TypeId` check
+/// proves `T == f32`, making the slice reinterpretations sound.
+#[cfg(target_arch = "aarch64")]
+fn try_neon<T: Float>(
+    dims: &ScanDims,
+    input: &ScanInput<'_, T>,
+    out: &mut [T],
+    last_state: &mut Option<&mut [T]>,
+) -> bool {
+    use core::any::TypeId;
+    if TypeId::of::<T>() != TypeId::of::<f32>() {
+        return false;
+    }
+    fn cast<T: 'static>(s: &[T]) -> &[f32] {
+        // SAFETY: caller verified T == f32; same pointer, same length.
+        unsafe { core::slice::from_raw_parts(s.as_ptr().cast::<f32>(), s.len()) }
+    }
+    fn cast_mut<T: 'static>(s: &mut [T]) -> &mut [f32] {
+        // SAFETY: as above.
+        unsafe { core::slice::from_raw_parts_mut(s.as_mut_ptr().cast::<f32>(), s.len()) }
+    }
+    let input_f32 = ScanInput {
+        u: cast(input.u),
+        delta: cast(input.delta),
+        a: cast(input.a),
+        b: cast(input.b),
+        c: cast(input.c),
+        d_skip: input.d_skip.map(cast),
+        z: input.z.map(cast),
+        delta_bias: input.delta_bias.map(cast),
+        delta_softplus: input.delta_softplus,
+    };
+    neon::scan(
+        dims,
+        &input_f32,
+        cast_mut(out),
+        last_state.as_deref_mut().map(cast_mut),
+    );
+    true
 }
