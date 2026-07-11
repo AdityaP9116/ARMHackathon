@@ -106,11 +106,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: kernel
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Build FFI cdylib
         run: cargo build --release -p arm-scan-ffi
       - name: Build wheel
         working-directory: .
-        run: python3 scripts/build_wheel.py
+        run: |
+          set -o pipefail
+          python3 -m pip install --quiet --upgrade pip setuptools wheel
+          python3 scripts/build_wheel.py 2>&1 | tee wheel-build.log
       - name: Install wheel into clean venv and golden-check it
         working-directory: .
         run: |
@@ -123,3 +129,17 @@ jobs:
           name: arm-scan-wheel-${{ matrix.name }}
           path: python/dist/*.whl
           if-no-files-found: error
+      - name: Publish wheel failure log
+        if: failure() && github.event_name == 'push'
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "## wheel (${{ matrix.name }}) FAILED (${{ github.sha }})"
+            echo '```'
+            tail -60 wheel-build.log 2>/dev/null || echo "(no build log)"
+            echo '```'
+          } > wheel-fail.md
+          gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" \
+            -f body="$(cat wheel-fail.md)" --silent || true
