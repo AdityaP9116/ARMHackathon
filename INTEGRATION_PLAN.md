@@ -197,8 +197,13 @@ call counter), under both eager and `torch.compile`.
 
 ### Phase 5 — Packaging & CI (week 3–4, overlaps)
 
-1. **Wheels via maturin** (`maturin build --release`), `manylinux_2_28_aarch64` +
-   `macosx_arm64`. GitHub Actions matrix:
+1. **Wheels** — *implemented with setuptools rather than maturin*: the
+   Python layer is ctypes over a plain C ABI (no pyo3), so a single
+   `py3-none-<platform>` wheel with the prebuilt cdylib as package data
+   covers every Python version per platform — simpler than maturin and
+   strictly fewer builds. Tags: `manylinux_<glibc>_aarch64` (honest floor
+   of the build host), `macosx_11_0_arm64`, plus an x86 dev wheel.
+   GitHub Actions matrix:
    - `ubuntu-24.04-arm`: cargo test, clippy, golden tests, wheel build.
    - `macos-14` (Apple Silicon): cargo test + wheel.
    - `ubuntu-latest` (x86): scalar-path correctness only (keeps the safety net cheap).

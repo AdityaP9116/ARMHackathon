@@ -12,13 +12,17 @@ Usage:
 """
 
 import json
+import os
 import sys
 from pathlib import Path
 
 import numpy as np
 
 REPO = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO / "python"))
+# ARM_SCAN_INSTALLED=1 tests a pip-installed arm-scan wheel instead of the
+# in-repo package (the wheel job's mode)
+if not os.environ.get("ARM_SCAN_INSTALLED"):
+    sys.path.insert(0, str(REPO / "python"))
 
 import arm_scan  # noqa: E402
 

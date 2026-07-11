@@ -37,6 +37,10 @@ tests/golden/large_*.npz
 *.log
 /results/
 
+# Wheel build outputs
+python/dist/
+wheel-test-env/
+
 # OS / editor
 .DS_Store
 .idea/

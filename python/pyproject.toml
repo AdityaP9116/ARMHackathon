@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "arm-scan"
+version = "0.1.0"
+description = "Arm-optimized Mamba selective scan for the PyTorch ecosystem"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Aditya Patra" }]
+keywords = ["mamba", "ssm", "arm", "neon", "selective-scan", "pytorch"]
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+# numpy is the only hard dependency; torch is opt-in so the numpy-only
+# front-end stays lightweight
+dependencies = ["numpy>=1.22"]
+
+[project.optional-dependencies]
+# torch.library.custom_op floor
+torch = ["torch>=2.4"]
+
+[project.urls]
+Repository = "https://github.com/AdityaP9116/ARMHackathon"
+
+[tool.setuptools]
+packages = ["arm_scan"]
+
+[tool.setuptools.package-data]
+# the prebuilt cdylib, copied in by scripts/build_wheel.py
+arm_scan = ["*.so", "*.dylib", "*.dll"]

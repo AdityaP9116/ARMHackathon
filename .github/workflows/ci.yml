@@ -84,3 +84,42 @@ jobs:
           cat results.md >> "$GITHUB_STEP_SUMMARY"
           gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" \
             -f body="$(cat results.md)" --silent || echo "commit comment failed (non-fatal)"
+
+  wheels:
+    name: wheel (${{ matrix.name }})
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 22.04 for a broader glibc floor (manylinux_2_35) than 24.04
+          - { os: ubuntu-22.04-arm, name: linux-arm64 }
+          - { os: macos-14, name: macos-arm64 }
+          # x86 dev-convenience wheel (scalar backend)
+          - { os: ubuntu-22.04, name: linux-x86_64 }
+    runs-on: ${{ matrix.os }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: kernel
+      - name: Build FFI cdylib
+        run: cargo build --release -p arm-scan-ffi
+      - name: Build wheel
+        working-directory: .
+        run: python3 scripts/build_wheel.py
+      - name: Install wheel into clean venv and golden-check it
+        working-directory: .
+        run: |
+          python3 -m venv wheel-test-env
+          wheel-test-env/bin/pip install --quiet python/dist/arm_scan-*.whl
+          ARM_SCAN_INSTALLED=1 wheel-test-env/bin/python tests/check_ffi.py
+          wheel-test-env/bin/python -c "import arm_scan; p=str(arm_scan.lib_path()); print('installed kernel:', p); assert 'site-packages' in p, 'wheel test resolved the repo library, not the installed one'"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arm-scan-wheel-${{ matrix.name }}
+          path: python/dist/*.whl
+          if-no-files-found: error
