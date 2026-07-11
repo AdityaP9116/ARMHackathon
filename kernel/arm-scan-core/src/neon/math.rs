@@ -136,14 +136,20 @@ mod tests {
             worst = worst.max(err);
             assert!(err < 1e-6, "ln({x}) got {got} expect {expect}");
         }
-        // coarse over positive normals
+        // coarse over positive normals. NB: the sweep crosses x = 1.0
+        // exactly (i = 50_000), where ln = 0 — the error metric must switch
+        // to absolute there or the relative form divides by zero.
         for i in 0..100_000_usize {
             let x = f32::exp2(-120.0 + 240.0 * i as f32 / 100_000.0);
             let got = apply4(vlogq_f32, [x; 4])[0] as f64;
             let expect = (x as f64).ln();
-            let rel = ((got - expect) / expect).abs();
-            worst = worst.max(rel);
-            assert!(rel < 1e-6, "ln({x:e}) got {got} expect {expect}");
+            let err = if expect.abs() < 1e-3 {
+                (got - expect).abs()
+            } else {
+                ((got - expect) / expect).abs()
+            };
+            worst = worst.max(err);
+            assert!(err < 1e-6, "ln({x:e}) got {got} expect {expect}");
         }
         println!("vlogq_f32 worst error: {worst:.3e}");
     }
