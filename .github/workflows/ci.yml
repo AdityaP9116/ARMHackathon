@@ -48,24 +48,29 @@ jobs:
           set -o pipefail
           cargo bench | tee bench-output.txt
       - name: Publish arm64 results (commit comment + job summary)
-        if: matrix.name == 'linux-arm64' && github.event_name == 'push'
+        if: always() && matrix.name == 'linux-arm64' && github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           {
             echo "## arm64 CI results (${{ github.sha }})"
             echo
+            echo '### Failures (empty when green)'
+            echo '```'
+            grep -E "FAILED|panicked|assertion" test-output.txt | head -40 || true
+            sed -n '/^failures:$/,/test result/p' test-output.txt | head -80 || true
+            echo '```'
             echo '### Golden cases (backend errors vs f64 reference, NEON/scalar parity)'
             echo '```'
             grep -E "backend Auto resolves|scalar=.*auto=" test-output.txt || true
             echo '```'
-            echo '### vexpq_f32 accuracy'
+            echo '### NEON math accuracy'
             echo '```'
-            grep "worst relative error" test-output.txt || true
+            grep -E "worst relative error|worst error" test-output.txt || true
             echo '```'
             echo '### Bench ladder'
             echo '```'
-            grep -E "selective_scan/|time:|thrpt:" bench-output.txt || true
+            grep -E "selective_scan/|time:|thrpt:" bench-output.txt 2>/dev/null || echo "(bench skipped)"
             echo '```'
           } > results.md
           cat results.md >> "$GITHUB_STEP_SUMMARY"
