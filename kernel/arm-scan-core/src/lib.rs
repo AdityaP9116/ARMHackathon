@@ -18,6 +18,7 @@
 mod float;
 #[cfg(target_arch = "aarch64")]
 mod neon;
+mod parallel;
 mod scalar;
 
 pub use float::Float;
@@ -34,6 +35,37 @@ pub enum Backend {
     /// NEON implementation. Errors with [`ScanError::BackendUnavailable`]
     /// off aarch64 or for non-f32 element types.
     Neon,
+}
+
+/// Channel-level threading policy. Parallel runs are bit-identical to
+/// sequential ones (channels are fully independent; no cross-thread
+/// reductions), enforced by tests.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Threading {
+    /// Single-threaded.
+    Sequential,
+    /// Always use the rayon pool (respects `RAYON_NUM_THREADS`). Falls
+    /// back to sequential when the `parallel` feature is disabled.
+    Rayon,
+    /// Rayon for large problems, sequential below the work threshold
+    /// where scheduling overhead would dominate.
+    Auto,
+}
+
+/// Backend + threading selection for [`selective_scan_with_options`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScanOptions {
+    pub backend: Backend,
+    pub threading: Threading,
+}
+
+impl Default for ScanOptions {
+    fn default() -> Self {
+        ScanOptions {
+            backend: Backend::Auto,
+            threading: Threading::Auto,
+        }
+    }
 }
 
 /// Problem dimensions. `groups` must divide `dim`; channel `d` reads
@@ -178,45 +210,66 @@ fn validate<T>(
     Ok(())
 }
 
-/// Run the selective scan with the best backend for this platform.
-/// Writes the gated output into `out` and, when requested, the final SSM
-/// state into `last_state`.
+/// Run the selective scan with the best backend and threading for this
+/// platform. Writes the gated output into `out` and, when requested, the
+/// final SSM state into `last_state`.
 pub fn selective_scan<T: Float>(
     dims: &ScanDims,
     input: &ScanInput<'_, T>,
     out: &mut [T],
     last_state: Option<&mut [T]>,
 ) -> Result<(), ScanError> {
-    selective_scan_with_backend(dims, input, out, last_state, Backend::Auto)
+    selective_scan_with_options(dims, input, out, last_state, ScanOptions::default())
 }
 
-/// Run the selective scan on an explicitly chosen backend (for parity
-/// tests and benchmark ladders; use [`selective_scan`] otherwise).
+/// Run the selective scan on an explicitly chosen backend with automatic
+/// threading (for parity tests and benchmark ladders).
 pub fn selective_scan_with_backend<T: Float>(
+    dims: &ScanDims,
+    input: &ScanInput<'_, T>,
+    out: &mut [T],
+    last_state: Option<&mut [T]>,
+    backend: Backend,
+) -> Result<(), ScanError> {
+    selective_scan_with_options(
+        dims,
+        input,
+        out,
+        last_state,
+        ScanOptions {
+            backend,
+            threading: Threading::Auto,
+        },
+    )
+}
+
+/// Run the selective scan with full backend + threading control.
+pub fn selective_scan_with_options<T: Float>(
     dims: &ScanDims,
     input: &ScanInput<'_, T>,
     out: &mut [T],
     // `mut` is only exercised by the aarch64 NEON dispatch below
     #[cfg_attr(not(target_arch = "aarch64"), allow(unused_mut))] mut last_state: Option<&mut [T]>,
-    backend: Backend,
+    opts: ScanOptions,
 ) -> Result<(), ScanError> {
     validate(dims, input, out, last_state.as_deref())?;
-    match backend {
+    let threading = opts.threading;
+    match opts.backend {
         Backend::Scalar => {
-            scalar::scan(dims, input, out, last_state);
+            scalar::scan(dims, input, out, last_state, threading);
             Ok(())
         }
         Backend::Auto => {
             #[cfg(target_arch = "aarch64")]
-            if try_neon(dims, input, out, &mut last_state) {
+            if try_neon(dims, input, out, &mut last_state, threading) {
                 return Ok(());
             }
-            scalar::scan(dims, input, out, last_state);
+            scalar::scan(dims, input, out, last_state, threading);
             Ok(())
         }
         Backend::Neon => {
             #[cfg(target_arch = "aarch64")]
-            if try_neon(dims, input, out, &mut last_state) {
+            if try_neon(dims, input, out, &mut last_state, threading) {
                 return Ok(());
             }
             Err(ScanError::BackendUnavailable(Backend::Neon))
@@ -232,6 +285,7 @@ fn try_neon<T: Float>(
     input: &ScanInput<'_, T>,
     out: &mut [T],
     last_state: &mut Option<&mut [T]>,
+    threading: Threading,
 ) -> bool {
     use core::any::TypeId;
     if TypeId::of::<T>() != TypeId::of::<f32>() {
@@ -261,6 +315,7 @@ fn try_neon<T: Float>(
         &input_f32,
         cast_mut(out),
         last_state.as_deref_mut().map(cast_mut),
+        threading,
     );
     true
 }

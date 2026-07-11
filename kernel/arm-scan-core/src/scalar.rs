@@ -3,70 +3,81 @@
 //! Direct transcription of the recurrence — clarity over speed. This is the
 //! correctness baseline every optimized variant (NEON, chunked, threaded)
 //! must reproduce; it is also the portable fallback on non-Arm hosts.
+//! Channel iteration goes through [`crate::parallel::for_each_channel`], so
+//! even the fallback scales across cores.
 
-use crate::{Float, ScanDims, ScanInput};
+use crate::{Float, ScanDims, ScanInput, Threading};
 
 pub(crate) fn scan<T: Float>(
     dims: &ScanDims,
     input: &ScanInput<'_, T>,
     out: &mut [T],
-    mut last_state: Option<&mut [T]>,
+    last_state: Option<&mut [T]>,
+    threading: Threading,
 ) {
     let ScanDims {
-        batch,
+        batch: _,
         dim,
         len,
         state,
         groups,
     } = *dims;
     let group_size = dim / groups;
-    let mut h = vec![T::ZERO; state];
 
-    for bi in 0..batch {
-        for d in 0..dim {
+    crate::parallel::for_each_channel(
+        len,
+        state,
+        out,
+        last_state,
+        threading,
+        || vec![T::ZERO; state],
+        |h, ch_idx, out_row, last| {
+            let (bi, d) = (ch_idx / dim, ch_idx % dim);
             let a_row = &input.a[d * state..(d + 1) * state];
             let bias = input.delta_bias.map_or(T::ZERO, |v| v[d]);
             let d_skip = input.d_skip.map(|v| v[d]);
             // base offset of b/c row (bi, g, n=0, t=0); n advances by `len`
             let bc_base = (bi * groups + d / group_size) * state * len;
-            let row = (bi * dim + d) * len;
+            let row = ch_idx * len;
+            let u_row = &input.u[row..row + len];
+            let delta_row = &input.delta[row..row + len];
+            let z_row = input.z.map(|z| &z[row..row + len]);
 
             h.fill(T::ZERO);
-            for t in 0..len {
-                let idx = row + t;
-                let mut dt = input.delta[idx] + bias;
+            for (t, out_slot) in out_row.iter_mut().enumerate() {
+                let mut dt = delta_row[t] + bias;
                 if input.delta_softplus {
                     dt = dt.softplus();
                 }
-                let dt_u = dt * input.u[idx];
+                let dt_u = dt * u_row[t];
 
                 let mut y = T::ZERO;
-                for n in 0..state {
+                for (n, h_n) in h.iter_mut().enumerate() {
                     let bc_idx = bc_base + n * len + t;
-                    let h_n = (dt * a_row[n]).exp() * h[n] + dt_u * input.b[bc_idx];
-                    h[n] = h_n;
-                    y = y + input.c[bc_idx] * h_n;
+                    let new = (dt * a_row[n]).exp() * *h_n + dt_u * input.b[bc_idx];
+                    *h_n = new;
+                    y = y + input.c[bc_idx] * new;
                 }
 
                 if let Some(ds) = d_skip {
-                    y = y + ds * input.u[idx];
+                    y = y + ds * u_row[t];
                 }
-                if let Some(z) = input.z {
-                    y = y * z[idx].silu();
+                if let Some(z) = z_row {
+                    y = y * z[t].silu();
                 }
-                out[idx] = y;
+                *out_slot = y;
             }
 
-            if let Some(ls) = last_state.as_deref_mut() {
-                ls[(bi * dim + d) * state..(bi * dim + d + 1) * state].copy_from_slice(&h);
+            if let Some(ls) = last {
+                ls.copy_from_slice(h);
             }
-        }
-    }
+        },
+    );
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::{Float, ScanDims, ScanInput};
 
     /// Single-timestep case checked against the closed-form recurrence,
     /// worked in f64 independently of any golden file:

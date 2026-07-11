@@ -8,7 +8,9 @@ use std::time::Duration;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
-use arm_scan_core::{selective_scan_with_backend, Backend, ScanDims, ScanInput};
+use arm_scan_core::{
+    selective_scan_with_options, Backend, ScanDims, ScanInput, ScanOptions, Threading,
+};
 
 /// Deterministic pseudo-random fill (xorshift), no rand dependency.
 fn fill(v: &mut [f32], mut seed: u32, lo: f32, hi: f32) {
@@ -27,9 +29,13 @@ fn bench_scan(crit: &mut Criterion) {
         .measurement_time(Duration::from_secs(3))
         .sample_size(10);
 
-    // On aarch64 this shows the scalar -> NEON rung of the optimization
-    // ladder; on x86 both rows are the scalar fallback.
-    let backends = [(Backend::Scalar, "scalar"), (Backend::Auto, "auto")];
+    // The optimization ladder: scalar single-thread -> NEON single-thread
+    // -> NEON + rayon. On x86 the "neon" rungs are the scalar fallback.
+    let rungs = [
+        (Backend::Scalar, Threading::Sequential, "scalar_seq"),
+        (Backend::Auto, Threading::Sequential, "neon_seq"),
+        (Backend::Auto, Threading::Rayon, "neon_par"),
+    ];
 
     // (label, B, D, L, N)
     let shapes = [
@@ -80,10 +86,11 @@ fn bench_scan(crit: &mut Criterion) {
 
         // element-throughput: B*D*L cells, each doing N exp+FMA lanes
         group.throughput(Throughput::Elements(bdl as u64));
-        for (backend, bname) in backends {
-            group.bench_with_input(BenchmarkId::new(bname, label), &dims, |bch, dims| {
+        for (backend, threading, rname) in rungs {
+            let opts = ScanOptions { backend, threading };
+            group.bench_with_input(BenchmarkId::new(rname, label), &dims, |bch, dims| {
                 bch.iter(|| {
-                    selective_scan_with_backend(dims, &input, &mut out, None, backend).unwrap();
+                    selective_scan_with_options(dims, &input, &mut out, None, opts).unwrap();
                     std::hint::black_box(&out);
                 });
             });

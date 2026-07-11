@@ -5,7 +5,10 @@
 
 use proptest::prelude::*;
 
-use arm_scan_core::{selective_scan, selective_scan_with_backend, Backend, ScanDims, ScanInput};
+use arm_scan_core::{
+    selective_scan, selective_scan_with_backend, selective_scan_with_options, Backend, ScanDims,
+    ScanInput, ScanOptions, Threading,
+};
 
 #[derive(Debug, Clone)]
 struct Case {
@@ -188,6 +191,50 @@ proptest! {
             prop_assert!(
                 rel < 1e-5,
                 "last_state idx {i}: scalar={s} auto={a} rel={rel:.3e}",
+            );
+        }
+    }
+
+    /// Channels are independent, so forced-rayon output must be
+    /// BIT-IDENTICAL to sequential — any divergence means rows are not
+    /// disjoint or scheduling leaked into the math. Checked for both
+    /// backends via Auto (NEON on aarch64, scalar elsewhere) and Scalar.
+    #[test]
+    fn parallel_is_bit_identical(case in case_strategy()) {
+        let n_out = case.dims.batch * case.dims.dim * case.dims.len;
+        let n_last = case.dims.batch * case.dims.dim * case.dims.state;
+        let input = ScanInput {
+            u: &case.u, delta: &case.delta, a: &case.a, b: &case.b,
+            c: &case.c,
+            d_skip: case.d_skip.as_deref(),
+            z: case.z.as_deref(),
+            delta_bias: case.delta_bias.as_deref(),
+            delta_softplus: case.delta_softplus,
+        };
+
+        for backend in [Backend::Auto, Backend::Scalar] {
+            let mut out_seq = vec![0.0_f32; n_out];
+            let mut last_seq = vec![0.0_f32; n_last];
+            selective_scan_with_options(
+                &case.dims, &input, &mut out_seq, Some(&mut last_seq),
+                ScanOptions { backend, threading: Threading::Sequential },
+            ).unwrap();
+
+            let mut out_par = vec![0.0_f32; n_out];
+            let mut last_par = vec![0.0_f32; n_last];
+            selective_scan_with_options(
+                &case.dims, &input, &mut out_par, Some(&mut last_par),
+                ScanOptions { backend, threading: Threading::Rayon },
+            ).unwrap();
+
+            prop_assert!(
+                out_seq.iter().zip(&out_par).all(|(a, b)| a.to_bits() == b.to_bits()),
+                "out differs between sequential and rayon ({backend:?}) dims={:?}",
+                case.dims
+            );
+            prop_assert!(
+                last_seq.iter().zip(&last_par).all(|(a, b)| a.to_bits() == b.to_bits()),
+                "last_state differs between sequential and rayon ({backend:?})"
             );
         }
     }
