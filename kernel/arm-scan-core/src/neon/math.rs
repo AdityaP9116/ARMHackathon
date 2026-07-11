@@ -82,9 +82,16 @@ pub(super) unsafe fn vlogq_f32(x: float32x4_t) -> float32x4_t {
 /// Requires NEON.
 #[target_feature(enable = "neon")]
 pub(super) unsafe fn vsoftplusq_f32(x: float32x4_t) -> float32x4_t {
+    let one = vdupq_n_f32(1.0);
     let t = vexpq_f32(vnegq_f32(vabsq_f32(x)));
-    // t in (0, 1] -> 1 + t in (1, 2]: safe domain for vlogq
-    let log1p_t = vlogq_f32(vaddq_f32(vdupq_n_f32(1.0), t));
+    // log1p(t) as log(u) + (t - (u-1))/u with u = 1+t: the Goldberg
+    // correction recovers the rounding error of the 1+t addition exactly
+    // (u-1 is exact for u in (1, 2] by Sterbenz), keeping RELATIVE
+    // precision for small t where plain log(1+t) degrades to ~eps/(2t).
+    // u in (1, 2]: safe domain for vlogq.
+    let u = vaddq_f32(one, t);
+    let corr = vdivq_f32(vsubq_f32(t, vsubq_f32(u, one)), u);
+    let log1p_t = vaddq_f32(vlogq_f32(u), corr);
     vaddq_f32(vmaxq_f32(x, vdupq_n_f32(0.0)), log1p_t)
 }
 

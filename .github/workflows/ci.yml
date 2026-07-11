@@ -41,7 +41,7 @@ jobs:
       - name: Tests (release, with per-case golden table)
         run: |
           set -o pipefail
-          cargo test --release -- --nocapture | tee test-output.txt
+          cargo test --release -- --nocapture 2>&1 | tee test-output.txt
       - name: Bench ladder (scalar vs NEON)
         if: matrix.name == 'linux-arm64'
         run: |
