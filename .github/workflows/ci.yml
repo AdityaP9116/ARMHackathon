@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: write # lets the arm64 job post its results as a commit comment
+
 defaults:
   run:
     working-directory: kernel
@@ -36,7 +39,35 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
       - name: Tests (release, with per-case golden table)
-        run: cargo test --release -- --nocapture
+        run: |
+          set -o pipefail
+          cargo test --release -- --nocapture | tee test-output.txt
       - name: Bench ladder (scalar vs NEON)
         if: matrix.name == 'linux-arm64'
-        run: cargo bench
+        run: |
+          set -o pipefail
+          cargo bench | tee bench-output.txt
+      - name: Publish arm64 results (commit comment + job summary)
+        if: matrix.name == 'linux-arm64' && github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "## arm64 CI results (${{ github.sha }})"
+            echo
+            echo '### Golden cases (backend errors vs f64 reference, NEON/scalar parity)'
+            echo '```'
+            grep -E "backend Auto resolves|scalar=.*auto=" test-output.txt || true
+            echo '```'
+            echo '### vexpq_f32 accuracy'
+            echo '```'
+            grep "worst relative error" test-output.txt || true
+            echo '```'
+            echo '### Bench ladder'
+            echo '```'
+            grep -E "selective_scan/|time:|thrpt:" bench-output.txt || true
+            echo '```'
+          } > results.md
+          cat results.md >> "$GITHUB_STEP_SUMMARY"
+          gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" \
+            -f body="$(cat results.md)" --silent || echo "commit comment failed (non-fatal)"
