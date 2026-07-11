@@ -85,6 +85,47 @@ jobs:
           gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" \
             -f body="$(cat results.md)" --silent || echo "commit comment failed (non-fatal)"
 
+  bench-op:
+    name: bench-op (linux-arm64)
+    needs: test
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: kernel
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build FFI cdylib
+        run: cargo build --release -p arm-scan-ffi
+      - name: Install torch (CPU aarch64)
+        working-directory: .
+        run: python3 -m pip install --quiet numpy torch
+      - name: Op-level benchmark (kernel vs eager vs torch.compile)
+        working-directory: .
+        run: |
+          set -o pipefail
+          python3 bench/bench_op.py --quick 2>&1 | tee bench-op.log
+      - name: Publish bench results
+        if: always() && github.event_name == 'push'
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "## op-level bench, linux-arm64 CI runner (${{ github.sha }})"
+            echo '(provisional: shared runner; headline numbers per bench/README.md)'
+            echo '```'
+            grep -vE "^\s*(Downloading|Installing|Collecting)" bench-op.log | tail -45 || true
+            echo '```'
+          } > bench-comment.md
+          cat bench-comment.md >> "$GITHUB_STEP_SUMMARY"
+          gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" \
+            -f body="$(cat bench-comment.md)" --silent || true
+
   wheels:
     name: wheel (${{ matrix.name }})
     needs: test

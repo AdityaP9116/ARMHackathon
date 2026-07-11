@@ -41,6 +41,10 @@ tests/golden/large_*.npz
 python/dist/
 wheel-test-env/
 
+# Benchmark result files (JSONs are per-host; commit deliberately if
+# they're headline numbers)
+bench/results/
+
 # OS / editor
 .DS_Store
 .idea/
