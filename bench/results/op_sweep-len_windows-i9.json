@@ -1,0 +1,227 @@
+{
+  "kind": "op",
+  "env": {
+    "platform": "Windows-10-10.0.26200-SP0",
+    "machine": "AMD64",
+    "processor": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "cpu_count": 32,
+    "torch": "2.11.0.dev20260208+cu128",
+    "torch_threads": 24,
+    "python": "3.11.9",
+    "kernel_lib": "C:\\Users\\Adity\\Downloads\\Projects\\ARMHackathon\\kernel\\target\\release\\arm_scan_ffi.dll",
+    "tag": "windows-i9",
+    "git_sha": "4c18403",
+    "timestamp_utc": "2026-07-13T15:01:23Z"
+  },
+  "reps": 10,
+  "suite": "sweep-len",
+  "args": {
+    "suite": "sweep-len",
+    "shapes": null,
+    "quick": false,
+    "reps": null,
+    "warmup": null,
+    "compile_max_len": 512,
+    "no_compile": false,
+    "torch_threads": null,
+    "tag": "windows-i9"
+  },
+  "shapes": [
+    {
+      "shape": [
+        1,
+        768,
+        64,
+        16
+      ],
+      "baselines": {
+        "ref_eager": {
+          "median_s": 0.012928149997605942,
+          "min_s": 0.010338299995055422,
+          "max_s": 0.013111600004776847,
+          "reps": 10
+        },
+        "ref_compile": {
+          "error": "RuntimeError: Compiler: cl is not found.\n\nSet TORCHDYNAMO_VERBOSE=1 for the internal stack trace (please do this especially if you're reporting a bug to PyTorch). For even more developer context, set "
+        },
+        "kernel": {
+          "median_s": 0.001418000003468478,
+          "min_s": 0.0012446000037016347,
+          "max_s": 0.0020361000060802326,
+          "reps": 10
+        }
+      },
+      "kernel_vs_ref_max_abs": 1.430511474609375e-06
+    },
+    {
+      "shape": [
+        1,
+        768,
+        128,
+        16
+      ],
+      "baselines": {
+        "ref_eager": {
+          "median_s": 0.025750800003152108,
+          "min_s": 0.017764600001100916,
+          "max_s": 0.028324300001258962,
+          "reps": 10
+        },
+        "ref_compile": {
+          "error": "RuntimeError: Compiler: cl is not found.\n\nSet TORCHDYNAMO_VERBOSE=1 for the internal stack trace (please do this especially if you're reporting a bug to PyTorch). For even more developer context, set "
+        },
+        "kernel": {
+          "median_s": 0.0017588499977136962,
+          "min_s": 0.0015468999990844168,
+          "max_s": 0.001935800006322097,
+          "reps": 10
+        }
+      },
+      "kernel_vs_ref_max_abs": 9.5367431640625e-07
+    },
+    {
+      "shape": [
+        1,
+        768,
+        256,
+        16
+      ],
+      "baselines": {
+        "ref_eager": {
+          "median_s": 0.05104564999783179,
+          "min_s": 0.0392370999979903,
+          "max_s": 0.05941580000217073,
+          "reps": 10
+        },
+        "ref_compile": {
+          "error": "RuntimeError: Compiler: cl is not found.\n\nSet TORCHDYNAMO_VERBOSE=1 for the internal stack trace (please do this especially if you're reporting a bug to PyTorch). For even more developer context, set "
+        },
+        "kernel": {
+          "median_s": 0.0021612999989883974,
+          "min_s": 0.001963800001249183,
+          "max_s": 0.0024762000030023046,
+          "reps": 10
+        }
+      },
+      "kernel_vs_ref_max_abs": 1.9073486328125e-06
+    },
+    {
+      "shape": [
+        1,
+        768,
+        512,
+        16
+      ],
+      "baselines": {
+        "ref_eager": {
+          "median_s": 0.12073939999754657,
+          "min_s": 0.11159190000034869,
+          "max_s": 0.1277676999961841,
+          "reps": 10
+        },
+        "ref_compile": {
+          "error": "RuntimeError: Compiler: cl is not found.\n\nSet TORCHDYNAMO_VERBOSE=1 for the internal stack trace (please do this especially if you're reporting a bug to PyTorch). For even more developer context, set "
+        },
+        "kernel": {
+          "median_s": 0.0032831000025907997,
+          "min_s": 0.0026335000002291054,
+          "max_s": 0.0033891000057337806,
+          "reps": 10
+        }
+      },
+      "kernel_vs_ref_max_abs": 1.9073486328125e-06
+    },
+    {
+      "shape": [
+        1,
+        768,
+        1024,
+        16
+      ],
+      "baselines": {
+        "ref_eager": {
+          "median_s": 0.3147541000034835,
+          "min_s": 0.29633599999942817,
+          "max_s": 0.3251399000000674,
+          "reps": 10
+        },
+        "kernel": {
+          "median_s": 0.005306799997924827,
+          "min_s": 0.005048099999839906,
+          "max_s": 0.005465400005050469,
+          "reps": 10
+        }
+      },
+      "kernel_vs_ref_max_abs": 1.9073486328125e-06
+    },
+    {
+      "shape": [
+        1,
+        768,
+        2048,
+        16
+      ],
+      "baselines": {
+        "ref_eager": {
+          "median_s": 0.6474690499999269,
+          "min_s": 0.6401889000044321,
+          "max_s": 0.6607887999998638,
+          "reps": 10
+        },
+        "kernel": {
+          "median_s": 0.009958149999874877,
+          "min_s": 0.009754999999131542,
+          "max_s": 0.011965500001679175,
+          "reps": 10
+        }
+      },
+      "kernel_vs_ref_max_abs": 1.9073486328125e-06
+    },
+    {
+      "shape": [
+        1,
+        768,
+        4096,
+        16
+      ],
+      "baselines": {
+        "ref_eager": {
+          "median_s": 1.3153609500004677,
+          "min_s": 1.3097323999973014,
+          "max_s": 1.4205165000021225,
+          "reps": 10
+        },
+        "kernel": {
+          "median_s": 0.020709800002805423,
+          "min_s": 0.019439100004092325,
+          "max_s": 0.023535200001788326,
+          "reps": 10
+        }
+      },
+      "kernel_vs_ref_max_abs": 2.86102294921875e-06
+    },
+    {
+      "shape": [
+        1,
+        768,
+        8192,
+        16
+      ],
+      "baselines": {
+        "ref_eager": {
+          "median_s": 2.721493900000496,
+          "min_s": 2.700285499995516,
+          "max_s": 2.7660422999979346,
+          "reps": 10
+        },
+        "kernel": {
+          "median_s": 0.03764895000131219,
+          "min_s": 0.03726279999682447,
+          "max_s": 0.04584409999370109,
+          "reps": 10
+        }
+      },
+      "kernel_vs_ref_max_abs": 2.86102294921875e-06
+    }
+  ]
+}
