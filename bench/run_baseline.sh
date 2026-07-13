@@ -39,6 +39,9 @@ echo "=== baseline run: tag=$TAG  python=$PY  $(date -u +%FT%TZ) ==="
 run uname -a
 run nproc
 
+echo "=== [0/5] build FFI cdylib (required by every python stage) ==="
+(cd kernel && run cargo build --release -p arm-scan-ffi)
+
 if [ "${SKIP_CORRECTNESS:-0}" != 1 ]; then
     echo "=== [1/5] correctness gate ==="
     (cd kernel && run cargo test --release)
@@ -59,7 +62,8 @@ if [ "${SKIP_OP:-0}" != 1 ]; then
     run "$PY" bench/bench_op.py --suite basic --tag "$TAG" \
         --json "$RES/op_basic_${TAG}.json"
     run "$PY" bench/bench_op.py --suite sweep-len --tag "$TAG" \
-        --compile-max-len 512 --json "$RES/op_sweep-len_${TAG}.json"
+        --compile-max-len "${COMPILE_MAX_LEN:-512}" \
+        --json "$RES/op_sweep-len_${TAG}.json"
     run "$PY" bench/bench_op.py --suite sweep-dim --tag "$TAG" \
         --no-compile --json "$RES/op_sweep-dim_${TAG}.json"
     run "$PY" bench/bench_op.py --suite sweep-batch --tag "$TAG" \
