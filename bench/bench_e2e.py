@@ -86,6 +86,8 @@ def main():
     ap.add_argument("--prompt-tokens", type=int, default=256)
     ap.add_argument("--new-tokens", type=int, default=32)
     ap.add_argument("--reps", type=int, default=5)
+    ap.add_argument("--tag", type=str, default=platform.node(),
+                    help="host label embedded in the JSON (e.g. ampere-a1)")
     ap.add_argument("--json", type=str, default=None)
     args = ap.parse_args()
 
@@ -128,7 +130,15 @@ def main():
           f"(prompt {args.prompt_tokens} + {args.new_tokens} new)")
 
     if args.json:
+        import subprocess
+        try:
+            sha = subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"], cwd=REPO,
+                capture_output=True, text=True, check=True).stdout.strip()
+        except Exception:
+            sha = "unknown"
         out = {
+            "kind": "e2e",
             "model": args.model,
             "prompt_tokens": args.prompt_tokens,
             "new_tokens": args.new_tokens,
@@ -137,7 +147,13 @@ def main():
             "tokens_identical": same,
             "engagement": stats,
             "host": platform.platform(),
+            "machine": platform.machine(),
+            "tag": args.tag,
+            "git_sha": sha,
+            "timestamp_utc": time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "torch": torch.__version__,
+            "torch_threads": torch.get_num_threads(),
         }
         Path(args.json).parent.mkdir(parents=True, exist_ok=True)
         Path(args.json).write_text(json.dumps(out, indent=2))

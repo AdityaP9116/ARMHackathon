@@ -19,24 +19,25 @@ CI runs `bench_op.py --quick` on every push (ubuntu-24.04-arm, results in
 the commit comment). Treat CI numbers as provisional — shared runners are
 noisy; headline numbers come from dedicated instances:
 
-## Headline-number runbook (Oracle Ampere / AWS Graviton)
+## Headline-number runbook (Oracle Ampere A1 / AWS Graviton)
+
+Provision an aarch64 Ubuntu 22.04/24.04 instance (Oracle:
+VM.Standard.A1.Flex, 4 OCPU / 24 GB — Always Free tier), then:
 
 ```bash
-# Ubuntu 22.04+ aarch64 instance, e.g. Ampere A1 4 OCPU / Graviton c7g.2xlarge
-sudo apt-get update && sudo apt-get install -y build-essential python3-venv
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-source ~/.cargo/env
-
 git clone https://github.com/AdityaP9116/ARMHackathon && cd ARMHackathon
-(cd kernel && cargo build --release -p arm-scan-ffi && cargo bench)
-
-python3 -m venv env && source env/bin/activate
-pip install numpy torch transformers
-
-python bench/bench_op.py  --json bench/results/op_$(hostname).json
-python bench/bench_e2e.py --prompt-tokens 512 --new-tokens 64 --reps 5 \
-    --json bench/results/e2e_$(hostname).json
+bash bench/setup_ampere.sh          # one-time: apt deps, rustup, venv, build
+bash bench/run_baseline.sh ampere-a1   # the full tagged baseline suite
 ```
 
-Report the instance type, core count, and torch version alongside every
-number (the scripts capture them in the JSON).
+`run_baseline.sh` gates on correctness first (cargo test + FFI golden
+check), then runs: the criterion ladder, all four op suites (basic +
+len/dim/batch sweeps), the RAYON_NUM_THREADS scaling loop, and the e2e
+prompt-length sweep — writing tagged JSONs to `bench/results/` and
+regenerating `bench/results/RESULTS.md`. `DRY_RUN=1` prints every command
+first; `SKIP_*` toggles select subsets (see the script header). Copy the
+results directory back (or commit it deliberately) when done.
+
+The same script is the reusable harness for any future host: pass a
+different tag (`graviton-c7g`, `ci-arm64`, …) and re-run
+`render_results.py` — results group by tag automatically.
