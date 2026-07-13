@@ -21,8 +21,10 @@ There are three topologies in the Mamba world:
 | Topology | Where it shows up | Kernel status |
 | --- | --- | --- |
 | **1D unidirectional** | Causal language / audio generation | **Built.** This is what ships today. |
-| **1D bidirectional** | Non-causal sequences: DNA, ECG, audio enhancement, sensor streams | Modest extension — forward pass plus a reversed pass. The two directions are independent, so it *adds* thread parallelism rather than costing any. |
-| **2D cross-scan (SS2D)** | Vision Mamba: four traversals (rows fwd/back, cols fwd/back) over a patch grid | Real work. Also the one that **nobody has on CPU at all** — the biggest white space. |
+| **1D bidirectional** | Non-causal sequences: DNA, ECG, audio enhancement, sensor streams | **Correct today via rearrangement**; a fused in-kernel version is an optimization, not a prerequisite. |
+| **2D cross-scan (SS2D)** | Vision Mamba: four traversals (rows fwd/back, cols fwd/back) over a patch grid | **Correct today via rearrangement**; the fused traversal is where the real Rust work (and the real white space) lives. |
+
+See [What each topology actually costs](#what-each-topology-actually-costs) below — this is less work than it looks.
 
 There's a second axis worth holding in mind: **what makes the linear-time claim visceral.**
 
@@ -30,11 +32,33 @@ A transformer's KV cache grows with sequence length; Mamba's state does not. Tha
 
 ---
 
+## What each topology actually costs
+
+**The important correction: bidirectional and SS2D are not new kernels.** Both are the *same* recurrence run over **rearranged views** of the data, so both are reachable today, correctly, with the op we already have. What we would actually build in Rust is the **fusion** — doing the rearrangement inside the kernel so we stop paying for the copies.
+
+That splits every topology into two independent pieces of work:
+
+| Topology | Get it **correct** | Make it **fast** |
+| --- | --- | --- |
+| 1D unidirectional | Done | Done (NEON + chunked + rayon) |
+| 1D bidirectional | Python: `torch.flip` around the existing op, combine the two outputs. **Zero new Rust.** | Rust: a `reverse` flag so the kernel walks the sequence backward in place — kills two full-tensor copies. Half a day. |
+| 2D cross-scan (SS2D) | Python: build the four permuted/flipped views of the patch grid, stack them into the batch dim, **one call to the existing op**, then merge. A day of plumbing. | Rust: a fused four-direction traversal that reads the grid once instead of materializing four copies. The week-long item — and the actual white space, since no CPU implementation of this exists anywhere. |
+
+Two consequences worth internalizing:
+
+**1. We can stand up all three applications end-to-end before touching the kernel again.** Correct output and honest speedup numbers for every app come first; *then* we optimize whichever topology shows the most headroom. The kernel work stops being a prerequisite and becomes a follow-on, which drains most of the risk out of the third slot.
+
+**2. The story gets better, not worse.** "We built three kernels" is weak. "One kernel core, three scan topologies, and here is the fused-traversal work that made the 2D case fast" is what an Arm engineer judge would actually respect — it's a claim about generality *and* a claim about depth.
+
+The one thing to watch: the rearrangement copies are not free. For SS2D the flip/permute traffic could plausibly dominate the scan itself at small resolutions, which would make the unfused version look unimpressive. That is a reason to measure early, not a reason to build the fused path first.
+
+---
+
 ## Candidate applications
 
 ### Language — long-context prefill
 
-**Topology:** 1D unidirectional  ·  **New kernel work:** none
+**Topology:** 1D unidirectional  ·  **Kernel work:** none
 
 mamba-130m through 2.8b via HF `transformers`, on CPU.
 
@@ -48,7 +72,7 @@ Boring, and that is precisely its virtue. It is the "every Mamba model in the ec
 
 ### Genomics — DNA foundation models
 
-**Topology:** 1D bidirectional  ·  **New kernel work:** small
+**Topology:** 1D bidirectional  ·  **Kernel work:** none to be correct; ~half a day to fuse the reverse pass
 
 Caduceus-class models operate at **131k-token contexts**.
 
@@ -62,7 +86,7 @@ Concrete demo options: variant-effect prediction, or a promoter/enhancer classif
 
 ### Medical imaging — MRI reconstruction
 
-**Topology:** 2D cross-scan (SS2D)  ·  **New kernel work:** significant
+**Topology:** 2D cross-scan (SS2D)  ·  **Kernel work:** ~a day of Python to be correct; ~a week to fuse the traversal
 
 MambaRecon-style: undersampled k-space in, diagnostic image out, with a PSNR/SSIM/NMSE parity gate.
 
@@ -76,7 +100,7 @@ Also the highest risk: SS2D has to be built, and the research repos bundle CUDA 
 
 ### Audio — speech enhancement / separation
 
-**Topology:** 1D bidirectional  ·  **New kernel work:** small (shared with genomics)
+**Topology:** 1D bidirectional  ·  **Kernel work:** none (shares the genomics path)
 
 Noisy WAV in, clean WAV out.
 
@@ -90,7 +114,7 @@ Known risk: the audio Mamba checkpoints are research-grade and CUDA-coupled.
 
 ### Biosignals — ECG / EEG
 
-**Topology:** 1D bidirectional  ·  **New kernel work:** small
+**Topology:** 1D bidirectional  ·  **Kernel work:** none (shares the genomics path)
 
 Multi-hour recordings mean long sequences. Arrhythmia detection over a 24-hour Holter recording is a clean framing.
 
@@ -102,7 +126,7 @@ Weak spot: strong public checkpoints are scarce, which risks pulling us into tra
 
 ### Time-series — anomaly detection / forecasting on telemetry
 
-**Topology:** 1D  ·  **New kernel work:** none
+**Topology:** 1D  ·  **Kernel work:** none
 
 **Pitch:** boringly commercial — which *is* the Impact argument. This is what cloud fleets actually run.
 
@@ -114,7 +138,7 @@ Lowest WOW on the list; highest "a real company would deploy this on Monday."
 
 ### RF / spectrum sensing
 
-**Topology:** 1D  ·  **New kernel work:** none
+**Topology:** 1D  ·  **Kernel work:** none
 
 SDR signal classification over long IQ streams.
 
@@ -124,7 +148,7 @@ Genuinely different field, very long sequences, and **Arm CPUs are the actual de
 
 ### Vision — plain image classification (VMamba / Vim)
 
-**Topology:** 2D cross-scan  ·  **New kernel work:** significant (same as MRI)
+**Topology:** 2D cross-scan  ·  **Kernel work:** same as MRI (shares the SS2D path)
 
 The same SS2D work as MRI, but with a cleaner metric (top-1 accuracy) and far lower integration risk.
 
@@ -146,7 +170,7 @@ The narrative writes itself: each application forced the kernel to grow a new ca
 
 **Upside:** strongest technical and impact story; hits an extreme sequence length; covers the one op (SS2D) that has no CPU implementation anywhere.
 
-**Downside:** SS2D is the only item on this entire list that could eat a week.
+**Downside:** the *fused* SS2D traversal is the only item on this entire list that could eat a week. But per [What each topology actually costs](#what-each-topology-actually-costs), the correct-but-unfused version is a day, so this trio can be stood up end-to-end long before that week is spent — and if it never gets spent, we still have three working applications.
 
 ---
 
@@ -195,6 +219,6 @@ So the third slot is really a single bet:
 
 1. **Do the genomics and vision checkpoints actually download and run on CPU**, and what exact scan does each one call (directions, `d_state`, `d_model`)? This is the same gate that killed DH-Mamba — a few hours of work, and cheap insurance.
 
-2. **How much SS2D work is really involved** once we look at a concrete model's forward pass? Four independent 1D scans over permuted views, or a fused traversal that needs its own kernel?
+2. **Does the rearrangement overhead swamp the unfused SS2D path?** Building the four permuted/flipped views costs real memory traffic, and at small patch grids it could plausibly dominate the scan itself — which would make the correct-but-unfused version look unimpressive. Measure this early; it decides whether the fused traversal is a nice-to-have or a must.
 
 3. **Is one of the three allowed to be a quality-parity demo only** (no headline speedup claim), to keep the benchmark story focused?
