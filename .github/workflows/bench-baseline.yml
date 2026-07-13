@@ -4,6 +4,7 @@ name: bench-baseline
 # Runs once when this workflow file changes on main, and on demand via
 # workflow_dispatch. Numbers from this shared runner are PROVISIONAL;
 # dedicated-instance (Ampere A1) runs are the headline grade.
+# rev 3: adaptive patch for the has_previous_state transformers API
 
 on:
   workflow_dispatch:
