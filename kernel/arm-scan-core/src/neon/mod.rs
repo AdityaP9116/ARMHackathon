@@ -98,6 +98,7 @@ pub(crate) fn scan(
                 bias: input.delta_bias.map_or(0.0, |v| v[d]),
                 d_skip: input.d_skip.map(|v| v[d]),
                 softplus: input.delta_softplus,
+                reverse: input.reverse,
             };
             let a_row = &input.a[d * state..(d + 1) * state];
             let bt_plane = &bt[plane..plane + len * n4];
@@ -148,6 +149,26 @@ struct Channel<'a> {
     bias: f32,
     d_skip: Option<f32>,
     softplus: bool,
+    reverse: bool,
+}
+
+/// Walk the row's chunks in scan order: forward, or last-chunk-first when
+/// reversed. Yields `(start, tlen)` — chunk boundaries in MEMORY are unchanged;
+/// only the order they are visited in differs.
+///
+/// Pass A is pointwise in time (no cross-timestep dependency — that is the
+/// whole reason for the two-pass split), so it needs no direction awareness at
+/// all. Only Pass B's serial recurrence walks time, and there `t` is a scalar
+/// loop index (the vectorization is across STATE), so reversing costs nothing
+/// but an index flip — no lane shuffles, no extra work.
+#[inline]
+fn chunks_in_scan_order(len: usize, reverse: bool) -> impl Iterator<Item = (usize, usize)> {
+    let n_chunks = len.div_ceil(CHUNK);
+    (0..n_chunks).map(move |i| {
+        let chunk = if reverse { n_chunks - 1 - i } else { i };
+        let start = chunk * CHUNK;
+        (start, CHUNK.min(len - start))
+    })
 }
 
 /// Pass A1: dt = softplus(delta + bias), dtu = dt*u for `tlen` timesteps
@@ -242,11 +263,9 @@ unsafe fn channel_n16(
     let mut h3 = vdupq_n_f32(0.0);
 
     let len = out_row.len();
-    let mut start = 0;
-    while start < len {
-        let tlen = CHUNK.min(len - start);
-
-        // Pass A1: discretization across time
+    for (start, tlen) in chunks_in_scan_order(len, ch.reverse) {
+        // Pass A1: discretization across time. Pointwise in t, so it is
+        // direction-agnostic — no `reverse` handling needed here or in A2.
         discretize_chunk(ch, start, tlen, scratch);
 
         // Pass A2: batch all exps + input projections for the chunk
@@ -278,10 +297,15 @@ unsafe fn channel_n16(
             vst1q_f32(bbar.add(o + 12), vmulq_f32(vld1q_f32(b.add(12)), vdtu));
         }
 
-        // Pass B: pure-FMA recurrence + output dot product
+        // Pass B: pure-FMA recurrence + output dot product. The ONLY pass that
+        // walks time, hence the only one `reverse` touches. `t` is a scalar
+        // index here (vectorization is across the 16 state lanes, held in
+        // h0..h3), so flipping the direction costs one subtraction — no lane
+        // shuffles, no extra loads, no extra work.
         let abar = scratch.abar.as_ptr();
         let bbar = scratch.bbar.as_ptr();
-        for t in 0..tlen {
+        for i in 0..tlen {
+            let t = if ch.reverse { tlen - 1 - i } else { i };
             let o = t * 16;
             let c = ct.as_ptr().add((start + t) * 16);
 
@@ -296,8 +320,6 @@ unsafe fn channel_n16(
             acc = vfmaq_f32(acc, vld1q_f32(c.add(12)), h3);
             *out_row.get_unchecked_mut(start + t) = vaddvq_f32(acc);
         }
-
-        start += tlen;
     }
 
     if let Some(ls) = last_state {
@@ -326,12 +348,15 @@ unsafe fn channel_general(
     scratch.h_buf.fill(0.0);
 
     let len = out_row.len();
-    let mut start = 0;
-    while start < len {
-        let tlen = CHUNK.min(len - start);
+    for (start, tlen) in chunks_in_scan_order(len, ch.reverse) {
+        // Pointwise, direction-agnostic (see `chunks_in_scan_order`).
         discretize_chunk(ch, start, tlen, scratch);
 
-        for t in 0..tlen {
+        // This path keeps exp inline in the recurrence, so this single loop is
+        // the time walk — `step` counts scan steps, `t` is the timestep it
+        // consumes. (`i` below is the state-lane index, not time.)
+        for step in 0..tlen {
+            let t = if ch.reverse { tlen - 1 - step } else { step };
             let vdt = vdupq_n_f32(scratch.dt[t]);
             let vdtu = vdupq_n_f32(scratch.dtu[t]);
             let b = bt.as_ptr().add((start + t) * n4);
@@ -349,7 +374,6 @@ unsafe fn channel_general(
             }
             *out_row.get_unchecked_mut(start + t) = vaddvq_f32(acc);
         }
-        start += tlen;
     }
 
     if let Some(ls) = last_state {

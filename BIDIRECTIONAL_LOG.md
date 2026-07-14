@@ -214,8 +214,78 @@ module so nobody wires it into an outer-pattern model by mistake.
 
 ## Step 2 — measure what the flips cost (the gate on Step 3)
 
-**Status:** benchmark written (`bench/bench_bidirectional.py`), wired into CI's
-`bench-op` job. **No numbers yet.**
+**Status:** ✅ **measured. The answer is: the flips are noise. Do not fuse.**
+
+Benchmark: `bench/bench_bidirectional.py`, wired into CI's `bench-op` job.
+
+### The numbers (linux-arm64 CI runner, 4-core, torch 2.13.0, `--quick`, commit `5cb4fe8`)
+
+| Shape | `scan_fwd` | `fused_estimate` | `bidirectional` | `flips_only` | headroom (ceiling) |
+|---|---|---|---|---|---|
+| B1 D768 L128 N16 | 0.801 ms | 1.641 ms | 1.781 ms | 0.057 ms | **1.085×** |
+| B1 D768 L512 N16 | 2.694 ms | 5.492 ms | 5.631 ms | 0.108 ms | **1.025×** |
+
+**Sanity check first:** `fused_estimate` ≈ 2 × `scan_fwd` at both shapes (1.641
+vs 1.602; 5.492 vs 5.388), which is exactly what the proxy is supposed to do. The
+comparison is sound.
+
+### Verdict: **Step 3 is rejected on measurement.**
+
+Three independent reasons, in order of weight:
+
+**1. The ceiling is already low, and it *shrinks* with L.** 8.5% at L=128 →
+2.5% at L=512. Not noise: flip traffic is O(B·D·L) memory copies while scan work
+is O(B·D·L·N) compute, so the flips get relatively cheaper the longer the
+sequence. Every application this topology targets (genomics at **131k tokens**,
+long audio, multi-hour ECG) lives far to the right of L=512, where the flips are
+negligible. The measurement gets *more* damning at the shapes we actually care
+about, not less.
+
+**2. Most of the apparent overhead is not even flips.** The two measurements
+disagree — subtraction says 7.8% at L=128, but `flips_only` directly measures
+**3.2%**. That gap (~0.14 ms, roughly *constant* across both shapes) is
+Python-side wrapper overhead in `bidirectional_scan`, not memory traffic, and a
+Rust `reverse` flag **would not remove it**. Having both measurements is what
+caught this; a subtraction-only benchmark would have overstated the case for
+fusion by ~2.5×. The honest ceiling on what fusion saves is **1.9–3.2%**.
+
+**3. It may help zero models anyway.** A `reverse` flag only accelerates *inner*
+bidirectional models. If the application lands on Caduceus or Vim (*outer* — see
+the design boundary above), both of their scans are ordinary forward scans and
+the flag accelerates **nothing at all**.
+
+So the trade is: half a day of NEON chunk-reversal surgery + an FFI ABI bump +
+new goldens + new parity tests, to win ~2% that trends to ~0% at the sequence
+lengths that matter, for a model class that may not even benefit. **No.**
+
+### Why this is a good outcome, not a wasted step
+
+This is the **second** time measuring-before-optimizing has killed a plausible
+idea in this project. The first was the plane transpose that everyone assumed was
+a top-priority cost and profiled at **0.1%**
+([`OPTIMIZATION_LOG.md`](./OPTIMIZATION_LOG.md)). Had §2.2 been built on
+intuition — and the plan's own effort estimate said "half a day," which is
+exactly the size of task that gets waved through — it would have bought ~2%.
+
+Per [`IMPROVEMENT_IDEAS.md`](./IMPROVEMENT_IDEAS.md) §7.1, a **considered-and-
+rejected decision backed by numbers** is worth publishing. This one goes in the
+writeup: *we built the general path, measured what fusing it would buy, found it
+was ~2%, and spent the time elsewhere.* That is a stronger technical signal than
+a fused kernel nobody needed.
+
+### Caveats on these numbers (stated, not buried)
+
+- `--quick` mode: **reps=5, warmup=1**, on a *shared* 4-core CI runner. Noisy.
+  The 1.085 vs 1.025 spread is within plausible run-to-run variation; the
+  *trend* and the *magnitude* are what carry the conclusion, not the third
+  decimal.
+- Only two shapes, both short (L=128, L=512). The full `sweep-len` suite goes to
+  L=8192 — worth one run on a dedicated Arm host before the number is quoted in
+  `RESULTS.md`, since it would show the trend continuing rather than asserting it.
+- `fusion_headroom` is a **ceiling**, not an achieved speedup (see the module
+  docstring). A real fused kernel reads the sequence backward, which is less
+  cache-friendly than the forward stream timed here, so it would land *under*
+  these figures. Quoting it as a speedup would be dishonest.
 
 Step 3 (the fused kernel) is deliberately **gated on this measurement rather
 than scheduled**. Its entire value is deleting the six copies Step 1 pays for —
@@ -254,15 +324,82 @@ speedup.
 
 ## Step 3 — fused `reverse` flag in Rust (plan §2.2)
 
-Not started. **Blocked on Step 2's number**, plus two prerequisites outside this
-log:
+**Status:** ✅ built. **But note the reversal of the Step-2 decision, and why.**
 
-- **The application decision** (`APPLICATIONS.md`) — it determines whether the
-  target model is *inner* or *outer* bidirectional (see the design boundary
-  above). If it is **outer** (Caduceus, Vim), both of that model's scans are
-  ordinary forward scans and a `reverse` flag accelerates **nothing**. In that
-  case Step 3 should not be built for it at all, regardless of what Step 2 says.
-- The overlap flagged in plan §2.2 with `IMPROVEMENT_IDEAS.md` §4.2
-  (cache-blocking over L): both restructure the same chunk loop in
-  `neon/mod.rs`. Whoever gets there first should leave it in a shape the other
-  can build on.
+Step 2 rejected this **as a speedup**, and that rejection still stands: the
+copies are worth ~2%, and nothing here changes that. It was built anyway, on a
+different justification that Step 2 did not weigh:
+
+> **The 2D cross-scan needs a backward traversal regardless.** SS2D's four
+> directions are row-forward, row-**backward**, column-forward, and
+> column-**backward**. Plan §3.2's design has the row directions reusing the 1D
+> scan directly — which requires exactly this flag. So `reverse` is not a
+> bidirectional optimization that failed to pay off; it is **the substrate SS2D
+> is built on**, and it happens to also remove bidirectional's flip copies.
+
+**The claim to make when this ships is therefore:** *"a fused backward traversal
+— the substrate for the 2D cross-scan, which also removes the flip copies from
+bidirectional (~2%)."* **Not** *"we made bidirectional faster."* The benchmark
+prints that caveat on every run so nobody quotes it wrong.
+
+### What changed
+
+The implementation turned out **much cheaper than plan §2.2 predicted**, and for
+an instructive reason. The plan claimed the NEON work needed SIMD lane-reversal
+(`vrev64q_f32` / `vextq_f32` shuffles inside each chunk). That was wrong:
+
+- **Pass A is pointwise in time** — no cross-timestep dependency. That is the
+  entire reason the two-pass split exists. It needs *zero* direction awareness.
+- **Pass B vectorizes across STATE, not time.** `h` lives in four q-registers and
+  `t` is a plain scalar loop index. So reversing time is one subtraction
+  (`t = tlen - 1 - i`) — no shuffles, no extra loads, no extra work.
+- The B/C plane transpose, the epilogue, and `parallel.rs` are all
+  direction-agnostic and were **not touched at all**.
+
+Net: a new `chunks_in_scan_order()` iterator (visit chunks last-first when
+reversed), one flipped index in each of the two NEON channel paths and the
+scalar path, and the FFI/Python plumbing. The recurrence math is untouched.
+
+| Layer | Change |
+|---|---|
+| `arm-scan-core/src/lib.rs` | `ScanInput::reverse` |
+| `src/scalar.rs` | one flipped time index |
+| `src/neon/mod.rs` | `chunks_in_scan_order()` + flipped `t` in Pass B (both paths) |
+| `src/parallel.rs` | **none** — channel independence is direction-agnostic |
+| `arm-scan-ffi/src/lib.rs` | `reverse` param; **ABI 2 → 3** |
+| `python/arm_scan/{_ffi,op,numpy_api}.py` | `reverse` threaded through |
+| `python/arm_scan/bidirectional.py` | the seam closed: `reverse=True`, no flips |
+
+### Correctness
+
+`reverse=True` is *defined* as flip-forward-flip, and that definition is now
+enforced at three independent levels:
+
+1. **Rust, bit-for-bit** — `reverse_matches_flip_forward_flip` (property test,
+   256 random shapes/flag combos). Asserts **bit-identity**, not tolerance: both
+   paths apply the same arithmetic to the same values in the same order. Note the
+   two paths land on *different chunk boundaries* (forward-on-flipped splits the
+   flipped axis; reverse splits the original), so passing bit-exactly also proves
+   chunking never leaks into the math.
+2. **Rust, anti-vacuous** — `reverse_actually_reverses` asserts a reversed scan
+   genuinely differs from a forward one, so a dropped flag cannot pass silently.
+3. **numpy, independent** — `tests/check_bidirectional_math.py` proves the
+   identity itself is sound against a separately-written backward recurrence,
+   with no kernel involved.
+
+Plus: `reverse` is now generated by the proptest `Case`, so **every** existing
+property test (f64 agreement, NEON-vs-scalar parity, rayon bit-identity) sweeps
+both directions for free. And `ffi_reverse_two_steps` hand-checks it across the
+C ABI.
+
+The benchmark refuses to report a speedup unless the fused output is
+bit-identical to the flip-based one — a fast wrong answer is not a result.
+
+### Still worth doing, and still not this
+
+Step 2's measurement found ~0.14 ms of **Python-side wrapper overhead**, roughly
+constant across shapes and *larger than the flip copies themselves* at L=512.
+`reverse` does not touch it. It belongs with the trims in
+[`IMPROVEMENT_IDEAS.md`](./IMPROVEMENT_IDEAS.md) §8 (ctypes call path, `_c()`'s
+redundant `.float()` dispatch, per-call allocations) — cheap, and it helps
+*every* caller rather than just bidirectional ones.

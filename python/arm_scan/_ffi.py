@@ -11,7 +11,7 @@ import os
 import sys
 from pathlib import Path
 
-ABI_VERSION = 2
+ABI_VERSION = 3   # 3: added the `reverse` parameter
 
 _LIB_NAMES = {
     "win32": ["arm_scan_ffi.dll"],
@@ -80,6 +80,7 @@ def load():
                 ctypes.POINTER(ArmScanDims),
                 *([ctypes.c_void_p] * 8),  # u delta a b c d_skip z delta_bias
                 ctypes.c_int,  # delta_softplus
+                ctypes.c_int,  # reverse
                 ctypes.c_int,  # backend
                 ctypes.c_int,  # threading
                 ctypes.c_void_p,  # out
@@ -100,13 +101,19 @@ def lib_path():
 
 def scan_raw(dims, ptr_u, ptr_delta, ptr_a, ptr_b, ptr_c, ptr_d_skip, ptr_z,
              ptr_delta_bias, delta_softplus, backend, threading, ptr_out,
-             ptr_last):
-    """Thin call-through. Pointers are integer addresses; 0 means null."""
+             ptr_last, *, reverse=False):
+    """Thin call-through. Pointers are integer addresses; 0 means null.
+
+    `reverse` is keyword-only on purpose: every caller here passes positionally,
+    so slotting it into the middle (where it sits in the C signature) would
+    silently shift `backend` into it. Position in Python need not match C.
+    """
     lib = load()
     code = lib.arm_scan_selective_scan_f32(
         ctypes.byref(dims), ptr_u, ptr_delta, ptr_a, ptr_b, ptr_c,
         ptr_d_skip or None, ptr_z or None, ptr_delta_bias or None,
-        int(bool(delta_softplus)), BACKENDS[backend], THREADING[threading],
+        int(bool(delta_softplus)), int(bool(reverse)),
+        BACKENDS[backend], THREADING[threading],
         ptr_out, ptr_last or None,
     )
     if code != 0:

@@ -1,39 +1,54 @@
-"""What do the flip copies actually cost? — the gate on TOPOLOGY_IMPLEMENTATION_PLAN.md §2.2.
+"""What did fusing the backward traversal actually buy? (TOPOLOGY_IMPLEMENTATION_PLAN.md §2)
 
-The bidirectional scan is correct today (plan §2.1) but pays for six full-tensor
-copies per call: it flips u/delta/B/C/z to scan backward, then flips the output
-back. A fused `reverse` flag in the kernel (plan §2.2) would delete all six by
-walking the sequence backward in place. Whether that is worth building depends
-entirely on what the copies cost — which nobody has measured. This measures it.
+A backward scan can be had two ways:
+
+  flip-based   flip u/delta/B/C/z along time, run the ordinary FORWARD kernel,
+               flip the output back. Correct, but six full-tensor copies.
+  fused        `selective_scan(..., reverse=True)` — the kernel walks the
+               sequence backward in place. Zero copies.
+
+This benchmark ran BEFORE the fused path existed, to decide whether to build it
+at all: it measured a *ceiling* on the win (2 forward scans with no flips) and
+reported **1.085x at L=128, falling to 1.025x at L=512** — i.e. the copies are
+worth ~2%. That was the honest answer, and it is why the fused path was NOT
+built as a speedup.
+
+It was built anyway, because the 2D cross-scan needs a backward traversal for
+its row-backward and column-backward directions — `reverse` is the substrate for
+SS2D, not a bidirectional optimization. Now that it exists, this file measures
+the REAL before/after instead of a proxy.
 
 WHAT IS TIMED
 
-  scan_fwd          one ordinary forward scan. The floor; half the scan work.
-  fused_estimate    two forward scans + the merge, with NO flips anywhere.
-                    This is the PROXY for a fused `reverse` implementation: the
-                    same scan work and the same merge, minus exactly the copy
-                    traffic the flag would remove.
-  bidirectional     the real thing today: flips + two scans + un-flip + merge.
-  flips_only        the six flips alone, no scans — isolates the copy cost so
-                    it can be read directly rather than inferred by subtraction.
+Baselines — the rows that matter, and the only ones fit to publish:
+  ref_eager_bidi      stock PyTorch, both directions, merged. What a real
+                      bidirectional Mamba does on CPU with no kernel installed.
+  ref_compile_bidi    the same under torch.compile — the FAIR baseline, since
+                      compile is what a competent user would already be doing.
 
-THE NUMBER THAT DECIDES §2.2
+Ours:
+  bidirectional       forward + kernel-fused reverse. No copies.
 
-  fusion_headroom = bidirectional / fused_estimate
+Diagnostics — internal, not for publication:
+  scan_fwd            one forward scan. Half the work; the floor.
+  fused_estimate      two forward scans + merge, no flips. Theoretical floor.
+  bidirectional_flip  the OLD path: explicit flips + two forward scans + un-flip.
+  flips_only          the six copies alone — what fusion actually removed.
 
-  ~1.0x  -> the flips are noise. Do NOT build the fused kernel; ship §2.1, and
-            say so honestly in the writeup.
-  >1.15x -> the flips are real. The fused `reverse` flag pays for itself.
+THE NUMBERS
 
-HONESTY ABOUT THE PROXY
-`fused_estimate` is an *upper bound* on what fusion can achieve, not a
-measurement of the fused path (which does not exist yet). It runs the identical
-scan work with zero flip traffic, so it cannot be beaten by a real fused
-kernel — a real one also reads the sequence backward, which is less
-cache-friendly than the forward stream timed here. Treat the headroom as a
-ceiling: if the ceiling is low, fusion is definitively not worth it; if it is
-high, the real win will be somewhat less. Reported as such, never as a speedup
-the kernel has achieved.
+  speedup_vs_eager / speedup_vs_compile   <- the result. Kernel vs stock PyTorch.
+  fusion_speedup = bidirectional_flip / bidirectional
+                                          <- INTERNAL. ~2%. Never a headline.
+
+Both baselines are built on the SAME vendored reference (tests/reference/) that
+the rest of the project measures against, so these rows are directly comparable
+to bench_op.py's.
+
+Two correctness gates run before any timing: the fused reverse must be
+bit-identical to the flip-based definition, AND the kernel must agree with the
+PyTorch reference it is being timed against. Beating a baseline you do not match
+is not a result.
 
 Usage:
     python bench/bench_bidirectional.py            # sweep over L
@@ -53,12 +68,14 @@ import torch
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "python"))
 sys.path.insert(0, str(REPO / "bench"))
+sys.path.insert(0, str(REPO / "tests"))
 
 import arm_scan  # noqa: E402
 # Reuse the harness rather than re-deriving it: the realistic value
 # distribution (negative A, softplus delta in ~[1e-3, 0.1]) is load-bearing for
 # these numbers, and a second copy of it would drift.
 from bench_op import bench, env_report, git_sha, make_inputs  # noqa: E402
+from reference import selective_scan_ref  # noqa: E402
 
 # Flip traffic is O(B·D·L) while scan work is O(B·D·L·N), so the ratio is
 # roughly independent of L in theory — but cache behaviour is not, which is the
@@ -84,15 +101,77 @@ def scan_fwd(t):
         delta_bias=t["delta_bias"], delta_softplus=True)
 
 
+# ---------------------------------------------------------------- baselines
+# A bidirectional scan in stock PyTorch. This is what a real bidirectional
+# Mamba does on CPU today with no kernel installed: run the scan, run it again
+# on the time-flipped inputs, flip that back, sum. Built on the SAME vendored
+# reference the rest of the project measures against (tests/reference/), so
+# these rows are directly comparable to bench_op.py's.
+
+
+def _bidi_ref(fn, t):
+    """Bidirectional scan via an arbitrary forward-scan callable `fn`."""
+    fwd = fn(t["u"], t["delta"], t["A"], t["B"], t["C"], t["D"], t["z"],
+             t["delta_bias"])
+    back = fn(flip_time(t["u"]), flip_time(t["delta"]), t["A"],
+              flip_time(t["B"]), flip_time(t["C"]), t["D"],
+              flip_time(t["z"]), t["delta_bias"])
+    return fwd + flip_time(back)
+
+
+def _ref_call(u, delta, A, B, C, D, z, delta_bias):
+    return selective_scan_ref(u, delta, A, B, C, D=D, z=z,
+                              delta_bias=delta_bias, delta_softplus=True)
+
+
+def ref_eager_bidi(t):
+    """Plain PyTorch, both directions. The eager baseline."""
+    return _bidi_ref(_ref_call, t)
+
+
+def make_ref_compile_bidi(t):
+    """torch.compile'd reference, both directions — the FAIR baseline.
+
+    Compiled once here (outside the timed region) and returned as a closure;
+    compile time is reported separately, never folded into the median. Returns
+    None if inductor is unavailable on this host, which is a normal outcome (no
+    MSVC on Windows), not a failure.
+    """
+    compiled = torch.compile(selective_scan_ref, dynamic=False)
+
+    def call(u, delta, A, B, C, D, z, delta_bias):
+        return compiled(u, delta, A, B, C, D=D, z=z, delta_bias=delta_bias,
+                        delta_softplus=True)
+
+    t0 = time.perf_counter()
+    _bidi_ref(call, t)          # warm the graph; this is where compilation lands
+    compile_s = time.perf_counter() - t0
+    return (lambda: _bidi_ref(call, t)), compile_s
+
+
 def fused_estimate(t):
-    """Two forward scans + merge, zero flips — the ceiling a fused `reverse`
-    flag could reach. Not a real backward scan: it computes the wrong answer on
-    purpose, because we are timing the WORK, not the result. (Correctness of the
-    real path is `tests/check_bidirectional.py`'s job, and it is green.)"""
+    """Two forward scans + merge, zero flips — the theoretical floor for any
+    bidirectional implementation. Not a real backward scan: it computes the
+    wrong answer on purpose, because we are timing the WORK, not the result.
+    (Correctness lives in `tests/check_bidirectional.py`, which is green.)"""
     return scan_fwd(t) + scan_fwd(t)
 
 
+def bidirectional_flip(t):
+    """The OLD path, kept explicitly so the fusion has a real before/after to be
+    measured against: flip the five time-varying inputs, scan forward, flip the
+    output back, merge. This is also exactly the DEFINITION `reverse=True` must
+    reproduce, so `bidirectional()` below must equal it bit-for-bit."""
+    flipped = {k: flip_time(t[k]) for k in _FLIP_KEYS}
+    back = arm_scan.selective_scan(
+        flipped["u"], flipped["delta"], t["A"], flipped["B"], flipped["C"],
+        D=t["D"], z=flipped["z"], delta_bias=t["delta_bias"],
+        delta_softplus=True)
+    return scan_fwd(t) + flip_time(back)
+
+
 def bidirectional(t):
+    """The NEW path: forward + kernel-fused reverse. No copies."""
     return arm_scan.bidirectional_scan(
         t["u"], t["delta"], t["A"], t["B"], t["C"], D=t["D"], z=t["z"],
         delta_bias=t["delta_bias"], delta_softplus=True, merge="sum")
@@ -100,7 +179,8 @@ def bidirectional(t):
 
 def flips_only(t):
     """The six copies in isolation: five time-varying inputs in, one output
-    back. The list keeps every flip referenced so none can be elided."""
+    back — precisely the work fusion removes. The list keeps every flip
+    referenced so none can be elided."""
     flipped = [flip_time(t[k]) for k in _FLIP_KEYS]   # 5 input copies
     return flip_time(flipped[0])                       # 1 output copy
 
@@ -112,9 +192,15 @@ def main():
     ap.add_argument("--reps", type=int, default=None)
     ap.add_argument("--warmup", type=int, default=None)
     ap.add_argument("--torch-threads", type=int, default=None)
+    ap.add_argument("--compile-max-len", type=int, default=512,
+                    help="skip the torch.compile baseline beyond this L "
+                         "(graph unrolling makes compile time explode)")
+    ap.add_argument("--no-compile", action="store_true")
     ap.add_argument("--tag", type=str, default=platform.node())
     ap.add_argument("--json", type=str, default=None)
     args = ap.parse_args()
+    if args.quick:
+        args.compile_max_len = min(args.compile_max_len, 128)
 
     if args.torch_threads:
         torch.set_num_threads(args.torch_threads)
@@ -130,14 +216,16 @@ def main():
     print("environment:")
     for k, v in env.items():
         print(f"  {k}: {v}")
-    print(f"\nflip-overhead study — suite="
+    print(f"\nbidirectional scan — suite="
           f"{'quick' if args.quick else args.suite} reps={reps} "
-          f"warmup={warmup}")
-    print("fusion_headroom = bidirectional / fused_estimate  "
-          "(a CEILING on what plan §2.2 could win)\n")
+          f"warmup={warmup} compile_max_len={args.compile_max_len}")
+    print("  vs eager / vs torch.compile : the numbers that matter "
+          "(kernel vs stock PyTorch)")
+    print("  fusion_speedup              : internal — what the fused reverse "
+          "removed vs the flip-based path (~2%, not a headline)\n")
 
     results = {
-        "kind": "bidirectional-flip-overhead",
+        "kind": "bidirectional-fused-reverse",
         "env": env,
         "reps": reps,
         "suite": "quick" if args.quick else args.suite,
@@ -150,53 +238,103 @@ def main():
             print(f"=== {label} ===")
             t = make_inputs(batch, dim, length, state)
 
-            # Sanity: the thing we are timing must be the thing that is
-            # correct. bidirectional() must equal an explicit flip-scan-flip
-            # sum, or the benchmark is measuring the wrong code path.
-            manual = scan_fwd(t) + flip_time(scan_fwd(
-                {**{k: flip_time(t[k]) for k in _FLIP_KEYS},
-                 "A": t["A"], "D": t["D"], "delta_bias": t["delta_bias"]}))
-            drift = (bidirectional(t) - manual).abs().max().item()
-            if drift > 0.0:
-                print(f"  !! bidirectional() does not match flip-scan-flip "
-                      f"(max_abs={drift:.3e}) — benchmark is untrustworthy")
+            # CORRECTNESS GATE 1: the fused reverse must reproduce the flip-based
+            # definition BIT-for-bit (same arithmetic, same order, different
+            # indexing). If it does not, those two series are not the same
+            # computation and the whole comparison is meaningless — so refuse to
+            # report a speedup rather than quote a fast wrong answer.
+            fused_out, flip_out = bidirectional(t), bidirectional_flip(t)
+            if not torch.equal(fused_out, flip_out):
+                drift = (fused_out - flip_out).abs().max().item()
+                print(f"  !! fused reverse != flip-forward-flip "
+                      f"(max_abs={drift:.3e}) — refusing to benchmark")
                 sys.exit(1)
 
-            row = {"shape": [batch, dim, length, state], "timings": {}}
-            for name, fn in (
+            # CORRECTNESS GATE 2: the kernel must agree with the PyTorch
+            # reference it is being timed against. Beating a baseline you do not
+            # match is meaningless.
+            ref_out = ref_eager_bidi(t)
+            max_err = (fused_out - ref_out).abs().max().item()
+            row = {"shape": [batch, dim, length, state], "timings": {},
+                   "kernel_vs_ref_max_abs": max_err}
+            print(f"  fused == flip-based: bit-identical   "
+                  f"kernel-vs-ref max_abs {max_err:.3e}")
+
+            series = [
+                ("ref_eager_bidi", ref_eager_bidi),
                 ("scan_fwd", scan_fwd),
                 ("fused_estimate", fused_estimate),
+                ("bidirectional_flip", bidirectional_flip),
                 ("bidirectional", bidirectional),
                 ("flips_only", flips_only),
-            ):
+            ]
+            for name, fn in series:
                 r = bench(lambda fn=fn: fn(t), warmup, reps)
                 row["timings"][name] = r
-                print(f"  {name:16s} {r['median_s']*1e3:9.3f} ms")
+                print(f"  {name:19s} {r['median_s']*1e3:9.3f} ms")
+
+            # torch.compile — the fair baseline. Compile cost is reported, never
+            # timed. Unavailable inductor (e.g. no MSVC on Windows) is a skip,
+            # not a failure.
+            if not args.no_compile and length <= args.compile_max_len:
+                try:
+                    fn, compile_s = make_ref_compile_bidi(t)
+                    r = bench(fn, warmup, reps)
+                    r["compile_s"] = compile_s
+                    row["timings"]["ref_compile_bidi"] = r
+                    print(f"  {'ref_compile_bidi':19s} "
+                          f"{r['median_s']*1e3:9.3f} ms "
+                          f"(one-time compile {compile_s:.1f}s)")
+                except Exception as e:
+                    row["timings"]["ref_compile_bidi"] = {"error": str(e)[:200]}
+                    print(f"  {'ref_compile_bidi':19s} unavailable: "
+                          f"{str(e)[:80]}")
+            elif not args.no_compile:
+                print(f"  {'ref_compile_bidi':19s} skipped (L={length} > "
+                      f"compile_max_len={args.compile_max_len})")
 
             bi = row["timings"]["bidirectional"]["median_s"]
+            fp = row["timings"]["bidirectional_flip"]["median_s"]
             fu = row["timings"]["fused_estimate"]["median_s"]
-            fl = row["timings"]["flips_only"]["median_s"]
+            eager = row["timings"]["ref_eager_bidi"]["median_s"]
 
-            headroom = bi / fu
-            flip_share = (bi - fu) / bi * 100.0
-            row["fusion_headroom"] = headroom
-            row["flip_share_pct"] = flip_share
-            row["flips_only_share_pct"] = fl / bi * 100.0
+            row["speedup_vs_eager"] = eager / bi
+            row["fusion_speedup"] = fp / bi          # internal, ~2%
+            row["fusion_headroom"] = fp / fu         # ceiling, for continuity
 
-            verdict = ("flips are NOISE — do not fuse" if headroom < 1.05
-                       else "marginal" if headroom < 1.15
-                       else "flips are REAL — fusion pays")
-            print(f"  -> fusion_headroom {headroom:.3f}x  "
-                  f"(flips = {flip_share:.1f}% of bidirectional runtime; "
-                  f"flips_only measures {row['flips_only_share_pct']:.1f}%)")
-            print(f"  -> {verdict}\n")
+            line = f"  => {row['speedup_vs_eager']:.2f}x vs eager"
+            comp = row["timings"].get("ref_compile_bidi", {})
+            if "median_s" in comp:
+                row["speedup_vs_compile"] = comp["median_s"] / bi
+                line += f", {row['speedup_vs_compile']:.2f}x vs torch.compile"
+            print(line)
+            print(f"     (internal: fused reverse won "
+                  f"{row['fusion_speedup']:.3f}x over the flip-based path)\n")
             results["shapes"].append(row)
 
-    hs = [r["fusion_headroom"] for r in results["shapes"]]
-    print(f"fusion_headroom across shapes: min={min(hs):.3f}x "
-          f"max={max(hs):.3f}x")
-    print("reminder: this is a CEILING (see module docstring) — a real fused "
-          "kernel reads backward and will land under it.")
+    ev = [r["speedup_vs_eager"] for r in results["shapes"]]
+    cv = [r["speedup_vs_compile"] for r in results["shapes"]
+          if "speedup_vs_compile" in r]
+    sp = [r["fusion_speedup"] for r in results["shapes"]]
+    hr = [r["fusion_headroom"] for r in results["shapes"]]
+
+    print("=" * 62)
+    print(f"bidirectional scan vs eager        : "
+          f"{min(ev):.2f}x – {max(ev):.2f}x")
+    if cv:
+        print(f"bidirectional scan vs torch.compile: "
+              f"{min(cv):.2f}x – {max(cv):.2f}x   <- the headline")
+    else:
+        print("bidirectional scan vs torch.compile: (not measured on this host)")
+    print(f"internal fusion win                : "
+          f"{min(sp):.3f}x – {max(sp):.3f}x (ceiling was "
+          f"{min(hr):.3f}x – {max(hr):.3f}x)")
+    if max(sp) > max(hr) + 0.02:
+        print("!! fusion win exceeds its own ceiling — the comparison is "
+              "suspect, not the kernel. Investigate before quoting it.")
+    print("\nThe fusion win is a ~2% internal effect and is NOT a headline. "
+          "`reverse` exists as the substrate for the 2D cross-scan "
+          "(see BIDIRECTIONAL_LOG.md); the vs-baseline rows are the result.")
 
     if args.json:
         Path(args.json).parent.mkdir(parents=True, exist_ok=True)

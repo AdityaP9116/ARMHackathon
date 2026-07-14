@@ -3,8 +3,8 @@
 **Status:** the plan. Written Jul 14, 2026. Companion to [`APPLICATIONS.md`](APPLICATIONS.md) (which topology feeds which showcase app) and [`INTEGRATION_PLAN.md`](INTEGRATION_PLAN.md) (Phases 0–6, already landed).
 
 > **Execution is tracked in per-topology logs** — what has actually been built against this plan, what it is verified against, and what broke on the way. This file stays the plan; the logs are the record.
-> - §2 (1D bidirectional) → [`BIDIRECTIONAL_LOG.md`](BIDIRECTIONAL_LOG.md) — §2.1 landed, §2.2 gated on a measurement.
-> - §3 (2D cross-scan / SS2D) → not started; gets its own log when it does.
+> - §2 (1D bidirectional) → [`BIDIRECTIONAL_LOG.md`](BIDIRECTIONAL_LOG.md). **§2.1 is landed and verified on Arm. §2.2 was measured and REJECTED** — the flip copies cost ~2%, not enough to fuse. Read that before touching §2.2.
+> - §3 (2D cross-scan / SS2D) → not started; gets its own log when it does. Note §3's copy overhead is a *different* question — it materializes four grid views, not one flipped sequence — so §2's rejection does **not** transfer to it. Measure it separately.
 
 **Scope:** how to take 1D bidirectional and 2D cross-scan from "correct via Python rearrangement" to "fast AND correct in Rust," using the already-shipped 1D unidirectional kernel as the architectural template. Section 1 documents that template as the reference; Sections 2 and 3 are the plans for the two new topologies; Section 4 is cross-cutting methodology and sequencing.
 
@@ -53,7 +53,30 @@ No Rust changes. In Python: call `selective_scan` (§1.5) twice — once as-is, 
 Deliverable: `python/arm_scan/bidirectional.py` (new) exposing a `bidirectional_scan(...)` function with the same tensor-shape contract as `op.selective_scan` plus a merge strategy parameter, callable from whichever app-specific integration (genomics/audio/ECG model class) needs it. This unblocks app-level demos and benchmark numbers immediately, independent of anything in §2.2.
 
 ### 2.2 Fast path: fused `reverse` flag in Rust
-**Estimated effort: half a day**, because the recurrence math doesn't change — only traversal order does.
+
+> ### ✅ BUILT — but read why, because it is NOT a speedup.
+>
+> `bench/bench_bidirectional.py` measured what the flip copies cost: a **ceiling**
+> of 1.085× at L=128, falling to 1.025× at L=512 — i.e. **~2%**, shrinking as L
+> grows. As a bidirectional optimization this does not pay, and that finding
+> stands.
+>
+> It was built anyway because **SS2D needs a backward traversal regardless** — §3.2's
+> row-backward and column-backward directions reuse the 1D scan with this exact
+> flag. `reverse` is the *substrate* for the 2D cross-scan; removing bidirectional's
+> flip copies is a side effect, not the reason.
+>
+> **Ship it as:** *"a fused backward traversal, the substrate for the 2D cross-scan."*
+> **Never as:** *"we made bidirectional faster."*
+>
+> **One correction to the design below:** it claims the NEON work needs SIMD
+> lane-reversal (`vrev64q_f32`/`vextq_f32`). **It does not.** Pass A is pointwise in
+> time, and Pass B vectorizes across *state* while `t` is a scalar index — so
+> reversing is one subtraction, no shuffles. The real change was a chunk-order
+> iterator plus a flipped index. Full write-up:
+> [`BIDIRECTIONAL_LOG.md`](BIDIRECTIONAL_LOG.md) Step 3.
+
+**Original estimate: half a day**, because the recurrence math doesn't change — only traversal order does.
 
 | Layer | Change |
 |---|---|

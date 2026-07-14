@@ -99,6 +99,25 @@ pub struct ScanInput<'a, T> {
     /// discretization). HF's slow path pre-applies softplus, so the patch
     /// layer passes `false`; mamba-ssm call sites pass `true`.
     pub delta_softplus: bool,
+    /// Walk the sequence backward in time: the state starts at zero at the
+    /// END of the sequence and accumulates toward the start. Output for
+    /// timestep `t` is still written at index `t`, and the pointwise D-skip
+    /// and z-gate still apply at index `t` — only the recurrence's traversal
+    /// order changes, never the layout.
+    ///
+    /// Exactly equivalent to reversing the time axis of u/delta/b/c/z, running
+    /// a forward scan, and reversing the output — but without materializing any
+    /// of those copies. That equivalence is the definition, and it is enforced
+    /// bit-for-bit by `reverse_matches_flip_forward_flip` in `tests/property.rs`
+    /// (and independently, in Python, by `tests/check_bidirectional_math.py`).
+    ///
+    /// `last_state` under reverse is the state after consuming `t == 0` — the
+    /// state at the START of the sequence. It is not a resumable decode cache
+    /// the way the forward scan's `last_state` is.
+    ///
+    /// This is the 1D half of the bidirectional / 2D cross-scan topologies; see
+    /// TOPOLOGY_IMPLEMENTATION_PLAN.md.
+    pub reverse: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -315,6 +334,7 @@ fn try_neon<T: Float>(
         z: input.z.map(cast),
         delta_bias: input.delta_bias.map(cast),
         delta_softplus: input.delta_softplus,
+        reverse: input.reverse,
     };
     neon::scan(
         dims,

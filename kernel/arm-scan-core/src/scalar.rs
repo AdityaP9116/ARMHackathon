@@ -44,7 +44,13 @@ pub(crate) fn scan<T: Float>(
             let z_row = input.z.map(|z| &z[row..row + len]);
 
             h.fill(T::ZERO);
-            for (t, out_slot) in out_row.iter_mut().enumerate() {
+            for i in 0..len {
+                // The ONLY thing `reverse` changes: which timestep this step of
+                // the recurrence consumes. Output still lands at index `t`, and
+                // the pointwise D-skip / z-gate still read index `t`, so the
+                // layout is untouched — see `ScanInput::reverse`.
+                let t = if input.reverse { len - 1 - i } else { i };
+
                 let mut dt = delta_row[t] + bias;
                 if input.delta_softplus {
                     dt = dt.softplus();
@@ -65,7 +71,7 @@ pub(crate) fn scan<T: Float>(
                 if let Some(z) = z_row {
                     y = y * z[t].silu();
                 }
-                *out_slot = y;
+                out_row[t] = y;
             }
 
             if let Some(ls) = last {
@@ -111,6 +117,7 @@ mod tests {
             z: Some(&[z]),
             delta_bias: Some(&[bias]),
             delta_softplus: true,
+            reverse: false,
         };
         let mut out = [0.0_f64];
         let mut last = [0.0_f64; 2];
@@ -156,6 +163,7 @@ mod tests {
             z: None,
             delta_bias: None,
             delta_softplus: false,
+            reverse: false,
         };
         let mut out = [0.0_f64; 2];
         selective_scan_for_test(&dims, &input, &mut out, &mut []);

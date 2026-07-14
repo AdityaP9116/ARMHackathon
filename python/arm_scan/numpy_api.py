@@ -15,13 +15,16 @@ def _prep(x, name, shape=None):
 
 def selective_scan_numpy(u, delta, A, B, C, D=None, z=None, delta_bias=None,
                          delta_softplus=False, return_last_state=False,
-                         backend="auto", threading="auto"):
+                         backend="auto", threading="auto", reverse=False):
     """Selective scan on numpy arrays (see kernel docs for semantics).
 
     u, delta: (batch, dim, len); A: (dim, state);
     B, C: (batch, state, len) or (batch, groups, state, len);
     D, delta_bias: (dim,); z: (batch, dim, len).
     Returns out (batch, dim, len) [, last_state (batch, dim, state)].
+
+    reverse: walk the sequence backward in time; output layout unchanged
+    (timestep t still lands at index t). See `arm_scan.selective_scan`.
     """
     u = _prep(u, "u")
     if u.ndim != 3:
@@ -59,6 +62,6 @@ def selective_scan_numpy(u, delta, A, B, C, D=None, z=None, delta_bias=None,
     _ffi.scan_raw(
         dims, ptr(u), ptr(delta), ptr(A), ptr(B), ptr(C), ptr(D), ptr(z),
         ptr(delta_bias), delta_softplus, backend, threading,
-        out.ctypes.data, last.ctypes.data,
+        out.ctypes.data, last.ctypes.data, reverse=reverse,
     )
     return (out, last) if return_last_state else out

@@ -22,9 +22,11 @@ use arm_scan_core::{
 
 /// ABI version. The Python loader checks this before calling anything else.
 /// Bump on any signature or semantic change to `arm_scan_selective_scan_f32`.
+///
+/// 3: added the `reverse` parameter (backward-in-time traversal).
 #[no_mangle]
 pub extern "C" fn arm_scan_abi_version() -> u32 {
-    2
+    3
 }
 
 /// Dimensions for a scan call. `groups` must divide `dim`.
@@ -69,6 +71,10 @@ fn threading_from(v: c_int) -> Option<Threading> {
 /// `threading`: 0 = auto, 1 = sequential, 2 = rayon.
 /// `delta_softplus`: nonzero to apply softplus(delta + delta_bias) inside
 /// the kernel.
+/// `reverse`: nonzero to walk the sequence backward in time. Output layout is
+/// unchanged (timestep `t` still lands at index `t`); only the recurrence's
+/// traversal order flips. Equivalent to flipping the time axis of u/delta/b/c/z,
+/// scanning forward, and flipping the output back — without the copies.
 ///
 /// Returns `ARM_SCAN_OK` (0) on success, a nonzero code otherwise; `out`
 /// contents are unspecified on error.
@@ -91,6 +97,7 @@ pub unsafe extern "C" fn arm_scan_selective_scan_f32(
     z: *const f32,
     delta_bias: *const f32,
     delta_softplus: c_int,
+    reverse: c_int,
     backend: c_int,
     threading: c_int,
     out: *mut f32,
@@ -164,6 +171,7 @@ pub unsafe extern "C" fn arm_scan_selective_scan_f32(
         z: opt(z, bdl),
         delta_bias: opt(delta_bias, d.dim),
         delta_softplus: delta_softplus != 0,
+        reverse: reverse != 0,
     };
     let out_slice = std::slice::from_raw_parts_mut(out, bdl);
     let mut last_slice = if last_state.is_null() {
@@ -221,6 +229,7 @@ mod tests {
                 0,
                 0,
                 0,
+                0,
                 out.as_mut_ptr(),
                 last.as_mut_ptr(),
             )
@@ -229,6 +238,58 @@ mod tests {
         let h = 0.1 * 0.5 * 1.5; // dt*u*b (state starts at 0)
         assert!((out[0] - (2.0 * h) as f32).abs() < 1e-6);
         assert!((last[0] - h as f32).abs() < 1e-6);
+    }
+
+    /// `reverse` across the C ABI, hand-computed. Two timesteps, N=1, no
+    /// softplus: a backward scan consumes t=1 first (state starts at zero at
+    /// the END), so out[1] sees only its own input and out[0] carries the decay
+    /// from t=1. Output still lands at index t — the layout never flips.
+    #[test]
+    fn ffi_reverse_two_steps() {
+        let dims = ArmScanDims {
+            batch: 1,
+            dim: 1,
+            len: 2,
+            state: 1,
+            groups: 1,
+        };
+        let (u, dt, a, b, c) = (
+            [1.0_f32, 2.0],
+            [0.1_f32, 0.2],
+            [-2.0_f32],
+            [1.0_f32, 3.0],
+            [1.0_f32, 1.0],
+        );
+        let mut out = [0.0_f32; 2];
+        let mut last = [0.0_f32; 1];
+        let code = unsafe {
+            arm_scan_selective_scan_f32(
+                &dims,
+                u.as_ptr(),
+                dt.as_ptr(),
+                a.as_ptr(),
+                b.as_ptr(),
+                c.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+                0, // delta_softplus
+                1, // reverse
+                0,
+                0,
+                out.as_mut_ptr(),
+                last.as_mut_ptr(),
+            )
+        };
+        assert_eq!(code, ARM_SCAN_OK);
+
+        // backward: h after t=1, then after t=0
+        let h1 = 0.2_f32 * 2.0 * 3.0; // dt*u*b at t=1 (state starts at 0)
+        let h0 = (0.1_f32 * -2.0).exp() * h1 + 0.1 * 1.0 * 1.0;
+        assert!((out[1] - h1).abs() < 1e-6, "out[1]={} want {h1}", out[1]);
+        assert!((out[0] - h0).abs() < 1e-6, "out[0]={} want {h0}", out[0]);
+        // last_state under reverse is the state after consuming t == 0
+        assert!((last[0] - h0).abs() < 1e-6);
     }
 
     #[test]
@@ -256,6 +317,7 @@ mod tests {
                 0,
                 0,
                 0,
+                0,
                 out.as_mut_ptr(),
                 std::ptr::null_mut(),
             )
@@ -274,7 +336,8 @@ mod tests {
                 std::ptr::null(),
                 std::ptr::null(),
                 0,
-                7,
+                0,
+                7, // bad backend enum
                 0,
                 out.as_mut_ptr(),
                 std::ptr::null_mut(),

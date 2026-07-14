@@ -1,9 +1,16 @@
-"""Bidirectional selective scan — the correctness path (TOPOLOGY_IMPLEMENTATION_PLAN.md §2.1).
+"""Bidirectional selective scan (TOPOLOGY_IMPLEMENTATION_PLAN.md §2).
 
 Runs the recurrence over the sequence in both time directions and merges the
-two outputs. Built entirely on the existing 1D op: no new Rust, no new FFI.
-The fused version (a `reverse` flag in the kernel, §2.2 of the plan) replaces
-only this module's internals — `_scan_reverse` below is the single seam.
+two outputs. The backward direction is **fused in the kernel** — it walks the
+sequence backward in place via `selective_scan(..., reverse=True)` rather than
+materializing flipped copies of u/delta/B/C/z and un-flipping the result.
+
+Honest framing of what that fusion is worth: it removes six full-tensor copies,
+which `bench/bench_bidirectional.py` measured at **~2%** of runtime (falling as
+the sequence lengthens). It is not a speedup story. It was built because the 2D
+cross-scan needs a backward traversal anyway — its column-backward and
+row-backward directions are this same primitive — so `reverse` is the substrate
+for SS2D, not a bidirectional optimization. See BIDIRECTIONAL_LOG.md.
 
 WHICH BIDIRECTIONAL MODELS THIS IS FOR
 --------------------------------------
@@ -31,13 +38,15 @@ produces plausible-looking output that is quietly wrong.
 MERGE
 -----
 `merge="sum"` matches the common case. Note that for any LINEAR merge (sum,
-mean), gating inside each direction with the (correspondingly flipped) `z` is
-algebraically identical to gating once after the merge:
+mean), gating inside each direction with `z` is algebraically identical to
+gating once after the merge:
 
-    fwd: y_f[t]·silu(z[t]);  bwd (after un-flipping): y_b[t]·silu(z[t])
+    fwd: y_f[t]·silu(z[t]);  bwd: y_b[t]·silu(z[t])
     sum: (y_f[t] + y_b[t])·silu(z[t])
 
 so we let the kernel apply the gate in both passes and do not special-case it.
+(The reverse scan reads `z` at index t like everything else — `reverse` changes
+traversal order, never layout — so no flipping is involved on either side.)
 For anything non-linear (a learned gated combine), pass `merge="none"` and do
 the combination yourself on the two returned tensors — the primitive should not
 guess at a model-specific merge.
@@ -50,8 +59,6 @@ in `tests/check_bidirectional_math.py`. If your model wants D counted once,
 pass `D=None` here and add the skip yourself after merging.
 """
 
-from typing import Optional
-
 import torch
 
 from .op import selective_scan
@@ -59,37 +66,32 @@ from .op import selective_scan
 _MERGES = ("sum", "mean", "concat", "none")
 
 
-def _flip_time(t: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
-    """Reverse the time axis, which is last for every time-varying tensor in
-    the layout contract (u/delta/z: (B,D,L); B/C: (B,[G,]N,L))."""
-    return None if t is None else torch.flip(t, dims=(-1,))
-
-
 def _scan_reverse(u, delta, A, B, C, D, z, delta_bias, delta_softplus,
                   return_last_state):
-    """Scan the sequence backward in time.
+    """Scan the sequence backward in time — fused, no copies.
 
-    THE SEAM: today this flips the time-varying inputs, runs the forward
-    kernel, and flips the output back — correct, but it pays for four
-    full-tensor copies in and one out. Once the kernel grows the `reverse`
-    flag (plan §2.2), the body becomes a single
-    `selective_scan(..., reverse=True)` with no flips, and every caller of this
-    module gets the win for free.
+    THE SEAM (now closed). This used to flip the five time-varying inputs, run
+    the forward kernel, and flip the output back — correct, but six full-tensor
+    copies per call. The kernel now walks the sequence backward in place, so the
+    whole thing is one call and the copies are gone. Nothing above this function
+    changed.
+
+    Kept as a named function rather than inlined because it is the documented
+    seam, and because the flip-based definition it replaces is still the
+    specification: `reverse=True` is *defined* as flip-forward-flip, enforced
+    bit-for-bit by `reverse_matches_flip_forward_flip` in the Rust property
+    tests and by `tests/check_bidirectional_math.py` in numpy.
 
     `last_state` here is the state after consuming t=0 (the last step a
     backward scan sees) — i.e. the state at the START of the sequence. It is
     not a resumable cache the way the forward scan's last_state is;
     bidirectional models are non-causal and generally ignore it.
     """
-    out = selective_scan(
-        _flip_time(u), _flip_time(delta), A, _flip_time(B), _flip_time(C),
-        D=D, z=_flip_time(z), delta_bias=delta_bias,
+    return selective_scan(
+        u, delta, A, B, C, D=D, z=z, delta_bias=delta_bias,
         delta_softplus=delta_softplus, return_last_state=return_last_state,
+        reverse=True,
     )
-    if return_last_state:
-        out, last = out
-        return _flip_time(out), last
-    return _flip_time(out)
 
 
 def bidirectional_scan(u, delta, A, B, C, D=None, z=None, delta_bias=None,
@@ -111,10 +113,11 @@ def bidirectional_scan(u, delta, A, B, C, D=None, z=None, delta_bias=None,
     reverse_params: for models whose backward direction has its OWN weights
       (Vim's `bimamba_type="v2"` has a separate A_b, D_b, dt_proj_b), pass a
       dict overriding any of "A", "D", "delta", "delta_bias", "B", "C" for the
-      backward pass. Time-varying overrides (delta/B/C) are used as given and
-      are NOT flipped — supply them already in forward-time order, exactly as
-      you would for the forward pass. Default (None) is the weight-tied case:
-      the backward pass reuses A/D/delta_bias and the flipped forward tensors.
+      backward pass. Supply time-varying overrides (delta/B/C) in ordinary
+      forward-time order, exactly as you would for the forward pass — the kernel
+      reverses the traversal, not the layout, so nothing is ever pre-flipped.
+      Default (None) is the weight-tied case: the backward pass reuses
+      A/D/delta_bias and the same forward tensors.
 
     Returns out (batch, dim, len) — or (batch, 2*dim, len) for "concat", or a
     2-tuple for "none". With return_last_state=True, each output is paired with

@@ -1,7 +1,7 @@
 """The bidirectional scan's DEFINITION, verified in pure numpy — no kernel, no torch.
 
-`bidirectional.py` (and, later, the Rust `reverse` flag from
-TOPOLOGY_IMPLEMENTATION_PLAN.md §2.2) both rest on one load-bearing claim:
+`bidirectional.py` and the Rust `reverse` flag (`ScanInput::reverse`) both rest
+on one load-bearing claim:
 
     flipping the time axis, running an ordinary FORWARD scan, and flipping the
     output back  ==  running the recurrence BACKWARD in time.
@@ -14,8 +14,10 @@ and compares it against flip-forward-flip built on the already-independent
 `naive_scan_f64` from `verify_golden.py`.
 
 This file therefore doubles as the **executable spec for the Rust `reverse`
-flag**: `naive_scan_backward_f64` below is exactly what `reverse=true` must
-compute.
+flag**: `naive_scan_backward_f64` below is exactly what `reverse=true` computes.
+The Rust side asserts the same identity bit-for-bit against the real kernel
+(`reverse_matches_flip_forward_flip` in `kernel/arm-scan-core/tests/property.rs`);
+this file proves the identity itself is sound, independently of any kernel.
 
 Runs with numpy alone — no Rust toolchain, no built cdylib, no torch. The
 kernel-level gate for `bidirectional.py` itself is `check_bidirectional.py`.
@@ -257,8 +259,10 @@ def main():
     if not all(results):
         print("\nBIDIRECTIONAL MATH CHECK FAILED")
         sys.exit(1)
-    print("\nequivalence holds — flip-based path and the future Rust "
-          "`reverse` flag compute the same function")
+    print("\nequivalence holds — flip-forward-flip and a backward-in-time "
+          "recurrence are the same function")
+    print("(this is the spec the Rust `reverse` flag implements; it is checked "
+          "against it bit-for-bit by reverse_matches_flip_forward_flip)")
 
 
 if __name__ == "__main__":

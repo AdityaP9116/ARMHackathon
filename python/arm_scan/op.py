@@ -31,6 +31,7 @@ def _selective_scan_op(
     z: Optional[torch.Tensor],
     delta_bias: Optional[torch.Tensor],
     delta_softplus: bool,
+    reverse: bool,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     batch, dim, length = u.shape
     state = a.shape[1]
@@ -44,20 +45,22 @@ def _selective_scan_op(
         dims, u.data_ptr(), delta.data_ptr(), a.data_ptr(), b.data_ptr(),
         c.data_ptr(), ptr(d_skip), ptr(z), ptr(delta_bias),
         delta_softplus, "auto", "auto", out.data_ptr(),
-        last_state.data_ptr(),
+        last_state.data_ptr(), reverse=reverse,
     )
     _CALLS["n"] += 1
     return out, last_state
 
 
 @_selective_scan_op.register_fake
-def _(u, delta, a, b, c, d_skip, z, delta_bias, delta_softplus):
+def _(u, delta, a, b, c, d_skip, z, delta_bias, delta_softplus, reverse):
+    # `reverse` changes traversal order, never shapes.
     return torch.empty_like(u), u.new_empty(
         (u.shape[0], u.shape[1], a.shape[1]))
 
 
 def selective_scan(u, delta, A, B, C, D=None, z=None, delta_bias=None,
-                   delta_softplus=False, return_last_state=False):
+                   delta_softplus=False, return_last_state=False,
+                   reverse=False):
     """Selective scan on CPU float32 torch tensors.
 
     u, delta, z: (batch, dim, len); A: (dim, state);
@@ -67,6 +70,13 @@ def selective_scan(u, delta, A, B, C, D=None, z=None, delta_bias=None,
 
     Tensors are made contiguous/f32 here, so callers can pass transposed
     views directly.
+
+    reverse: walk the sequence backward in time. The output layout is
+    unchanged — timestep t still lands at index t — so this is NOT the same as
+    reversing the output; it is exactly equivalent to flipping the time axis of
+    u/delta/B/C/z, scanning forward, and flipping the result back, minus the
+    copies. Under reverse, `last_state` is the state after consuming t=0 (the
+    START of the sequence), so it is not a resumable decode cache.
     """
     batch, dim, length = u.shape
     state = A.shape[1]
@@ -80,6 +90,7 @@ def selective_scan(u, delta, A, B, C, D=None, z=None, delta_bias=None,
         None if z is None else _c(z),
         None if delta_bias is None else _c(delta_bias),
         delta_softplus,
+        reverse,
     )
     return (out, last_state) if return_last_state else out
 
