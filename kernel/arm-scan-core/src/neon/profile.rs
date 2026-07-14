@@ -22,7 +22,7 @@
 use core::arch::aarch64::*;
 use std::time::Instant;
 
-use super::{exp, Channel, Scratch, CHUNK};
+use super::{exp, Channel, Scratch};
 use crate::{ScanDims, ScanInput};
 
 /// Accumulated nanoseconds per phase over a whole (sequential) scan.
