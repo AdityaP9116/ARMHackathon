@@ -363,16 +363,21 @@ def main():
 
     # ---- torch.compile's COST, reported rather than hidden in a skip message.
     #
-    # Measured, and it does NOT explode: 59.3s -> 134.1s for L 128 -> 512, i.e.
-    # ~2.3x for 4x the length (sub-linear), amortizing after ~6-13k iterations.
-    # So compile COST is a weak argument and should not be leaned on — a
-    # long-running server clears that bar easily.
+    # Measured over L = 128..2048: compile time is LINEAR in L, converging to
+    # ~0.26 s PER TIMESTEP (63s@128, 137s@512, 251s@1024, 534s@2048). The
+    # recurrence is a Python `for t in range(L)` loop, so inductor unrolls it into
+    # an L-step graph and pays per step.
     #
-    # The argument that survives is the steady-state one: we are 3.6-4.7x faster
-    # than torch.compile *after* it has fully paid its compile cost, and the gap
-    # WIDENS with L (compile scales linearly in L; the kernel sub-linearly, as
-    # fixed per-call overhead amortizes). Report the cost honestly, and let the
-    # ratio carry the case.
+    # An earlier two-point fit (128, 512) suggested this was sub-linear and the
+    # claim was withdrawn; four points show that was the fixed compiler startup
+    # cost washing out. Extrapolating 0.26 s/step: L=8192 is ~36 min, and the
+    # 131k-token genomics context is ~9.5 HOURS — if it does not OOM building the
+    # graph first. At the lengths our applications use, torch.compile is not a
+    # slow baseline, it is an absent one.
+    #
+    # Publish the amortization column too: it is the number a skeptic computes
+    # anyway (~5,450 iterations for L>=512, stable because compile and runtime
+    # both scale linearly), and it is better coming from us.
     comp_rows = [(r["shape"][2], r["timings"]["ref_compile_bidi"]["compile_s"],
                   r["timings"]["ref_compile_bidi"]["median_s"])
                  for r in results["shapes"]

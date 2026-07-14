@@ -16,21 +16,22 @@ benchmarked, and no fusion work starts, until the correctness path is green.
 *fast* (fused in Rust, via a kernel `reverse` flag). The correct stage lands
 first so the fusion is justified by a measurement instead of an assumption.
 
-> ## ✅ Bottom line (all CI green; three runs, latest `23995c7`)
+> ## ✅ Bottom line (all CI green; full L sweep, `3c7a7c3`)
 >
-> **A bidirectional selective scan on Arm runs 3.63× (L=128) to 4.67× (L=512)
-> faster than `torch.compile`, and 15–24× faster than PyTorch eager**, at
-> 4.3e-6 – 6.9e-6 max abs error vs the f64 reference (gate: 1e-4).
+> **A bidirectional selective scan on Arm runs 5.2–5.6× faster than
+> `torch.compile` (L ≥ 512) and 16–27× faster than PyTorch eager**, holding
+> 4.3e-6 – 8.6e-6 max abs error vs the f64 reference (gate: 1e-4) all the way out
+> to **L = 8192**.
 >
-> **The advantage grows with sequence length**, and there is a mechanism:
-> `torch.compile` scales linearly in L while the kernel scales sub-linearly (fixed
-> per-call overhead amortizes). That points the right way for the long-sequence
-> applications this topology targets.
+> **And `torch.compile` cannot follow us to the lengths the applications need.**
+> Compile time is **linear in L** — it converges to ~0.26 s *per timestep* — because
+> the recurrence is unrolled into an L-step graph. L=8192 would take ~36 minutes to
+> compile; the 131k-token genomics context would take **~9.5 hours**, if it did not
+> OOM first. That is not a slow baseline; it is an absent one.
 >
 > The `reverse` kernel flag exists as the **substrate for the 2D cross-scan**, not
-> as a bidirectional speedup — its own contribution is ~3–7% and does not
-> reproduce reliably on a shared runner. Quote the vs-`torch.compile` row, and
-> nothing else.
+> as a bidirectional speedup — its own contribution is 1–7% with no stable pattern.
+> Quote the vs-`torch.compile` row, and nothing else.
 
 ---
 
@@ -558,42 +559,88 @@ Host: GitHub `ubuntu-24.04-arm` runner — 4-core aarch64, torch 2.13.0, `--quic
 a dedicated Arm host. Two independent runs are reported, because the agreement
 between them is what makes the numbers credible.
 
-### The result (run `23995c7` — the first with `torch.compile` at BOTH shapes)
+### The result (run `3c7a7c3` — full L sweep, 128 → 8192)
 
-| Shape | eager | torch.compile | **kernel** | vs eager | **vs torch.compile** |
+| L | eager | torch.compile | **kernel** | vs eager | **vs torch.compile** |
 |---|---|---|---|---|---|
-| B1 D768 L128 N16 | 25.40 ms | 6.13 ms | **1.69 ms** | 15.0× | **3.63×** |
-| B1 D768 L512 N16 | 130.90 ms | 25.99 ms | **5.56 ms** | 23.5× | **4.67×** |
+| 128 | 27.84 ms | 6.66 ms | **1.70 ms** | 16.4× | **3.92×** |
+| 512 | 136.06 ms | 30.86 ms | **5.74 ms** | 23.7× | **5.38×** |
+| 1024 | 262.57 ms | 56.70 ms | **10.95 ms** | 24.0× | **5.18×** |
+| 2048 | 540.64 ms | 118.25 ms | **21.03 ms** | 25.7× | **5.62×** |
+| 4096 | 1130.13 ms | *(compile capped)* | **41.87 ms** | 27.0× | — |
+| 8192 | 2303.90 ms | *(compile capped)* | **87.67 ms** | 26.3× | — |
 
-Correctness in the same run: kernel-vs-f64-reference max abs **4.29e-6** (L128) /
-**6.91e-6** (L512), against the 1e-4 gate — identical across all three runs. All
-13 cases of `check_bidirectional.py` green, including `state13_neon_tail`,
-grouped B/C, `edge_len1`, every merge mode, untied `reverse_params`, and
-`fwd == plain 1D scan` (bit-identical).
+B=1, D=768, N=16. Correctness in the same run: kernel-vs-f64 max abs **4.3e-6 →
+8.6e-6**, against the 1e-4 gate — and, importantly, **it does not drift with L**.
+Accumulating 8192 sequential steps through a chunked scan with a degree-3 exp
+could plausibly have degraded; it did not. All 13 cases of
+`check_bidirectional.py` green.
 
-Earlier runs (`6e92b03`, `605b056`) measured 3.93× / 3.99× at L=128 and could not
-reach L=512 at all — `--quick` was clamping `--compile-max-len` to 128 *even when
-the flag was passed explicitly*, which made the row we most wanted unreachable.
-Fixed; an explicit value now wins.
+### The ratio improves, then PLATEAUS — it does not keep growing
 
-### The advantage GROWS with sequence length — and that is the finding
+**Correcting an earlier claim.** From two points (128 → 512) I concluded the
+advantage "grows with sequence length." With six points it clearly **plateaus**:
 
-3.63× at L=128 → **4.67×** at L=512. Not noise; there is a mechanism:
+- **3.92×** at L=128, then **5.2–5.6×** from L=512 onward.
 
-| | L=128 → L=512 (4× the length) |
+The jump is real but it is a *one-off*, not a trend. L=128 is **depressed** by the
+kernel's fixed per-call overhead (ctypes dispatch, `_c()` contiguity checks,
+output allocation — the ~0.14 ms measured in Step 2), which is a meaningful
+fraction of a 1.7 ms call and a negligible one of a 21 ms call. Once it amortizes
+(by L≈512), both the kernel and `torch.compile` scale linearly in L, so the ratio
+settles.
+
+**Honest headline: ~5.2–5.6× vs `torch.compile` at L ≥ 512; ~3.9× at very short L.**
+
+### ⚠ Compile time is LINEAR in L — the withdrawn claim, reinstated with data
+
+Step 5 previously **withdrew** the "compile time explodes" argument, on the basis
+that 59 s → 134 s (L 128 → 512) is only 2.3× for 4× the length, i.e. sub-linear.
+**That withdrawal was premature — it was a two-point fit.** With four points:
+
+| L | compile | **seconds per timestep** |
+|---|---|---|
+| 128 | 63.4 s | 0.495 |
+| 512 | 136.7 s | 0.267 |
+| 1024 | 251.0 s | 0.245 |
+| 2048 | 533.5 s | **0.260** |
+
+The per-timestep cost **converges to ~0.26 s**. Compile time is **linear in L** —
+doubling the sequence doubles the compilation. The apparent sub-linearity at
+128→512 was just the fixed compiler startup cost washing out.
+
+Extrapolating that constant:
+
+| L | projected compile time |
 |---|---|
-| `torch.compile` | 6.13 → 25.99 ms = **4.2×** (linear in L) |
-| **our kernel** | 1.69 → 5.56 ms = **3.3×** (sub-linear) |
+| 8192 | **~36 minutes** |
+| 131,072 (genomics context) | **~9.5 hours** |
 
-The kernel is sub-linear because its fixed per-call cost (ctypes dispatch, the
-`_c()` contiguity checks, output allocation — the ~0.14 ms measured in Step 2)
-amortizes as L grows. `torch.compile` has no such fixed cost to amortize, so it
-tracks the O(L) work exactly. **The gap therefore widens with sequence length**,
-which points the right way for every long-sequence application this topology
-targets (genomics at 131k, long audio, multi-hour ECG).
+…assuming it does not OOM first, which a 131k-step unrolled graph almost
+certainly would.
 
-Worth testing at L=2048/8192 on a dedicated host — if the trend holds, the
-headline number at the lengths that matter is *better* than 4.67×.
+**This is the moat, stated precisely.** At the sequence lengths our headline
+applications actually use, `torch.compile` is not a slow baseline — it is an
+**absent** one. `CLAUDE.md` says the kernel's argument is that "`torch.compile`
+cannot restructure a sequential recurrence"; the linear compile cost is that claim
+made measurable, and it now rests on four points rather than an assertion.
+
+**Amortization is stable at ~5,450 iterations** for L ≥ 512 (compile and runtime
+both scale linearly, so the ratio is constant). That is the number a skeptic
+computes for themselves, so we publish it rather than let them derive it.
+
+### Methodological note: I over-extrapolated from two points, twice
+
+Both mistakes in this section came from the same error, in opposite directions:
+
+1. *"The advantage grows with L"* — from two points. It plateaus.
+2. *"Compile cost does not explode"* — from two points. It is linear, and at
+   application scale that is fatal for the baseline.
+
+Each was corrected only by measuring more shapes. **Two points define a line; they
+do not establish a trend.** The same lesson the fusion number taught (Step 5,
+"two runs is not reproducibility") — recorded here because it cost real time twice
+and would have put a wrong claim in front of a judge both times.
 
 **Why this number is believable:** the *forward* scan measures **3.74×** vs
 `torch.compile` at the same shape ([`OPTIMIZATION_LOG.md`](./OPTIMIZATION_LOG.md)).

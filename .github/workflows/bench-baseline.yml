@@ -104,7 +104,12 @@ jobs:
     name: bidirectional long-L (linux-arm64)
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 90
+    # Compile cost is ~0.26 s/timestep and LINEAR in L, so a full sweep with
+    # compile_max_len=8192 needs ~70 min of inductor alone (35 min for L=8192
+    # by itself). 150 gives real headroom: if the job is KILLED we want to know
+    # it was an OOM, not that we clipped the timeout — those are different
+    # findings and only one of them is interesting.
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
