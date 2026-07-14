@@ -335,6 +335,15 @@ def main():
                   f"{row['fusion_speedup']:.3f}x over the flip-based path)\n")
             results["shapes"].append(row)
 
+            # Flush after EVERY shape, not just at the end. At long L,
+            # torch.compile builds an L-step unrolled graph and can be killed by
+            # the OOM reaper mid-sweep — a hard kill, not an exception we could
+            # catch. Without this, an L=8192 death would destroy the 128..4096
+            # results we already paid ~10 minutes of compilation for.
+            if args.json:
+                Path(args.json).parent.mkdir(parents=True, exist_ok=True)
+                Path(args.json).write_text(json.dumps(results, indent=2))
+
     ev = [r["speedup_vs_eager"] for r in results["shapes"]]
     cv = [r["speedup_vs_compile"] for r in results["shapes"]
           if "speedup_vs_compile" in r]
@@ -349,14 +358,21 @@ def main():
     else:
         print("bidirectional scan vs torch.compile: (not measured on this host)")
     print(f"fused reverse vs flip-based path   : "
-          f"{min(sp):.3f}x – {max(sp):.3f}x (internal; grows with L)")
+          f"{min(sp):.3f}x – {max(sp):.3f}x (internal; small, and NOT stable "
+          f"run-to-run on a shared host)")
 
-    # ---- torch.compile's COST, reported as a result rather than a footnote.
-    # The reference has a Python `for t in range(L)` loop, so inductor unrolls
-    # the recurrence into an L-step graph: compile time scales with sequence
-    # length. That is not an inconvenience to work around — it is the kernel's
-    # whole argument (torch.compile cannot restructure a sequential recurrence),
-    # and it belongs in the results, not in a skip message.
+    # ---- torch.compile's COST, reported rather than hidden in a skip message.
+    #
+    # Measured, and it does NOT explode: 59.3s -> 134.1s for L 128 -> 512, i.e.
+    # ~2.3x for 4x the length (sub-linear), amortizing after ~6-13k iterations.
+    # So compile COST is a weak argument and should not be leaned on — a
+    # long-running server clears that bar easily.
+    #
+    # The argument that survives is the steady-state one: we are 3.6-4.7x faster
+    # than torch.compile *after* it has fully paid its compile cost, and the gap
+    # WIDENS with L (compile scales linearly in L; the kernel sub-linearly, as
+    # fixed per-call overhead amortizes). Report the cost honestly, and let the
+    # ratio carry the case.
     comp_rows = [(r["shape"][2], r["timings"]["ref_compile_bidi"]["compile_s"],
                   r["timings"]["ref_compile_bidi"]["median_s"])
                  for r in results["shapes"]

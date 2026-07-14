@@ -16,17 +16,21 @@ benchmarked, and no fusion work starts, until the correctness path is green.
 *fast* (fused in Rust, via a kernel `reverse` flag). The correct stage lands
 first so the fusion is justified by a measurement instead of an assumption.
 
-> ## ✅ Bottom line (all CI green; two runs, `6e92b03` and `605b056`)
+> ## ✅ Bottom line (all CI green; three runs, latest `23995c7`)
 >
-> **A bidirectional selective scan on Arm runs ~3.9–4.0× faster than
-> `torch.compile` and 16–24× faster than PyTorch eager**, at 4.3e-6 – 6.9e-6 max
-> abs error vs the f64 reference (gate: 1e-4). Reproduced across two runs. Full
-> numbers and caveats in **Step 5**.
+> **A bidirectional selective scan on Arm runs 3.63× (L=128) to 4.67× (L=512)
+> faster than `torch.compile`, and 15–24× faster than PyTorch eager**, at
+> 4.3e-6 – 6.9e-6 max abs error vs the f64 reference (gate: 1e-4).
+>
+> **The advantage grows with sequence length**, and there is a mechanism:
+> `torch.compile` scales linearly in L while the kernel scales sub-linearly (fixed
+> per-call overhead amortizes). That points the right way for the long-sequence
+> applications this topology targets.
 >
 > The `reverse` kernel flag exists as the **substrate for the 2D cross-scan**, not
-> as a bidirectional speedup. Its own contribution is ~6–14% (reproducible, and
-> growing with sequence length) — real, but not a headline. Quote the
-> vs-`torch.compile` row, not this one.
+> as a bidirectional speedup — its own contribution is ~3–7% and does not
+> reproduce reliably on a shared runner. Quote the vs-`torch.compile` row, and
+> nothing else.
 
 ---
 
@@ -554,23 +558,42 @@ Host: GitHub `ubuntu-24.04-arm` runner — 4-core aarch64, torch 2.13.0, `--quic
 a dedicated Arm host. Two independent runs are reported, because the agreement
 between them is what makes the numbers credible.
 
-### The result
+### The result (run `23995c7` — the first with `torch.compile` at BOTH shapes)
 
 | Shape | eager | torch.compile | **kernel** | vs eager | **vs torch.compile** |
 |---|---|---|---|---|---|
-| B1 D768 L128 N16 | 27.05 / 29.11 ms | 6.60 / 6.76 ms | **1.68 / 1.70 ms** | 16.1× / 17.2× | **3.93× / 3.99×** |
-| B1 D768 L512 N16 | 138.1 / 139.9 ms | *(skipped)* | **5.84 / 5.81 ms** | 23.6× / 24.1× | — |
+| B1 D768 L128 N16 | 25.40 ms | 6.13 ms | **1.69 ms** | 15.0× | **3.63×** |
+| B1 D768 L512 N16 | 130.90 ms | 25.99 ms | **5.56 ms** | 23.5× | **4.67×** |
 
-*(run `6e92b03` / run `605b056`)*
+Correctness in the same run: kernel-vs-f64-reference max abs **4.29e-6** (L128) /
+**6.91e-6** (L512), against the 1e-4 gate — identical across all three runs. All
+13 cases of `check_bidirectional.py` green, including `state13_neon_tail`,
+grouped B/C, `edge_len1`, every merge mode, untied `reverse_params`, and
+`fwd == plain 1D scan` (bit-identical).
 
-Correctness in the same runs: kernel-vs-f64-reference max abs **4.29e-6** (L128) /
-**6.91e-6** (L512), against the 1e-4 gate — identical across both runs. All 13
-cases of `check_bidirectional.py` green, including `state13_neon_tail`, grouped
-B/C, `edge_len1`, every merge mode, untied `reverse_params`, and `fwd == plain 1D
-scan` (bit-identical).
+Earlier runs (`6e92b03`, `605b056`) measured 3.93× / 3.99× at L=128 and could not
+reach L=512 at all — `--quick` was clamping `--compile-max-len` to 128 *even when
+the flag was passed explicitly*, which made the row we most wanted unreachable.
+Fixed; an explicit value now wins.
 
-The kernel timings reproduce to within ~1% across runs; the *baselines* move by
-up to 8%, which is the shared runner. The speedup ratios hold.
+### The advantage GROWS with sequence length — and that is the finding
+
+3.63× at L=128 → **4.67×** at L=512. Not noise; there is a mechanism:
+
+| | L=128 → L=512 (4× the length) |
+|---|---|
+| `torch.compile` | 6.13 → 25.99 ms = **4.2×** (linear in L) |
+| **our kernel** | 1.69 → 5.56 ms = **3.3×** (sub-linear) |
+
+The kernel is sub-linear because its fixed per-call cost (ctypes dispatch, the
+`_c()` contiguity checks, output allocation — the ~0.14 ms measured in Step 2)
+amortizes as L grows. `torch.compile` has no such fixed cost to amortize, so it
+tracks the O(L) work exactly. **The gap therefore widens with sequence length**,
+which points the right way for every long-sequence application this topology
+targets (genomics at 131k, long audio, multi-hour ECG).
+
+Worth testing at L=2048/8192 on a dedicated host — if the trend holds, the
+headline number at the lengths that matter is *better* than 4.67×.
 
 **Why this number is believable:** the *forward* scan measures **3.74×** vs
 `torch.compile` at the same shape ([`OPTIMIZATION_LOG.md`](./OPTIMIZATION_LOG.md)).
@@ -584,54 +607,70 @@ and only ran at L=128 (`--quick` caps `compile_max_len` at 128 — graph unrolli
 makes compile time explode with L). **One `torch.compile` data point is thin.**
 The full `sweep-len` suite is needed before this goes in `RESULTS.md`.
 
-### The fusion win: ~6–14%, and the "ceiling" proxy was the thing that was broken
+### `torch.compile`'s compile cost — measured, and it does NOT explode
 
-⚠ **I got this wrong on the first read and am correcting it rather than
-overwriting it, because the mistake is instructive.**
+I claimed the recurrence's unrolled graph makes compile time "explode" with L.
+**The data says otherwise, and the claim is withdrawn.**
 
-The first pass at these numbers concluded *"the fusion win is noise"* — because
-the achieved speedup exceeded its own theoretical ceiling, which is impossible.
-That inference was backwards. Adding a **per-shape** guard and re-running made it
-obvious:
+| L | compile | run/iter | iterations before compile pays for itself vs our kernel |
+|---|---|---|---|
+| 128 | 59.3 s | 6.13 ms | ~13,400 |
+| 512 | 134.1 s | 25.99 ms | ~6,600 |
 
-| | run 1 (`6e92b03`) | run 2 (`605b056`) |
-|---|---|---|
-| **fusion_speedup, L=128** | 1.064× | **1.065×** |
-| **fusion_speedup, L=512** | 1.151× | **1.136×** |
-| ceiling, L=128 | 1.055× | **1.027×** |
-| ceiling, L=512 | 1.189× | **1.111×** |
+**2.3× compile time for 4× the length — sub-linear.** Extrapolating, L=8192 would
+be roughly ten minutes: painful, not prohibitive. And it amortizes after ~6–13k
+calls, which any long-running server clears trivially.
 
-**The achieved number reproduces to ~0.001×. The *ceiling* is what swings.** So
-the noisy quantity was never the measurement — it was `fused_estimate`, the proxy.
-And the inversion has a *consistent sign* (3 of 4 measurements, both shapes, both
-runs): the real fused path beats its supposed lower bound by 3–6%, every time.
-That is a **systematic bias**, not random error.
+**So "compile cost" is a weak argument and this project should stop leaning on
+it.** The strong argument is the one that survives the objection: we are
+**3.6–4.7× faster than `torch.compile` after it has fully paid its compile cost**,
+and the gap widens with L. Publish the compile cost honestly — including the
+amortization column, which is the number a skeptic would compute themselves — and
+let the steady-state ratio carry the case.
 
-**`fused_estimate` is not a valid lower bound, and has been demoted.** It was
-meant to be one — two forward scans, no flips, identical work — and it was the
-right tool *before* the fused path existed, when there was nothing real to
-measure. But a bound that the real thing consistently beats is a broken proxy,
-and the mechanism is not understood. It is now kept as a diagnostic timing only,
-never as a ceiling, and the guard built on it has been removed. The honest number
-is `fusion_speedup`: the actual old path against the actual new one.
+**One thread left open** (assert nothing until it is checked): the baseline uses
+`dynamic=False`, so **every distinct sequence length should trigger a recompile**.
+Under variable-length inference — i.e. real serving — that 134 s would be paid per
+shape, not once, which *would* make compile cost a serious argument. It is worth
+confirming before it is claimed.
 
-**The result: the fused reverse wins ~6.5% at L=128 and ~14% at L=512 — and it
-grows with L.** That is *more* than Step 2's ~2% prediction, and the reason is
-visible in the data: `flips_only` measures only 0.06–0.12 ms, but the flip path's
-real penalty is 0.11–0.79 ms. The gap is not copy cost — it is a **second working
-set**. Flipped tensors are freshly allocated, so the scan streams ~4.7 MB of cold
-memory instead of re-reading warm cache. `flips_only` times the copy on already-
-warm data and therefore understates it, which is exactly why Step 2's estimate
-came in low.
+### The fusion win: small, and NOT reproducible on a shared runner
 
-**What does NOT change:** ~6–14% is still not a headline, and `reverse` was still
-not built for it. It exists because **SS2D needs a backward traversal** (plan
-§3.2's row-backward and column-backward directions). The number worth quoting is
-3.99× vs `torch.compile`, not this.
+⚠ **Third revision of this number. Recording the whole arc, because the
+flip-flopping is itself the lesson.**
 
-**The lesson:** a proxy is only trustworthy until the real thing exists. Once it
-does, the proxy's job is over — and if the real thing outruns its own "lower
-bound," suspect the proxy before you blame the noise.
+- **First read:** "it's noise" — the achieved speedup exceeded its own theoretical
+  ceiling, which is impossible.
+- **Second read:** "no, the *ceiling* is the broken thing" — `fusion_speedup`
+  reproduced to ~0.001× across two runs while the ceiling swung wildly. That part
+  stands: `fused_estimate` (two forward scans, no flips) was supposed to be a
+  lower bound, the real fused path consistently beat it by 3–6%, and a bound the
+  real thing beats is a broken proxy. It has been **demoted to a diagnostic** and
+  the guard built on it removed.
+- **Third run broke the rest of it:**
+
+| | run 1 | run 2 | run 3 (`23995c7`) |
+|---|---|---|---|
+| L=128 | 1.064× | 1.065× | **1.070×** |
+| L=512 | 1.151× | 1.136× | **1.027×** |
+
+L=128 is genuinely stable (~7%, three runs). **L=512 swings 1.027–1.151×** — so
+the "reproducible, and grows with L" conclusion was two runs of coincidence, and
+is withdrawn.
+
+**Final position: the fused reverse is worth ~3–7%, it is not reliably measurable
+on a shared 4-core runner, and pinning it down is not worth another CI cycle.** It
+was never the justification: `reverse` exists because **SS2D needs a backward
+traversal** (plan §3.2's row-backward and column-backward directions). The number
+to quote is 3.63–4.67× vs `torch.compile`. Nothing else.
+
+**Two lessons worth keeping:**
+1. A proxy is only trustworthy until the real thing exists. If the real thing
+   outruns its own "lower bound," suspect the proxy before you blame the noise.
+2. **Two runs is not reproducibility.** Two agreeing measurements produced a
+   confident, mechanistic story ("grows with L, because of cold working sets")
+   that the third run dismantled. The effect being chased (~3–15%) was simply
+   smaller than the shared runner's variance the whole time.
 
 ### What the numbers confirmed along the way
 

@@ -8,6 +8,27 @@ name: bench-baseline
 
 on:
   workflow_dispatch:
+    inputs:
+      run_full_baseline:
+        description: >-
+          Also run the full baseline suite (BASELINE_TEST_PLAN.md). Uncheck to
+          run ONLY the bidirectional long-L sweep, which is usually what you
+          want — the full suite takes far longer.
+        default: true
+        type: boolean
+      long_l_suite:
+        description: "bidirectional long-L suite (sweep-len covers L=128..8192)"
+        default: "sweep-len"
+        type: choice
+        options: [sweep-len, sweep-dim, basic]
+      long_l_compile_max:
+        description: >-
+          Max L for the torch.compile baseline. Compile scales ~L^0.6 (59s@128,
+          134s@512), so 2048 costs ~8 min of compiling and 8192 ~20 min — and at
+          8192 inductor may OOM building the unrolled graph. Set 0 to skip
+          torch.compile entirely.
+        default: "2048"
+        type: string
   push:
     branches: [main]
     paths:
@@ -19,6 +40,8 @@ permissions:
 jobs:
   baseline:
     name: baseline (linux-arm64)
+    # Unchanged on push; on dispatch, opt out to run only the long-L sweep.
+    if: github.event_name != 'workflow_dispatch' || inputs.run_full_baseline
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 120
     steps:
@@ -65,3 +88,82 @@ jobs:
           cat comment.md >> "$GITHUB_STEP_SUMMARY"
           gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" \
             -f body="$(cat comment.md)" --silent || true
+
+  # Bidirectional scan at long sequence lengths — the regime the applications
+  # actually live in (genomics @131k, long audio, multi-hour ECG), and the one
+  # per-PR CI cannot afford. Dispatch-only: torch.compile unrolls the recurrence
+  # into an L-step graph, so the compile step is the entire cost (~8 min at
+  # L<=2048, ~20 min including 8192) and may OOM outright at 8192.
+  #
+  # BOTH outcomes are results worth having:
+  #   - it compiles  -> the vs-torch.compile ratio at the lengths that matter
+  #     (the trend at 128->512 says it should exceed 4.67x)
+  #   - it does not  -> a hard limit on the baseline itself, at exactly the
+  #     sequence lengths our headline applications need
+  long-l:
+    name: bidirectional long-L (linux-arm64)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: kernel
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build FFI cdylib
+        run: cargo build --release -p arm-scan-ffi
+        working-directory: kernel
+      - name: Install python deps
+        run: python3 -m pip install --quiet numpy torch
+
+      # Correctness gates speed (CLAUDE.md): never benchmark a broken kernel.
+      - name: Bidirectional correctness through the kernel
+        run: python3 tests/check_bidirectional.py
+
+      - name: Bidirectional long-L sweep
+        env:
+          SUITE: ${{ inputs.long_l_suite }}
+          CMAX: ${{ inputs.long_l_compile_max }}
+        run: |
+          set -o pipefail
+          mkdir -p bench/results
+          EXTRA=""
+          if [ "$CMAX" = "0" ]; then
+            EXTRA="--no-compile"
+          else
+            EXTRA="--compile-max-len $CMAX"
+          fi
+          # The bench flushes its JSON after every shape, so an OOM kill at the
+          # longest L still leaves every shorter shape's results on disk.
+          python3 bench/bench_bidirectional.py \
+            --suite "$SUITE" $EXTRA --tag ci-arm64-longl \
+            --json bench/results/bidi_longl_ci-arm64.json 2>&1 \
+            | tee bench-bidi-longl.log
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bidirectional-long-l
+          path: |
+            bench/results/bidi_longl_ci-arm64.json
+            bench-bidi-longl.log
+          if-no-files-found: warn
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Bidirectional scan, long L (linux-arm64, provisional)"
+            echo "suite=\`${{ inputs.long_l_suite }}\` compile_max_len=\`${{ inputs.long_l_compile_max }}\`"
+            echo
+            echo "If a shape is missing, torch.compile was killed building its"
+            echo "unrolled graph — which is itself the finding. Partial results"
+            echo "are preserved in the artifact."
+            echo '```'
+            grep -E "^===|^  (ref_|scan_fwd|fused_estimate|bidirectional|flips_only)|^  =>|^bidirectional scan|^fused reverse|^torch.compile COST|^  +[0-9]+ +[0-9.]+s|^  +L|^  L=" bench-bidi-longl.log 2>/dev/null || echo "(sweep did not complete)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
