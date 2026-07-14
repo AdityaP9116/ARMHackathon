@@ -10,6 +10,12 @@ name: Profile kernel
 
 on:
   workflow_dispatch:
+  # Also runs automatically on any feature/** branch push, so it can be
+  # triggered before the workflow lives on the default branch (a
+  # workflow_dispatch-only workflow isn't dispatchable until it's on main).
+  push:
+    branches:
+      - 'feature/**'
 
 permissions:
   contents: read
