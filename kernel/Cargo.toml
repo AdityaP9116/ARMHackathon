@@ -9,5 +9,5 @@ license = "MIT"
 repository = "https://github.com/AdityaP9116/ARMHackathon"
 
 [profile.release]
-lto = "thin"
+lto = "fat"
 codegen-units = 1

@@ -48,6 +48,7 @@ const CHUNK: usize = 128;
 pub(crate) fn scan(
     dims: &ScanDims,
     input: &ScanInput<'_, f32>,
+    h0: Option<&[f32]>,
     out: &mut [f32],
     last_state: Option<&mut [f32]>,
     threading: Threading,
@@ -103,14 +104,15 @@ pub(crate) fn scan(
             let a_row = &input.a[d * state..(d + 1) * state];
             let bt_plane = &bt[plane..plane + len * n4];
             let ct_plane = &ct[plane..plane + len * n4];
+            let init = h0.map(|s| &s[ch_idx * state..(ch_idx + 1) * state]);
 
             // SAFETY: NEON is always available on aarch64.
             unsafe {
                 if state == 16 {
-                    channel_n16(a_row, bt_plane, ct_plane, &ch, out_row, last, scratch);
+                    channel_n16(a_row, bt_plane, ct_plane, &ch, init, out_row, last, scratch);
                 } else {
                     scratch.a_pad[..state].copy_from_slice(a_row);
-                    channel_general(bt_plane, ct_plane, &ch, out_row, last, scratch);
+                    channel_general(bt_plane, ct_plane, &ch, init, out_row, last, scratch);
                 }
                 epilogue_row(&ch, out_row);
             }
@@ -241,12 +243,14 @@ unsafe fn epilogue_row(ch: &Channel<'_>, out_row: &mut [f32]) {
 }
 
 /// N=16 fast path: chunked two-pass with the state in four q-registers.
+#[allow(clippy::too_many_arguments)]
 #[target_feature(enable = "neon")]
 unsafe fn channel_n16(
     a_row: &[f32],
     bt: &[f32],
     ct: &[f32],
     ch: &Channel<'_>,
+    init_state: Option<&[f32]>,
     out_row: &mut [f32],
     last_state: Option<&mut [f32]>,
     scratch: &mut Scratch,
@@ -257,10 +261,23 @@ unsafe fn channel_n16(
     let a2 = vld1q_f32(a.add(8));
     let a3 = vld1q_f32(a.add(12));
 
-    let mut h0 = vdupq_n_f32(0.0);
-    let mut h1 = vdupq_n_f32(0.0);
-    let mut h2 = vdupq_n_f32(0.0);
-    let mut h3 = vdupq_n_f32(0.0);
+    let (mut h0, mut h1, mut h2, mut h3) = match init_state {
+        Some(s) => {
+            let p = s.as_ptr();
+            (
+                vld1q_f32(p),
+                vld1q_f32(p.add(4)),
+                vld1q_f32(p.add(8)),
+                vld1q_f32(p.add(12)),
+            )
+        }
+        None => (
+            vdupq_n_f32(0.0),
+            vdupq_n_f32(0.0),
+            vdupq_n_f32(0.0),
+            vdupq_n_f32(0.0),
+        ),
+    };
 
     let len = out_row.len();
     for (start, tlen) in chunks_in_scan_order(len, ch.reverse) {
@@ -340,12 +357,19 @@ unsafe fn channel_general(
     bt: &[f32],
     ct: &[f32],
     ch: &Channel<'_>,
+    init_state: Option<&[f32]>,
     out_row: &mut [f32],
     last_state: Option<&mut [f32]>,
     scratch: &mut Scratch,
 ) {
     let n4 = scratch.a_pad.len();
-    scratch.h_buf.fill(0.0);
+    match init_state {
+        Some(s) => {
+            scratch.h_buf[..s.len()].copy_from_slice(s);
+            scratch.h_buf[s.len()..].fill(0.0);
+        }
+        None => scratch.h_buf.fill(0.0),
+    }
 
     let len = out_row.len();
     for (start, tlen) in chunks_in_scan_order(len, ch.reverse) {

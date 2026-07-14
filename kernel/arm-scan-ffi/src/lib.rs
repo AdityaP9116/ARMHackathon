@@ -12,21 +12,23 @@
 //!                      the standard (B, N, L) case, same memory layout
 //!   d_skip, delta_bias : (dim,)
 //!   last_state       : (batch, dim, state)
-//! Nullable: d_skip, z, delta_bias, last_state. Everything else non-null.
+//! Nullable: d_skip, z, delta_bias, last_state, h0. Everything else non-null.
+//!   h0 : (batch, dim, state) initial SSM state; null = zero-initialized.
 
 use std::os::raw::c_int;
 
 use arm_scan_core::{
-    selective_scan_with_options, Backend, ScanDims, ScanError, ScanInput, ScanOptions, Threading,
+    selective_scan_with_state, Backend, ScanDims, ScanError, ScanInput, ScanOptions, Threading,
 };
 
 /// ABI version. The Python loader checks this before calling anything else.
 /// Bump on any signature or semantic change to `arm_scan_selective_scan_f32`.
 ///
-/// 3: added the `reverse` parameter (backward-in-time traversal).
+/// 4: `h0` (resumable initial state) and `reverse` (backward-in-time traversal)
+///    were developed on separate branches, each bumping to 3. Both are in 4.
 #[no_mangle]
 pub extern "C" fn arm_scan_abi_version() -> u32 {
-    3
+    4
 }
 
 /// Dimensions for a scan call. `groups` must divide `dim`.
@@ -102,6 +104,7 @@ pub unsafe extern "C" fn arm_scan_selective_scan_f32(
     threading: c_int,
     out: *mut f32,
     last_state: *mut f32,
+    h0: *const f32,
 ) -> c_int {
     if dims.is_null()
         || u.is_null()
@@ -179,13 +182,19 @@ pub unsafe extern "C" fn arm_scan_selective_scan_f32(
     } else {
         Some(std::slice::from_raw_parts_mut(last_state, bdn))
     };
+    let h0_slice = if h0.is_null() {
+        None
+    } else {
+        Some(std::slice::from_raw_parts(h0, bdn))
+    };
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        selective_scan_with_options(
+        selective_scan_with_state(
             &scan_dims,
             &input,
             out_slice,
             last_slice.as_deref_mut(),
+            h0_slice,
             ScanOptions { backend, threading },
         )
     }));
@@ -232,6 +241,7 @@ mod tests {
                 0,
                 out.as_mut_ptr(),
                 last.as_mut_ptr(),
+                std::ptr::null(),
             )
         };
         assert_eq!(code, ARM_SCAN_OK);
@@ -279,6 +289,7 @@ mod tests {
                 0,
                 out.as_mut_ptr(),
                 last.as_mut_ptr(),
+                std::ptr::null(), // h0: zero-initialized
             )
         };
         assert_eq!(code, ARM_SCAN_OK);
@@ -320,6 +331,7 @@ mod tests {
                 0,
                 out.as_mut_ptr(),
                 std::ptr::null_mut(),
+                std::ptr::null(),
             )
         };
         assert_eq!(code, ARM_SCAN_ERR_NULL_POINTER);
@@ -341,8 +353,122 @@ mod tests {
                 0,
                 out.as_mut_ptr(),
                 std::ptr::null_mut(),
+                std::ptr::null(),
             )
         };
         assert_eq!(code, ARM_SCAN_ERR_BAD_ENUM);
+    }
+
+    /// h0 flows through the C ABI: a 2-step scan split into two calls, with the
+    /// first call's last_state fed back as h0, matches the one-shot scan.
+    #[test]
+    fn ffi_streaming_with_h0() {
+        use std::ptr::{null, null_mut};
+        let (u, dt, a, b, c) = (
+            [0.5_f32, -0.3],
+            [0.1_f32, 0.2],
+            [-2.0_f32],
+            [1.5_f32, 0.7],
+            [2.0_f32, 1.1],
+        );
+
+        let dims_full = ArmScanDims {
+            batch: 1,
+            dim: 1,
+            len: 2,
+            state: 1,
+            groups: 1,
+        };
+        let mut out_full = [0.0_f32; 2];
+        let code = unsafe {
+            arm_scan_selective_scan_f32(
+                &dims_full,
+                u.as_ptr(),
+                dt.as_ptr(),
+                a.as_ptr(),
+                b.as_ptr(),
+                c.as_ptr(),
+                null(),
+                null(),
+                null(),
+                0, // delta_softplus
+                0, // reverse
+                0,
+                0,
+                out_full.as_mut_ptr(),
+                null_mut(),
+                null(),
+            )
+        };
+        assert_eq!(code, ARM_SCAN_OK);
+
+        let dims1 = ArmScanDims {
+            batch: 1,
+            dim: 1,
+            len: 1,
+            state: 1,
+            groups: 1,
+        };
+        // step 0: capture the intermediate state
+        let mut out1 = [0.0_f32; 1];
+        let mut state = [0.0_f32; 1];
+        let code = unsafe {
+            arm_scan_selective_scan_f32(
+                &dims1,
+                u.as_ptr(),
+                dt.as_ptr(),
+                a.as_ptr(),
+                b.as_ptr(),
+                c.as_ptr(),
+                null(),
+                null(),
+                null(),
+                0, // delta_softplus
+                0, // reverse
+                0,
+                0,
+                out1.as_mut_ptr(),
+                state.as_mut_ptr(),
+                null(),
+            )
+        };
+        assert_eq!(code, ARM_SCAN_OK);
+
+        // step 1: resume from `state` as h0
+        let mut out2 = [0.0_f32; 1];
+        let code = unsafe {
+            arm_scan_selective_scan_f32(
+                &dims1,
+                u.as_ptr().add(1),
+                dt.as_ptr().add(1),
+                a.as_ptr(),
+                b.as_ptr().add(1),
+                c.as_ptr().add(1),
+                null(),
+                null(),
+                null(),
+                0, // delta_softplus
+                0, // reverse
+                0,
+                0,
+                out2.as_mut_ptr(),
+                null_mut(),
+                state.as_ptr(),
+            )
+        };
+        assert_eq!(code, ARM_SCAN_OK);
+
+        assert!(
+            (out_full[0] - out1[0]).abs() < 1e-6,
+            "{} vs {}",
+            out_full[0],
+            out1[0]
+        );
+        assert!(
+            (out_full[1] - out2[0]).abs() < 1e-6,
+            "{} vs {}",
+            out_full[1],
+            out2[0]
+        );
     }
 }

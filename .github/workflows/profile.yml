@@ -53,6 +53,29 @@ jobs:
           set -o pipefail
           cargo bench -p arm-scan-core 2>&1 | tee bench-scan.txt
 
+      # Does this runner expose SVE? If so, an SVE/FEXPA exp path can be
+      # developed and validated here for free (else it waits for Graviton).
+      - name: CPU capabilities (SVE / FEXPA probe)
+        if: always()
+        run: |
+          {
+            echo "=== lscpu ==="
+            lscpu || true
+            echo
+            echo "=== /proc/cpuinfo Features (look for sve / sve2) ==="
+            grep -m1 -i "^Features" /proc/cpuinfo || true
+          } | tee cpu-info.txt
+
+      # Build-tuning ceiling: rebuild the kernel scheduled for THIS core and
+      # rerun the ladder. Compare neon_par times vs the generic build above to
+      # see what a target-cpu-tuned (runtime-dispatched) wheel could gain.
+      - name: Criterion ladder, target-cpu=native
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          RUSTFLAGS="-C target-cpu=native" cargo bench -p arm-scan-core 2>&1 \
+            | tee bench-scan-native.txt
+
       # --- §3.7 assembly audit: check for exp-constant re-materialization
       # and register spills in the hottest functions. Best-effort. ---
       - name: Disassemble hot functions
@@ -85,9 +108,17 @@ jobs:
             echo '```'
             cat profile-phases.txt 2>/dev/null || echo "(profiler did not run)"
             echo '```'
-            echo "### Criterion ladder"
+            echo "### CPU capabilities (SVE / FEXPA availability)"
+            echo '```'
+            grep -m1 -i "^Features" cpu-info.txt 2>/dev/null || echo "(probe did not run)"
+            echo '```'
+            echo "### Criterion ladder — generic aarch64"
             echo '```'
             grep -E "selective_scan/|time:|thrpt:" bench-scan.txt 2>/dev/null | head -60 || echo "(bench did not run)"
+            echo '```'
+            echo "### Criterion ladder — target-cpu=native (build-tuning ceiling)"
+            echo '```'
+            grep -E "selective_scan/|time:|thrpt:" bench-scan-native.txt 2>/dev/null | head -60 || echo "(native bench did not run)"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -98,5 +129,7 @@ jobs:
           path: |
             kernel/profile-phases.txt
             kernel/bench-scan.txt
+            kernel/bench-scan-native.txt
+            kernel/cpu-info.txt
             kernel/kernel-asm.txt
           if-no-files-found: warn

@@ -11,6 +11,7 @@ use crate::{Float, ScanDims, ScanInput, Threading};
 pub(crate) fn scan<T: Float>(
     dims: &ScanDims,
     input: &ScanInput<'_, T>,
+    h0: Option<&[T]>,
     out: &mut [T],
     last_state: Option<&mut [T]>,
     threading: Threading,
@@ -43,7 +44,13 @@ pub(crate) fn scan<T: Float>(
             let delta_row = &input.delta[row..row + len];
             let z_row = input.z.map(|z| &z[row..row + len]);
 
-            h.fill(T::ZERO);
+            // `h0` seeds the state; `reverse` picks the traversal direction.
+            // The two are orthogonal: a backward scan resumed from a prior
+            // state is perfectly coherent (and is what SS2D will want).
+            match h0 {
+                Some(h0) => h.copy_from_slice(&h0[ch_idx * state..(ch_idx + 1) * state]),
+                None => h.fill(T::ZERO),
+            }
             for i in 0..len {
                 // The ONLY thing `reverse` changes: which timestep this step of
                 // the recurrence consumes. Output still lands at index `t`, and

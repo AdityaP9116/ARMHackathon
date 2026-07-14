@@ -15,7 +15,8 @@ def _prep(x, name, shape=None):
 
 def selective_scan_numpy(u, delta, A, B, C, D=None, z=None, delta_bias=None,
                          delta_softplus=False, return_last_state=False,
-                         backend="auto", threading="auto", reverse=False):
+                         backend="auto", threading="auto", initial_state=None,
+                         reverse=False):
     """Selective scan on numpy arrays (see kernel docs for semantics).
 
     u, delta: (batch, dim, len); A: (dim, state);
@@ -53,6 +54,8 @@ def selective_scan_numpy(u, delta, A, B, C, D=None, z=None, delta_bias=None,
     z = None if z is None else _prep(z, "z", (batch, dim, length))
     delta_bias = (None if delta_bias is None
                   else _prep(delta_bias, "delta_bias", (dim,)))
+    h0 = (None if initial_state is None
+          else _prep(initial_state, "initial_state", (batch, dim, state)))
 
     out = np.empty((batch, dim, length), dtype=np.float32)
     last = np.empty((batch, dim, state), dtype=np.float32)
@@ -62,6 +65,6 @@ def selective_scan_numpy(u, delta, A, B, C, D=None, z=None, delta_bias=None,
     _ffi.scan_raw(
         dims, ptr(u), ptr(delta), ptr(A), ptr(B), ptr(C), ptr(D), ptr(z),
         ptr(delta_bias), delta_softplus, backend, threading,
-        out.ctypes.data, last.ctypes.data, reverse=reverse,
+        out.ctypes.data, last.ctypes.data, ptr_h0=ptr(h0), reverse=reverse,
     )
     return (out, last) if return_last_state else out

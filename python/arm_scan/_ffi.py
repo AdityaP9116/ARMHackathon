@@ -11,7 +11,9 @@ import os
 import sys
 from pathlib import Path
 
-ABI_VERSION = 3   # 3: added the `reverse` parameter
+# 3: `h0` (initial state) and `reverse` (backward traversal) landed on separate
+#    branches, each claiming 3. Reconciled at merge -> both are in ABI 4.
+ABI_VERSION = 4
 
 _LIB_NAMES = {
     "win32": ["arm_scan_ffi.dll"],
@@ -85,6 +87,7 @@ def load():
                 ctypes.c_int,  # threading
                 ctypes.c_void_p,  # out
                 ctypes.c_void_p,  # last_state
+                ctypes.c_void_p,  # h0
             ]
             _lib, _lib_path = lib, path
             return lib
@@ -101,12 +104,16 @@ def lib_path():
 
 def scan_raw(dims, ptr_u, ptr_delta, ptr_a, ptr_b, ptr_c, ptr_d_skip, ptr_z,
              ptr_delta_bias, delta_softplus, backend, threading, ptr_out,
-             ptr_last, *, reverse=False):
+             ptr_last, ptr_h0=0, *, reverse=False):
     """Thin call-through. Pointers are integer addresses; 0 means null.
 
-    `reverse` is keyword-only on purpose: every caller here passes positionally,
-    so slotting it into the middle (where it sits in the C signature) would
-    silently shift `backend` into it. Position in Python need not match C.
+    ``ptr_h0`` is the optional initial SSM state (batch, dim, state); 0 seeds
+    the recurrence from zeros (the default one-shot behavior).
+
+    ``reverse`` walks the sequence backward in time. It is keyword-only on
+    purpose: every caller here passes positionally, and it sits mid-signature in
+    C (right after ``delta_softplus``), so accepting it positionally would let a
+    caller silently shift ``backend`` into it. Python order need not match C.
     """
     lib = load()
     code = lib.arm_scan_selective_scan_f32(
@@ -114,7 +121,7 @@ def scan_raw(dims, ptr_u, ptr_delta, ptr_a, ptr_b, ptr_c, ptr_d_skip, ptr_z,
         ptr_d_skip or None, ptr_z or None, ptr_delta_bias or None,
         int(bool(delta_softplus)), int(bool(reverse)),
         BACKENDS[backend], THREADING[threading],
-        ptr_out, ptr_last or None,
+        ptr_out, ptr_last or None, ptr_h0 or None,
     )
     if code != 0:
         raise RuntimeError(
