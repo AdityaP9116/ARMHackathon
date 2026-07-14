@@ -450,6 +450,72 @@ Graviton4 exposes. Items 1–3 alone would visibly move every table in
 
 ---
 
+## 11. Target numbers — what "exceptional" looks like
+
+Aspirational but reachable-from-this-backlog goals for the submission. Every
+row must be honestly measured under the CLAUDE.md benchmarking rules; if a
+target is missed, publish the real number anyway.
+
+| Stat | Today (BASELINE_REPORT) | Target | Backlog items that get us there |
+|---|---|---|---|
+| Op-level vs **torch.compile** | 3.3–4.2× | **≥5×, stretch 8×** | §3.1–3.4, §6 |
+| Op-level vs eager | 8.2–30.4× (sags at B=8, D=3072) | **geomean ≥25×, no row < ~15×** | §2.1, §4.1 (fixes the sag), §3 |
+| E2E prefill, mamba-130m | 1.9–2.1× | **≥3×** | §2.1–2.3, §2.5 |
+| E2E **total** `generate()` | 1.20–2.03× | **≥2.5× at every prompt length** | §2.4 (decode kernel — the big mover) |
+| Kernel ladder scalar→full | 13.3× (4 cores) | **~25× (4 cores)** | §3 collectively |
+| Core scaling | 3.88×/4 | **≥90% efficiency at 32–64 cores on c8g** | §4.1, §4.2 |
+| Long context | untested > 8k | **131k tokens, ~flat ×eager, constant memory** | §4.2, §7.6 |
+| Max error vs f64 ref | ≤ 3.8×10⁻⁶ | **unchanged or better** | §5.2 (Kahan flex); everything else gated |
+
+### The GPU question (framing + measured rows to add)
+
+Physics first, because it is the best pitch line we have: **a full 64-core
+Graviton4 is within striking distance of a T4-class GPU on paper for this op**
+— ~5–6 TFLOP/s peak fp32 SIMD vs ~8 for a T4, comparable memory bandwidth,
+and the selective scan is *not a matmul*, so the GPU's tensor cores don't
+apply to it. CPU Mamba being ~100× slower than GPU Mamba today is a
+**software gap, not a silicon gap** — and closing it is this project.
+Use that line in the video and README.
+
+What to chase and what to concede:
+
+1. **Concede batch prefill throughput.** A well-fed GPU wins raw tokens/sec
+   by 5–20× on the full model (the surrounding GEMMs *do* use tensor cores).
+   Publish the losing row honestly — it buys credibility for the winning rows.
+2. **Chase single-stream decode.** GPU decode of a 130m Mamba is
+   kernel-launch-overhead bound (~100–200 tok/s regardless of silicon); a
+   fused CPU decode step (§2.4) has no launch overhead. **Target: within
+   1–3× of GPU single-stream decode speed at ~1/4 the instance cost →
+   parity or better on $/token.** "CPU matches GPU per dollar on interactive
+   decode" is the exceptional-but-defensible claim.
+3. **Chase cost per unit work.** $/1M prefill tokens, $/1000 recon slices:
+   target **within ~2–4× of a T4 on raw $/token**, winning on availability
+   (no GPU quota, spot capacity everywhere, scales to zero, hardware that
+   hospitals/bio clusters already own).
+4. **The knockout row:** 131k-token genomics context in constant memory on a
+   ~$0.15/hr instance. A transformer can't do that on CPU at any price, and
+   on GPU the KV cache alone at 131k is multiple GB. Not "close to GPU" —
+   a workload class where the GPU comparison doesn't survive.
+
+Notes for the GPU measurement session:
+- Measure it ourselves: one short `g4dn.xlarge` (T4) or `g5.xlarge` (A10G)
+  session, ~$1–2 total — never cite third-party numbers, judges will check.
+- Same model, same prompts, same seeds, same tokenizer; report instance type,
+  torch/CUDA versions, and warmup protocol identically to the CPU rows.
+- Record GPU utilization alongside — the underutilization at batch=1 *is*
+  the argument, so show it, don't just assert it.
+
+### Summary sentence to aim the whole submission at
+
+> **5× past the compiler, 3× end-to-end, 90% scaling to 64 cores,
+> GPU-per-dollar parity on interactive decode, and one workload the GPU
+> can't touch — at 1e-4-gated accuracy throughout.**
+
+That set is achievable from §2–§6, every number is honestly defensible, and
+together it is a stronger story than a raw-speed race we would lose.
+
+---
+
 ## Sources
 
 - [Arm Neoverse V2 Software Optimization Guide](https://developer.arm.com/documentation/109898/latest/)
