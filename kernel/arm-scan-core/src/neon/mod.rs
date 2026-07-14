@@ -242,9 +242,19 @@ unsafe fn channel_n16(
     let (mut h0, mut h1, mut h2, mut h3) = match init_state {
         Some(s) => {
             let p = s.as_ptr();
-            (vld1q_f32(p), vld1q_f32(p.add(4)), vld1q_f32(p.add(8)), vld1q_f32(p.add(12)))
+            (
+                vld1q_f32(p),
+                vld1q_f32(p.add(4)),
+                vld1q_f32(p.add(8)),
+                vld1q_f32(p.add(12)),
+            )
         }
-        None => (vdupq_n_f32(0.0), vdupq_n_f32(0.0), vdupq_n_f32(0.0), vdupq_n_f32(0.0)),
+        None => (
+            vdupq_n_f32(0.0),
+            vdupq_n_f32(0.0),
+            vdupq_n_f32(0.0),
+            vdupq_n_f32(0.0),
+        ),
     };
 
     let len = out_row.len();
