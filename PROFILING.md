@@ -5,6 +5,10 @@
 [`IMPROVEMENT_IDEAS.md`](./IMPROVEMENT_IDEAS.md) backlog gets worked in the
 right order instead of by guess. Nothing here costs money.
 
+> **New to this?** Read [`PROFILING_EXPLAINED.md`](./PROFILING_EXPLAINED.md)
+> first — it's the plain-language "what this is and how to read it." This doc
+> is the command reference.
+
 The core tool is an **instrumented copy of the kernel** (`scan_profiled`, in
 `kernel/arm-scan-core/src/neon/profile.rs`) that runs single-threaded and
 reports per-phase timings. Read the **relative %**, not the absolute
