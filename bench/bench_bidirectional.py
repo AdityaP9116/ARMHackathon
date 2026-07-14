@@ -239,16 +239,25 @@ def main():
             t = make_inputs(batch, dim, length, state)
 
             # CORRECTNESS GATE 1: the fused reverse must reproduce the flip-based
-            # definition BIT-for-bit (same arithmetic, same order, different
-            # indexing). If it does not, those two series are not the same
+            # definition. If it does not, those two series are not the same
             # computation and the whole comparison is meaningless — so refuse to
             # report a speedup rather than quote a fast wrong answer.
+            #
+            # NOT asserted bit-exactly. On NEON the two agree to ~1e-7, not to
+            # the last bit: discretize/epilogue run 4-wide with a scalar tail,
+            # and the vector and tail branches evaluate softplus/SiLU by
+            # different means, so flipping the array can move a timestep across
+            # that boundary. (It happens to be bit-exact at every length here,
+            # since they are all multiples of 4 and no tail exists — but relying
+            # on that would make this gate silently shape-dependent.)
             fused_out, flip_out = bidirectional(t), bidirectional_flip(t)
-            if not torch.equal(fused_out, flip_out):
-                drift = (fused_out - flip_out).abs().max().item()
+            drift = (fused_out - flip_out).abs().max().item()
+            scale = max(1.0, fused_out.abs().max().item())
+            if drift / scale > 1e-5:
                 print(f"  !! fused reverse != flip-forward-flip "
-                      f"(max_abs={drift:.3e}) — refusing to benchmark")
+                      f"(rel={drift/scale:.3e}) — refusing to benchmark")
                 sys.exit(1)
+            exact = " (bit-identical)" if drift == 0.0 else ""
 
             # CORRECTNESS GATE 2: the kernel must agree with the PyTorch
             # reference it is being timed against. Beating a baseline you do not
@@ -256,8 +265,9 @@ def main():
             ref_out = ref_eager_bidi(t)
             max_err = (fused_out - ref_out).abs().max().item()
             row = {"shape": [batch, dim, length, state], "timings": {},
-                   "kernel_vs_ref_max_abs": max_err}
-            print(f"  fused == flip-based: bit-identical   "
+                   "kernel_vs_ref_max_abs": max_err,
+                   "fused_vs_flip_max_abs": drift}
+            print(f"  fused == flip-based: rel {drift/scale:.1e}{exact}   "
                   f"kernel-vs-ref max_abs {max_err:.3e}")
 
             series = [

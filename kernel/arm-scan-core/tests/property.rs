@@ -110,13 +110,27 @@ proptest! {
     /// input, scanning FORWARD, and flipping the output back — the definition
     /// the fused traversal exists to implement without the copies.
     ///
-    /// Asserted BIT-for-bit, not within a tolerance: both paths apply the same
-    /// arithmetic to the same values in the same order, so any difference is a
-    /// bug, not rounding. This is the strongest form of the check and it is the
-    /// point of the test — note the two paths land on DIFFERENT chunk
-    /// boundaries (forward-on-flipped splits the flipped axis; reverse splits
-    /// the original one), so passing bit-exactly also proves chunking never
-    /// leaks into the math.
+    /// TWO STRENGTHS, and the difference is the interesting part:
+    ///
+    /// * **Scalar: BIT-for-bit.** The scalar path runs one uniform code path per
+    ///   timestep, so both routes apply identical arithmetic to identical values
+    ///   in identical order. Any difference at all is an indexing bug, not
+    ///   rounding — which is exactly what we want to pin down. Note the two
+    ///   routes also land on DIFFERENT chunk boundaries (forward-on-flipped
+    ///   splits the flipped axis; reverse splits the original), so passing
+    ///   bit-exactly additionally proves chunking never leaks into the math.
+    ///
+    /// * **NEON: tight tolerance, NOT bit-exact — and it cannot be.** Two of the
+    ///   NEON passes process 4 timesteps at a time with a **scalar tail**:
+    ///   `discretize_chunk` (softplus) and `epilogue_row` (SiLU). The vector and
+    ///   tail branches use different implementations of the same function — the
+    ///   NEON polynomial vs libm — which agree to ~1e-7 but not bit-for-bit.
+    ///   Which branch a timestep takes depends on its ARRAY POSITION, and
+    ///   flipping the array moves timesteps across that boundary. So at
+    ///   `len = 31`, timestep 29 is in the scalar tail when scanned in place and
+    ///   in the vector body when scanned flipped — same value, ~1 ulp apart.
+    ///   This is a property of the existing forward kernel, not of `reverse`;
+    ///   demanding bit-equality here would be asserting something false.
     ///
     /// Mirrors `tests/check_bidirectional_math.py`, which proves the same
     /// identity in numpy against an independently-written backward recurrence.
@@ -126,59 +140,89 @@ proptest! {
         let n_out = case.dims.batch * case.dims.dim * len;
         let n_last = case.dims.batch * case.dims.dim * case.dims.state;
 
-        // (a) the fused backward traversal
-        let mut out_rev = vec![0.0_f32; n_out];
-        let mut last_rev = vec![0.0_f32; n_last];
-        selective_scan(
-            &case.dims,
-            &ScanInput {
-                u: &case.u, delta: &case.delta, a: &case.a, b: &case.b,
-                c: &case.c,
-                d_skip: case.d_skip.as_deref(),
-                z: case.z.as_deref(),
-                delta_bias: case.delta_bias.as_deref(),
-                delta_softplus: case.delta_softplus,
-                reverse: true,
-            },
-            &mut out_rev,
-            Some(&mut last_rev),
-        ).unwrap();
-
-        // (b) flip the inputs, scan forward, flip the output back.
-        // A / d_skip / delta_bias have no time axis and are NOT flipped.
+        // flipped copies: A / d_skip / delta_bias have no time axis.
         let uf = flip_time(&case.u, len);
         let deltaf = flip_time(&case.delta, len);
         let bf = flip_time(&case.b, len);
         let cf = flip_time(&case.c, len);
         let zf = case.z.as_deref().map(|z| flip_time(z, len));
-        let mut out_fwd = vec![0.0_f32; n_out];
-        let mut last_fwd = vec![0.0_f32; n_last];
-        selective_scan(
-            &case.dims,
-            &ScanInput {
-                u: &uf, delta: &deltaf, a: &case.a, b: &bf, c: &cf,
-                d_skip: case.d_skip.as_deref(),
-                z: zf.as_deref(),
-                delta_bias: case.delta_bias.as_deref(),
-                delta_softplus: case.delta_softplus,
-                reverse: false,
-            },
-            &mut out_fwd,
-            Some(&mut last_fwd),
-        ).unwrap();
-        let out_fwd = flip_time(&out_fwd, len);
 
-        prop_assert!(
-            out_rev.iter().zip(&out_fwd).all(|(a, b)| a.to_bits() == b.to_bits()),
-            "reverse != flip-forward-flip, dims={:?} softplus={}",
-            case.dims, case.delta_softplus
-        );
-        // last_state under reverse is the state after consuming t == 0, which
-        // is exactly the forward scan's final state on the flipped sequence.
-        prop_assert!(
-            last_rev.iter().zip(&last_fwd).all(|(a, b)| a.to_bits() == b.to_bits()),
-            "last_state differs, dims={:?}", case.dims
-        );
+        for backend in [Backend::Scalar, Backend::Auto] {
+            // (a) the fused backward traversal
+            let mut out_rev = vec![0.0_f32; n_out];
+            let mut last_rev = vec![0.0_f32; n_last];
+            selective_scan_with_backend(
+                &case.dims,
+                &ScanInput {
+                    u: &case.u, delta: &case.delta, a: &case.a, b: &case.b,
+                    c: &case.c,
+                    d_skip: case.d_skip.as_deref(),
+                    z: case.z.as_deref(),
+                    delta_bias: case.delta_bias.as_deref(),
+                    delta_softplus: case.delta_softplus,
+                    reverse: true,
+                },
+                &mut out_rev,
+                Some(&mut last_rev),
+                backend,
+            ).unwrap();
+
+            // (b) flip the inputs, scan forward, flip the output back
+            let mut out_fwd = vec![0.0_f32; n_out];
+            let mut last_fwd = vec![0.0_f32; n_last];
+            selective_scan_with_backend(
+                &case.dims,
+                &ScanInput {
+                    u: &uf, delta: &deltaf, a: &case.a, b: &bf, c: &cf,
+                    d_skip: case.d_skip.as_deref(),
+                    z: zf.as_deref(),
+                    delta_bias: case.delta_bias.as_deref(),
+                    delta_softplus: case.delta_softplus,
+                    reverse: false,
+                },
+                &mut out_fwd,
+                Some(&mut last_fwd),
+                backend,
+            ).unwrap();
+            let out_fwd = flip_time(&out_fwd, len);
+
+            if backend == Backend::Scalar {
+                prop_assert!(
+                    out_rev.iter().zip(&out_fwd)
+                        .all(|(a, b)| a.to_bits() == b.to_bits()),
+                    "scalar: reverse != flip-forward-flip (must be bit-exact), \
+                     dims={:?} softplus={}",
+                    case.dims, case.delta_softplus
+                );
+                prop_assert!(
+                    last_rev.iter().zip(&last_fwd)
+                        .all(|(a, b)| a.to_bits() == b.to_bits()),
+                    "scalar: last_state differs (must be bit-exact), dims={:?}",
+                    case.dims
+                );
+            } else {
+                // Scale-relative, matching `auto_backend_matches_scalar`'s bar:
+                // the gap is one SIMD-vs-libm transcendental, ~1e-7.
+                let scale = out_rev.iter().fold(1.0_f32, |m, v| m.max(v.abs()));
+                for (i, (r, f)) in out_rev.iter().zip(&out_fwd).enumerate() {
+                    let rel = (r - f).abs() / scale;
+                    prop_assert!(
+                        rel < 1e-5,
+                        "neon: out[{i}] reverse={r} flip={f} rel={rel:.3e} \
+                         dims={:?}", case.dims
+                    );
+                }
+                let ls = last_rev.iter().fold(1.0_f32, |m, v| m.max(v.abs()));
+                for (i, (r, f)) in last_rev.iter().zip(&last_fwd).enumerate() {
+                    let rel = (r - f).abs() / ls;
+                    prop_assert!(
+                        rel < 1e-5,
+                        "neon: last_state[{i}] reverse={r} flip={f} \
+                         rel={rel:.3e} dims={:?}", case.dims
+                    );
+                }
+            }
+        }
     }
 
     /// Guard against a vacuous pass: if `reverse` were silently ignored, the

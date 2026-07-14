@@ -105,11 +105,19 @@ pub struct ScanInput<'a, T> {
     /// and z-gate still apply at index `t` — only the recurrence's traversal
     /// order changes, never the layout.
     ///
-    /// Exactly equivalent to reversing the time axis of u/delta/b/c/z, running
-    /// a forward scan, and reversing the output — but without materializing any
-    /// of those copies. That equivalence is the definition, and it is enforced
-    /// bit-for-bit by `reverse_matches_flip_forward_flip` in `tests/property.rs`
-    /// (and independently, in Python, by `tests/check_bidirectional_math.py`).
+    /// Equivalent to reversing the time axis of u/delta/b/c/z, running a forward
+    /// scan, and reversing the output — but without materializing any of those
+    /// copies. That equivalence is the definition, enforced by
+    /// `reverse_matches_flip_forward_flip` in `tests/property.rs` (and,
+    /// independently, by `tests/check_bidirectional_math.py` in numpy).
+    ///
+    /// On the scalar backend the two are **bit-identical**. On NEON they agree to
+    /// ~1e-7, not bit-exactly: `discretize_chunk` and `epilogue_row` process 4
+    /// timesteps at a time with a scalar tail, and the vector and tail branches
+    /// evaluate softplus/SiLU by different means (NEON polynomial vs libm).
+    /// Which branch a timestep takes depends on its array POSITION, so flipping
+    /// the array moves timesteps across that boundary. That is a property of the
+    /// existing forward kernel, not of `reverse`.
     ///
     /// `last_state` under reverse is the state after consuming `t == 0` — the
     /// state at the START of the sequence. It is not a resumable decode cache

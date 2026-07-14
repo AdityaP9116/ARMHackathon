@@ -366,7 +366,7 @@ scalar path, and the FFI/Python plumbing. The recurrence math is untouched.
 | `src/scalar.rs` | one flipped time index |
 | `src/neon/mod.rs` | `chunks_in_scan_order()` + flipped `t` in Pass B (both paths) |
 | `src/parallel.rs` | **none** — channel independence is direction-agnostic |
-| `arm-scan-ffi/src/lib.rs` | `reverse` param; **ABI 2 → 3** |
+| `arm-scan-ffi/src/lib.rs` | `reverse` param; ABI bump (→ **4** after reconciling with `h0`, see Step 4) |
 | `python/arm_scan/{_ffi,op,numpy_api}.py` | `reverse` threaded through |
 | `python/arm_scan/bidirectional.py` | the seam closed: `reverse=True`, no flips |
 
@@ -403,3 +403,132 @@ constant across shapes and *larger than the flip copies themselves* at L=512.
 [`IMPROVEMENT_IDEAS.md`](./IMPROVEMENT_IDEAS.md) §8 (ctypes call path, `_c()`'s
 redundant `.float()` dispatch, per-call allocations) — cheap, and it helps
 *every* caller rather than just bidirectional ones.
+
+---
+
+## Step 4 — the `reverse` / `h0` ABI collision (merging with main)
+
+**Status:** resolved. Both features shipped. **ABI is now 4.**
+
+While `reverse` was in flight, [`OPTIMIZATION_LOG.md`](./OPTIMIZATION_LOG.md)'s
+workstream landed **`h0`** on main — a caller-supplied *initial SSM state* that
+makes the scan resumable (run a prefix, feed its `last_state` back as `h0`,
+continue). That is `IMPROVEMENT_IDEAS.md` §2.4/§7.6, the decode/streaming work.
+
+**Both branches independently bumped the ABI 2 → 3, with different signatures.**
+
+| | `h0` (main) | `reverse` (this branch) |
+|---|---|---|
+| Core API | new `selective_scan_with_state(...)`, `h0` as a **parameter** | `reverse` as a **field on `ScanInput`** |
+| C ABI | `h0: *const f32` appended after `last_state` | `reverse: c_int` inserted after `delta_softplus` |
+| Claimed ABI | **3** | **3** ← collision |
+
+Reconciled to **ABI 4**, carrying both. They are genuinely orthogonal — `h0`
+seeds the state, `reverse` picks the traversal direction — and they compose: a
+*backward* scan resumed from a prior state is coherent, and is in fact what SS2D
+will want for its column traversals. No redesign was needed, only plumbing.
+
+### The dangerous part: what git merged *without* a conflict
+
+Only 4 files conflicted (`scalar.rs`, `_ffi.py`, `numpy_api.py`, `op.py`) — the
+ordinary "both added a parameter" kind, resolved by keeping both. **The damage
+was in the files that auto-merged cleanly**, and it is worth internalizing:
+
+**1. The ABI version silently stayed at 3.** Both branches wrote `3`, so git saw
+identical text and merged happily — while the Python loader had been reconciled
+to expect 4. A version check that exists precisely to catch ABI drift would
+itself have been the thing that was wrong. Caught by reading the merged file
+rather than trusting the absence of a conflict marker.
+
+**2. Adding a struct field breaks the *other* branch's new construction sites —
+with no conflict.** `ScanInput` gained `reverse` here; main added new
+`ScanInput` literals in its streaming tests. Git merged both hunks cleanly and
+produced code that does not compile. Same for the C ABI: main's three `h0` tests
+were written against a signature with no `reverse`, and this branch's `reverse`
+test against one with no `h0` — every one of those call sites was left short an
+argument.
+
+This bit **twice**: the FFI call sites were caught before pushing (by counting
+arguments at each call), but property.rs's three new `ScanInput` literals were
+not — because only the *conflicted* files were re-checked, and property.rs was
+not one of them. CI's `cargo clippy --all-targets` caught them (note: `--all-targets`
+is why clippy, not `cargo build`, was the step that failed — it is the only gate
+that compiles the test targets).
+
+**The rule to take from this:** after a merge that adds a field to a shared
+struct or a parameter to a shared signature, *enumerate every construction and
+call site in the whole workspace* — do not assume the conflicted files are the
+complete set of affected ones. The absence of a conflict marker means git found
+no textual overlap, not that the result is coherent.
+
+### The bit-identity assertion was wrong — and finding out was worth it
+
+⚠ **The most interesting numerics finding of this whole workstream.**
+
+`reverse_matches_flip_forward_flip` originally asserted that a fused reverse scan
+is **bit-identical** to flip-forward-flip. It passed on x86 (scalar) and **failed
+on both Arm legs** (`last_state differs`, at `dims = {dim: 3, len: 31, state: 7}`).
+
+**The kernel was right. The assertion was false.** Two NEON passes process four
+timesteps at a time with a **scalar tail**:
+
+```rust
+while t + 4 <= tlen { ... vsoftplusq_f32 (NEON polynomial) ... }
+while t < tlen      { ... dt.softplus()   (libm)            ... }
+```
+
+`discretize_chunk` (softplus) and `epilogue_row` (SiLU) both look like this. The
+vector and tail branches compute the *same function by different means* — they
+agree to ~1e-7, but not to the last bit. **Which branch a timestep takes depends
+on its array POSITION**, and flipping the array moves timesteps across that
+boundary.
+
+At `len = 31`: the vector body covers positions 0–27, the tail 28–30. Scanned in
+place, timestep 29 sits at position 29 → **scalar tail**. Scanned flipped, it
+lands at position 1 → **vector body**. Same timestep, same value, ~1 ulp apart.
+That propagates through the recurrence and shows up in `last_state`.
+
+The scalar backend has one uniform code path per timestep, so it *is* bit-exact
+— which is precisely why x86 passed and Arm did not.
+
+**This is a property of the pre-existing forward kernel, not of `reverse`.**
+Demanding bit-equality on NEON was asserting something false.
+
+**Resolution — keep the strongest claim that is actually true, per backend:**
+
+| Backend | Assertion | Why |
+|---|---|---|
+| `Scalar` | **bit-identical** | uniform per-timestep path; any difference is an indexing bug, not rounding — this is what pins the traversal down |
+| `Auto` (NEON) | scale-relative `< 1e-5` | one SIMD-vs-libm transcendental apart, matching `auto_backend_matches_scalar`'s existing bar |
+
+The scalar leg still delivers the guarantee that matters — that the *indexing* is
+exactly right, including that chunk boundaries never leak into the math (the two
+routes chunk the axis differently). The NEON leg confirms the fused traversal is
+numerically sound without pretending to an equality that cannot hold.
+
+The same over-strong gate was in `bench/bench_bidirectional.py` (`torch.equal`).
+It would have passed anyway — every benchmarked length is a multiple of 4, so no
+scalar tail exists — but that is luck, not correctness, and a shape-dependent
+gate that silently holds is worse than one that states its tolerance. Relaxed to
+the same scale-relative bar, and it still reports when the result *is* bit-exact.
+
+**The lesson:** "bit-identical" is the right bar for a *reordering* of identical
+arithmetic, and the wrong bar the moment a SIMD tail means the arithmetic is not
+identical. The test was correct to fail; it caught an over-claim in the
+documentation before it reached a judge.
+
+### Verification after the merge
+
+- Every `ScanInput` and `Channel` literal in the workspace sets `reverse`
+  (swept exhaustively, not spot-checked).
+- All 7 C-ABI call sites pass exactly 16 arguments.
+- `try_neon` carries **both** `reverse` and `h0` into the NEON path — a drop
+  there would silently ignore one feature on aarch64 only, which is the worst
+  possible failure mode (correct on the x86 CI leg, wrong on the target).
+- `op.py`'s custom op, its `register_fake`, and the FFI call all agree on
+  argument order (`…, delta_bias, h0, delta_softplus, reverse`). A mismatch here
+  breaks `torch.compile` composability, which is the entire point of the fake
+  kernel.
+- `profile.rs` needs no `h0` plumbing (it is a zero-initialized diagnostic) but
+  does honor `reverse` — otherwise `scan_profiled(reverse: true)` would have
+  silently profiled a *forward* scan, which is worse than a compile error.
