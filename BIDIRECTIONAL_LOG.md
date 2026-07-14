@@ -16,6 +16,17 @@ benchmarked, and no fusion work starts, until the correctness path is green.
 *fast* (fused in Rust, via a kernel `reverse` flag). The correct stage lands
 first so the fusion is justified by a measurement instead of an assumption.
 
+> ## ✅ Bottom line (all CI green, commit `6e92b03`)
+>
+> **A bidirectional selective scan on Arm runs 3.93× faster than `torch.compile`
+> and 16.1–23.6× faster than PyTorch eager**, at 4.3e-6 – 6.9e-6 max abs error vs
+> the f64 reference (gate: 1e-4). Full numbers and caveats in **Step 5**.
+>
+> The `reverse` kernel flag exists as the **substrate for the 2D cross-scan**, not
+> as a bidirectional speedup — its own contribution is ~2–15% and, on a shared CI
+> runner, **not distinguishable from noise** (Step 5 shows why, with the receipt).
+> Do not quote it.
+
 ---
 
 ## Step 1 — correctness path (plan §2.1)
@@ -532,3 +543,95 @@ documentation before it reached a judge.
 - `profile.rs` needs no `h0` plumbing (it is a zero-initialized diagnostic) but
   does honor `reverse` — otherwise `scan_profiled(reverse: true)` would have
   silently profiled a *forward* scan, which is worse than a compile error.
+
+---
+
+## Step 5 — Results (all CI green, commit `6e92b03`)
+
+Host: GitHub `ubuntu-24.04-arm` runner — 4-core aarch64, torch 2.13.0, `--quick`
+(reps=5, warmup=1). **Provisional**: a shared runner, and the noise is large
+enough to matter (see below). Headline figures still need a dedicated Arm host.
+
+### The result
+
+| Shape | eager | torch.compile | **kernel** | vs eager | **vs torch.compile** |
+|---|---|---|---|---|---|
+| B1 D768 L128 N16 | 27.05 ms | 6.60 ms | **1.68 ms** | 16.10× | **3.93×** |
+| B1 D768 L512 N16 | 138.10 ms | *(skipped)* | **5.84 ms** | 23.64× | — |
+
+Correctness in the same run: kernel-vs-f64-reference max abs **4.29e-6** (L128) /
+**6.91e-6** (L512), against the 1e-4 gate. All 13 cases of
+`check_bidirectional.py` green, including `state13_neon_tail`, grouped B/C,
+`edge_len1`, every merge mode, untied `reverse_params`, and `fwd == plain 1D
+scan` (bit-identical).
+
+**Why this number is believable:** the *forward* scan measures **3.74×** vs
+`torch.compile` at the same shape ([`OPTIMIZATION_LOG.md`](./OPTIMIZATION_LOG.md)).
+A bidirectional scan is two forward scans, so it should land in the same band —
+and 3.93× does. That internal consistency is the real check; a bidirectional
+figure wildly different from the forward one would have meant a broken comparison,
+not a fast kernel.
+
+`torch.compile` also cost **62.4 s of one-time compilation** for a single shape,
+and only ran at L=128 (`--quick` caps `compile_max_len` at 128 — graph unrolling
+makes compile time explode with L). **One `torch.compile` data point is thin.**
+The full `sweep-len` suite is needed before this goes in `RESULTS.md`.
+
+### ⚠ The fusion number is NOISE, and here is the receipt
+
+The internal `fusion_speedup` (flip-based ÷ fused) came out 1.064× (L=128) and
+1.151× (L=512). **Do not quote either.** Two independent proofs that this
+measurement cannot resolve the effect:
+
+**1. The achieved speedup exceeded its own theoretical ceiling.** At L=128:
+achieved **1.064×**, ceiling **1.055×**. `fused_estimate` (two forward scans, zero
+flips) is by construction the floor — nothing can beat it. Exceeding it is
+impossible, so the gap is measurement error. (The benchmark *has* a guard for
+this, but it compares maxima across shapes, so it didn't fire on a single-shape
+inversion. Worth tightening to a per-shape check.)
+
+**2. The same code path moved 19% between runs.**
+
+| | pre-fusion run (`5cb4fe8`) | this run (`6e92b03`) |
+|---|---|---|
+| flip-based path, L=512 | 5.631 ms | 6.724 ms |
+| ceiling, L=512 | 1.025× | 1.189× |
+
+Identical work, ~19% apart. With reps=5 / warmup=1 on a **shared** 4-core runner,
+the noise floor is roughly ±20% — comfortably larger than the 2–15% effect being
+measured.
+
+**Conclusion unchanged from Step 2:** the fused reverse is worth *somewhere
+between nothing and ~15%*, this setup cannot pin it down, and it was never the
+justification for building it. It exists because **SS2D needs a backward
+traversal** (plan §3.2's row-backward and column-backward directions). Framing it
+as a speedup would be quoting a number this project cannot currently defend —
+exactly what `CLAUDE.md`'s "benchmark honestly" rule forbids.
+
+### What the numbers confirmed along the way
+
+- **The forward path did not regress.** `fwd == plain 1D scan` is bit-identical,
+  and all 16 goldens hold at their recorded error floors — so the loop-invariant
+  `if ch.reverse` branch added to Pass B did not disturb the existing kernel.
+  (LLVM presumably unswitched it, as expected. The criterion ladder is the direct
+  confirmation and is still worth reading.)
+- **The SIMD-tail prediction was right.** `fused == flip-based` came out
+  **bit-identical** at both shapes — exactly as predicted, because L=128 and
+  L=512 are multiples of 4, so no scalar tail exists to diverge (see Step 4's
+  bit-identity finding). At a length like 31 it would not have been, which is
+  precisely why the gate is a tolerance and not `torch.equal`.
+- **`flips_only` (0.064 / 0.110 ms) is far smaller than the flip path's total
+  penalty** (0.108 / 0.882 ms over the fused path). The gap is not copy cost — it
+  is the *second working set*: flipped tensors are freshly allocated, so the scan
+  streams ~4.7 MB of cold memory instead of re-reading warm cache. A real effect,
+  and another reason the naive "flips cost ~2%" framing understated things. Also
+  another reason not to trust ±20%-noise numbers to arbitrate it.
+
+### Next, to make this publishable
+
+1. Full `sweep-len` (not `--quick`), reps ≥ 10, on a **dedicated** Arm host —
+   Oracle Ampere A1 or a short Graviton session — so `torch.compile` is measured
+   at more than one shape and the noise floor drops below the effect.
+2. Tighten the benchmark's ceiling guard to a **per-shape** check so an inversion
+   like L=128's is a hard error, not a silent oddity.
+3. Then, and only then, put the vs-`torch.compile` row in `RESULTS.md`.

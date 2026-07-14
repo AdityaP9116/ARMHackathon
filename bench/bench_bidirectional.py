@@ -319,7 +319,19 @@ def main():
                 line += f", {row['speedup_vs_compile']:.2f}x vs torch.compile"
             print(line)
             print(f"     (internal: fused reverse won "
-                  f"{row['fusion_speedup']:.3f}x over the flip-based path)\n")
+                  f"{row['fusion_speedup']:.3f}x over the flip-based path)")
+            # PER-SHAPE noise guard. `fused_estimate` (two forward scans, zero
+            # flips) is the floor by construction — the fused path cannot beat
+            # it. If it appears to, the run is noise-dominated and the fusion
+            # number is meaningless for THIS shape, whatever the across-shape
+            # maxima say. (Seen for real: L=128 achieved 1.064x against a 1.055x
+            # ceiling on a shared CI runner.)
+            if row["fusion_speedup"] > row["fusion_headroom"]:
+                print(f"     !! NOISE: achieved {row['fusion_speedup']:.3f}x "
+                      f"exceeds its own ceiling {row['fusion_headroom']:.3f}x — "
+                      f"this shape's fusion number is unusable")
+                row["noise_dominated"] = True
+            print()
             results["shapes"].append(row)
 
     ev = [r["speedup_vs_eager"] for r in results["shapes"]]
@@ -336,13 +348,15 @@ def main():
               f"{min(cv):.2f}x – {max(cv):.2f}x   <- the headline")
     else:
         print("bidirectional scan vs torch.compile: (not measured on this host)")
+    noisy = [r for r in results["shapes"] if r.get("noise_dominated")]
     print(f"internal fusion win                : "
           f"{min(sp):.3f}x – {max(sp):.3f}x (ceiling was "
           f"{min(hr):.3f}x – {max(hr):.3f}x)")
-    if max(sp) > max(hr) + 0.02:
-        print("!! fusion win exceeds its own ceiling — the comparison is "
-              "suspect, not the kernel. Investigate before quoting it.")
-    print("\nThe fusion win is a ~2% internal effect and is NOT a headline. "
+    if noisy:
+        print(f"!! {len(noisy)}/{len(results['shapes'])} shapes exceeded their "
+              f"own ceiling -> this run is NOISE-DOMINATED. The fusion number "
+              f"is not measurable here; use a dedicated host with more reps.")
+    print("\nThe fusion win is a small internal effect and is NOT a headline. "
           "`reverse` exists as the substrate for the 2D cross-scan "
           "(see BIDIRECTIONAL_LOG.md); the vs-baseline rows are the result.")
 
