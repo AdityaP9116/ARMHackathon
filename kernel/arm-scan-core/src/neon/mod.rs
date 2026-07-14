@@ -222,6 +222,7 @@ unsafe fn epilogue_row(ch: &Channel<'_>, out_row: &mut [f32]) {
 }
 
 /// N=16 fast path: chunked two-pass with the state in four q-registers.
+#[allow(clippy::too_many_arguments)]
 #[target_feature(enable = "neon")]
 unsafe fn channel_n16(
     a_row: &[f32],
