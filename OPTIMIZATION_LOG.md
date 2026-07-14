@@ -135,3 +135,32 @@ The two exp steps made the kernel ~11–12% faster op-level and **widened the le
 over both baselines** (vs torch.compile 3.3× → 3.74× at L128; vs eager 14.4× →
 16.3×). Shared-runner numbers are provisional per BASELINE_REPORT — headline
 figures still need a dedicated Graviton instance.
+
+---
+
+## Step 3 — degree-3 exp for the Pass-A2 decay factor
+
+**Branch:** `feature/exp-degree-cut` · **Idea:** IMPROVEMENT_IDEAS §3.1 (degree cut)
+
+### What
+Added `vexpq_f32_nonpos_fast` — the same non-positive exp as Step 1 but one more
+degree lower (drops `P1` as well as `P0`), so ~2.7e-6 worst-case vs ~2.6e-7.
+Pointed **only Pass A2** at it (`channel_n16`, `channel_general`, profiler). One
+more FMA off the 56%-of-runtime exp phase. softplus stays on the degree-4
+`vexpq_f32_nonpos` — its 2e-6 sweep bound is left untouched.
+
+### Why it's now safe (it wasn't attempted at Step 2)
+The PR-CI golden table gave the real budget. The binding case `tiny` runs at
+`out_err = 1.978e-7` against a 2.487e-6 floor_bound (~12× headroom); with the
+degree-3 exp its NEON-exp contribution ~4×'s, projecting to ~1.2e-6 — still
+~2× under the ceiling. Every other case has 10–40× more room; parity projects
+to ~1.1e-6 vs the 1e-5 gate. `tiny` is the case to watch.
+
+### Measured impact
+_Pending CI re-profile._ Expected ~1 FMA off the exp (~7% of the exp phase) →
+roughly ~4% off total kernel.
+
+### Correctness
+_Pending CI._ New `vexpq_f32_nonpos_fast` sweep asserts < 4e-6 over [-104, 0];
+golden gate (1e-4, per-case floors) and parity (1e-5) unchanged and are the
+real acceptance. Revert this single change if the `tiny` golden case regresses.
