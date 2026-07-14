@@ -432,6 +432,7 @@ fn streaming_matches_oneshot() {
             z: Some(&z),
             delta_bias: Some(&bias),
             delta_softplus: true,
+            reverse: false,
         };
 
         for backend in [Backend::Scalar, Backend::Auto] {
@@ -462,6 +463,7 @@ fn streaming_matches_oneshot() {
                 z: Some(&z1),
                 delta_bias: Some(&bias),
                 delta_softplus: true,
+                reverse: false,
             };
             let mut out1 = vec![0.0_f32; dim * split];
             let mut mid = vec![0.0_f32; dim * state];
@@ -487,6 +489,7 @@ fn streaming_matches_oneshot() {
                 z: Some(&z2),
                 delta_bias: Some(&bias),
                 delta_softplus: true,
+                reverse: false,
             };
             let mut out2 = vec![0.0_f32; dim * rem];
             selective_scan_with_state(&dims2, &in2, &mut out2, None, Some(&mid), opts).unwrap();
