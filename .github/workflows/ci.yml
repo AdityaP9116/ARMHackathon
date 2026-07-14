@@ -120,20 +120,25 @@ jobs:
       # Bidirectional scan vs stock PyTorch (eager + torch.compile), plus the
       # internal fused-vs-flip diagnostic. Provisional (shared runner); headline
       # numbers need a dedicated Arm host per bench/README.md.
+      # --compile-max-len 512 overrides --quick's 128 cap, so torch.compile (the
+      # fair baseline) is measured at BOTH shapes, not just the short one.
+      # Costs a few extra minutes of compilation; the job budget allows it.
       - name: Bidirectional benchmark (vs eager / torch.compile)
         working-directory: .
+        timeout-minutes: 20
         run: |
           set -o pipefail
-          python3 bench/bench_bidirectional.py --quick 2>&1 | tee bench-bidi.log
+          python3 bench/bench_bidirectional.py --quick --compile-max-len 512 \
+            2>&1 | tee bench-bidi.log
       - name: Publish bidirectional result
         if: always()
         working-directory: .
         run: |
           {
             echo "## Bidirectional scan (linux-arm64 CI runner)"
-            echo "vs-baseline rows are the result. The internal fusion win is ~2% and is NOT a headline — see BIDIRECTIONAL_LOG.md."
+            echo "vs-baseline rows are the result. The internal fusion win is small and is NOT a headline — see BIDIRECTIONAL_LOG.md."
             echo '```'
-            grep -E "^===|^====|^  (ref_|scan_fwd|fused_estimate|bidirectional|flips_only)|^  =>|^bidirectional scan|^internal fusion" bench-bidi.log 2>/dev/null || echo "(bench did not run)"
+            grep -E "^===|^====|^  (ref_|scan_fwd|fused_estimate|bidirectional|flips_only)|^  =>|^bidirectional scan|^fused reverse|^torch.compile COST|^  +[0-9]+ +[0-9.]+s|^  +L|^  L=" bench-bidi.log 2>/dev/null || echo "(bench did not run)"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Op-level benchmark (kernel vs eager vs torch.compile)

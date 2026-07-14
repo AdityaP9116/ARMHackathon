@@ -16,16 +16,17 @@ benchmarked, and no fusion work starts, until the correctness path is green.
 *fast* (fused in Rust, via a kernel `reverse` flag). The correct stage lands
 first so the fusion is justified by a measurement instead of an assumption.
 
-> ## ✅ Bottom line (all CI green, commit `6e92b03`)
+> ## ✅ Bottom line (all CI green; two runs, `6e92b03` and `605b056`)
 >
-> **A bidirectional selective scan on Arm runs 3.93× faster than `torch.compile`
-> and 16.1–23.6× faster than PyTorch eager**, at 4.3e-6 – 6.9e-6 max abs error vs
-> the f64 reference (gate: 1e-4). Full numbers and caveats in **Step 5**.
+> **A bidirectional selective scan on Arm runs ~3.9–4.0× faster than
+> `torch.compile` and 16–24× faster than PyTorch eager**, at 4.3e-6 – 6.9e-6 max
+> abs error vs the f64 reference (gate: 1e-4). Reproduced across two runs. Full
+> numbers and caveats in **Step 5**.
 >
 > The `reverse` kernel flag exists as the **substrate for the 2D cross-scan**, not
-> as a bidirectional speedup — its own contribution is ~2–15% and, on a shared CI
-> runner, **not distinguishable from noise** (Step 5 shows why, with the receipt).
-> Do not quote it.
+> as a bidirectional speedup. Its own contribution is ~6–14% (reproducible, and
+> growing with sequence length) — real, but not a headline. Quote the
+> vs-`torch.compile` row, not this one.
 
 ---
 
@@ -546,24 +547,30 @@ documentation before it reached a judge.
 
 ---
 
-## Step 5 — Results (all CI green, commit `6e92b03`)
+## Step 5 — Results (all CI green, commits `6e92b03` / `605b056`)
 
 Host: GitHub `ubuntu-24.04-arm` runner — 4-core aarch64, torch 2.13.0, `--quick`
-(reps=5, warmup=1). **Provisional**: a shared runner, and the noise is large
-enough to matter (see below). Headline figures still need a dedicated Arm host.
+(reps=5, warmup=1). **Provisional**: a shared runner. Headline figures still need
+a dedicated Arm host. Two independent runs are reported, because the agreement
+between them is what makes the numbers credible.
 
 ### The result
 
 | Shape | eager | torch.compile | **kernel** | vs eager | **vs torch.compile** |
 |---|---|---|---|---|---|
-| B1 D768 L128 N16 | 27.05 ms | 6.60 ms | **1.68 ms** | 16.10× | **3.93×** |
-| B1 D768 L512 N16 | 138.10 ms | *(skipped)* | **5.84 ms** | 23.64× | — |
+| B1 D768 L128 N16 | 27.05 / 29.11 ms | 6.60 / 6.76 ms | **1.68 / 1.70 ms** | 16.1× / 17.2× | **3.93× / 3.99×** |
+| B1 D768 L512 N16 | 138.1 / 139.9 ms | *(skipped)* | **5.84 / 5.81 ms** | 23.6× / 24.1× | — |
 
-Correctness in the same run: kernel-vs-f64-reference max abs **4.29e-6** (L128) /
-**6.91e-6** (L512), against the 1e-4 gate. All 13 cases of
-`check_bidirectional.py` green, including `state13_neon_tail`, grouped B/C,
-`edge_len1`, every merge mode, untied `reverse_params`, and `fwd == plain 1D
+*(run `6e92b03` / run `605b056`)*
+
+Correctness in the same runs: kernel-vs-f64-reference max abs **4.29e-6** (L128) /
+**6.91e-6** (L512), against the 1e-4 gate — identical across both runs. All 13
+cases of `check_bidirectional.py` green, including `state13_neon_tail`, grouped
+B/C, `edge_len1`, every merge mode, untied `reverse_params`, and `fwd == plain 1D
 scan` (bit-identical).
+
+The kernel timings reproduce to within ~1% across runs; the *baselines* move by
+up to 8%, which is the shared runner. The speedup ratios hold.
 
 **Why this number is believable:** the *forward* scan measures **3.74×** vs
 `torch.compile` at the same shape ([`OPTIMIZATION_LOG.md`](./OPTIMIZATION_LOG.md)).
@@ -577,36 +584,54 @@ and only ran at L=128 (`--quick` caps `compile_max_len` at 128 — graph unrolli
 makes compile time explode with L). **One `torch.compile` data point is thin.**
 The full `sweep-len` suite is needed before this goes in `RESULTS.md`.
 
-### ⚠ The fusion number is NOISE, and here is the receipt
+### The fusion win: ~6–14%, and the "ceiling" proxy was the thing that was broken
 
-The internal `fusion_speedup` (flip-based ÷ fused) came out 1.064× (L=128) and
-1.151× (L=512). **Do not quote either.** Two independent proofs that this
-measurement cannot resolve the effect:
+⚠ **I got this wrong on the first read and am correcting it rather than
+overwriting it, because the mistake is instructive.**
 
-**1. The achieved speedup exceeded its own theoretical ceiling.** At L=128:
-achieved **1.064×**, ceiling **1.055×**. `fused_estimate` (two forward scans, zero
-flips) is by construction the floor — nothing can beat it. Exceeding it is
-impossible, so the gap is measurement error. (The benchmark *has* a guard for
-this, but it compares maxima across shapes, so it didn't fire on a single-shape
-inversion. Worth tightening to a per-shape check.)
+The first pass at these numbers concluded *"the fusion win is noise"* — because
+the achieved speedup exceeded its own theoretical ceiling, which is impossible.
+That inference was backwards. Adding a **per-shape** guard and re-running made it
+obvious:
 
-**2. The same code path moved 19% between runs.**
-
-| | pre-fusion run (`5cb4fe8`) | this run (`6e92b03`) |
+| | run 1 (`6e92b03`) | run 2 (`605b056`) |
 |---|---|---|
-| flip-based path, L=512 | 5.631 ms | 6.724 ms |
-| ceiling, L=512 | 1.025× | 1.189× |
+| **fusion_speedup, L=128** | 1.064× | **1.065×** |
+| **fusion_speedup, L=512** | 1.151× | **1.136×** |
+| ceiling, L=128 | 1.055× | **1.027×** |
+| ceiling, L=512 | 1.189× | **1.111×** |
 
-Identical work, ~19% apart. With reps=5 / warmup=1 on a **shared** 4-core runner,
-the noise floor is roughly ±20% — comfortably larger than the 2–15% effect being
-measured.
+**The achieved number reproduces to ~0.001×. The *ceiling* is what swings.** So
+the noisy quantity was never the measurement — it was `fused_estimate`, the proxy.
+And the inversion has a *consistent sign* (3 of 4 measurements, both shapes, both
+runs): the real fused path beats its supposed lower bound by 3–6%, every time.
+That is a **systematic bias**, not random error.
 
-**Conclusion unchanged from Step 2:** the fused reverse is worth *somewhere
-between nothing and ~15%*, this setup cannot pin it down, and it was never the
-justification for building it. It exists because **SS2D needs a backward
-traversal** (plan §3.2's row-backward and column-backward directions). Framing it
-as a speedup would be quoting a number this project cannot currently defend —
-exactly what `CLAUDE.md`'s "benchmark honestly" rule forbids.
+**`fused_estimate` is not a valid lower bound, and has been demoted.** It was
+meant to be one — two forward scans, no flips, identical work — and it was the
+right tool *before* the fused path existed, when there was nothing real to
+measure. But a bound that the real thing consistently beats is a broken proxy,
+and the mechanism is not understood. It is now kept as a diagnostic timing only,
+never as a ceiling, and the guard built on it has been removed. The honest number
+is `fusion_speedup`: the actual old path against the actual new one.
+
+**The result: the fused reverse wins ~6.5% at L=128 and ~14% at L=512 — and it
+grows with L.** That is *more* than Step 2's ~2% prediction, and the reason is
+visible in the data: `flips_only` measures only 0.06–0.12 ms, but the flip path's
+real penalty is 0.11–0.79 ms. The gap is not copy cost — it is a **second working
+set**. Flipped tensors are freshly allocated, so the scan streams ~4.7 MB of cold
+memory instead of re-reading warm cache. `flips_only` times the copy on already-
+warm data and therefore understates it, which is exactly why Step 2's estimate
+came in low.
+
+**What does NOT change:** ~6–14% is still not a headline, and `reverse` was still
+not built for it. It exists because **SS2D needs a backward traversal** (plan
+§3.2's row-backward and column-backward directions). The number worth quoting is
+3.99× vs `torch.compile`, not this.
+
+**The lesson:** a proxy is only trustworthy until the real thing exists. Once it
+does, the proxy's job is over — and if the real thing outruns its own "lower
+bound," suspect the proxy before you blame the noise.
 
 ### What the numbers confirmed along the way
 

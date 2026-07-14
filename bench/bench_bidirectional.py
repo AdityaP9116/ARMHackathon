@@ -192,15 +192,20 @@ def main():
     ap.add_argument("--reps", type=int, default=None)
     ap.add_argument("--warmup", type=int, default=None)
     ap.add_argument("--torch-threads", type=int, default=None)
-    ap.add_argument("--compile-max-len", type=int, default=512,
+    ap.add_argument("--compile-max-len", type=int, default=None,
                     help="skip the torch.compile baseline beyond this L "
-                         "(graph unrolling makes compile time explode)")
+                         "(graph unrolling makes compile time explode). "
+                         "Default 512, or 128 under --quick. An explicit value "
+                         "always wins, including under --quick.")
     ap.add_argument("--no-compile", action="store_true")
     ap.add_argument("--tag", type=str, default=platform.node())
     ap.add_argument("--json", type=str, default=None)
     args = ap.parse_args()
-    if args.quick:
-        args.compile_max_len = min(args.compile_max_len, 128)
+    if args.compile_max_len is None:
+        # --quick's lower cap exists only to bound CI time. It must NOT override
+        # an explicit flag — that made the L=512 compile row unreachable from a
+        # quick run, which is exactly the row we wanted.
+        args.compile_max_len = 128 if args.quick else 512
 
     if args.torch_threads:
         torch.set_num_threads(args.torch_threads)
@@ -309,8 +314,16 @@ def main():
             eager = row["timings"]["ref_eager_bidi"]["median_s"]
 
             row["speedup_vs_eager"] = eager / bi
-            row["fusion_speedup"] = fp / bi          # internal, ~2%
-            row["fusion_headroom"] = fp / fu         # ceiling, for continuity
+            row["fusion_speedup"] = fp / bi     # the real before/after
+            # `fused_estimate` was the pre-fusion PROXY for a fused reverse (two
+            # forward scans, no flips) and was treated as a lower bound. IT IS
+            # NOT ONE: the real fused path beats it by 3-6% consistently, across
+            # runs and shapes. A bound the real thing beats is a broken proxy,
+            # and the mechanism is unclear — so it is kept only as a diagnostic
+            # timing, never as a ceiling. The honest number is `fusion_speedup`,
+            # which measures the actual old path against the actual new one and
+            # reproduces to ~0.001x across runs. See BIDIRECTIONAL_LOG.md Step 5.
+            row["fused_estimate_ratio"] = fp / fu
 
             line = f"  => {row['speedup_vs_eager']:.2f}x vs eager"
             comp = row["timings"].get("ref_compile_bidi", {})
@@ -319,26 +332,13 @@ def main():
                 line += f", {row['speedup_vs_compile']:.2f}x vs torch.compile"
             print(line)
             print(f"     (internal: fused reverse won "
-                  f"{row['fusion_speedup']:.3f}x over the flip-based path)")
-            # PER-SHAPE noise guard. `fused_estimate` (two forward scans, zero
-            # flips) is the floor by construction — the fused path cannot beat
-            # it. If it appears to, the run is noise-dominated and the fusion
-            # number is meaningless for THIS shape, whatever the across-shape
-            # maxima say. (Seen for real: L=128 achieved 1.064x against a 1.055x
-            # ceiling on a shared CI runner.)
-            if row["fusion_speedup"] > row["fusion_headroom"]:
-                print(f"     !! NOISE: achieved {row['fusion_speedup']:.3f}x "
-                      f"exceeds its own ceiling {row['fusion_headroom']:.3f}x — "
-                      f"this shape's fusion number is unusable")
-                row["noise_dominated"] = True
-            print()
+                  f"{row['fusion_speedup']:.3f}x over the flip-based path)\n")
             results["shapes"].append(row)
 
     ev = [r["speedup_vs_eager"] for r in results["shapes"]]
     cv = [r["speedup_vs_compile"] for r in results["shapes"]
           if "speedup_vs_compile" in r]
     sp = [r["fusion_speedup"] for r in results["shapes"]]
-    hr = [r["fusion_headroom"] for r in results["shapes"]]
 
     print("=" * 62)
     print(f"bidirectional scan vs eager        : "
@@ -348,14 +348,41 @@ def main():
               f"{min(cv):.2f}x – {max(cv):.2f}x   <- the headline")
     else:
         print("bidirectional scan vs torch.compile: (not measured on this host)")
-    noisy = [r for r in results["shapes"] if r.get("noise_dominated")]
-    print(f"internal fusion win                : "
-          f"{min(sp):.3f}x – {max(sp):.3f}x (ceiling was "
-          f"{min(hr):.3f}x – {max(hr):.3f}x)")
-    if noisy:
-        print(f"!! {len(noisy)}/{len(results['shapes'])} shapes exceeded their "
-              f"own ceiling -> this run is NOISE-DOMINATED. The fusion number "
-              f"is not measurable here; use a dedicated host with more reps.")
+    print(f"fused reverse vs flip-based path   : "
+          f"{min(sp):.3f}x – {max(sp):.3f}x (internal; grows with L)")
+
+    # ---- torch.compile's COST, reported as a result rather than a footnote.
+    # The reference has a Python `for t in range(L)` loop, so inductor unrolls
+    # the recurrence into an L-step graph: compile time scales with sequence
+    # length. That is not an inconvenience to work around — it is the kernel's
+    # whole argument (torch.compile cannot restructure a sequential recurrence),
+    # and it belongs in the results, not in a skip message.
+    comp_rows = [(r["shape"][2], r["timings"]["ref_compile_bidi"]["compile_s"],
+                  r["timings"]["ref_compile_bidi"]["median_s"])
+                 for r in results["shapes"]
+                 if "compile_s" in r["timings"].get("ref_compile_bidi", {})]
+    skipped = [r["shape"][2] for r in results["shapes"]
+               if "compile_s" not in r["timings"].get("ref_compile_bidi", {})]
+    if comp_rows:
+        print("\ntorch.compile COST (the recurrence is unrolled into an "
+              "L-step graph):")
+        print(f"  {'L':>6}  {'compile':>10}  {'run/iter':>10}  "
+              f"{'iters to amortize vs our kernel':>32}")
+        for length, cs, ms in comp_rows:
+            k = next(r["timings"]["bidirectional"]["median_s"]
+                     for r in results["shapes"] if r["shape"][2] == length)
+            # how many calls before compile time pays for itself vs our kernel
+            gain = ms - k
+            iters = f"{cs / gain:,.0f}" if gain > 0 else "never (we are faster)"
+            print(f"  {length:>6}  {cs:>9.1f}s  {ms*1e3:>9.2f}ms  {iters:>32}")
+        results["compile_cost"] = [
+            {"len": l, "compile_s": cs, "median_s": ms}
+            for l, cs, ms in comp_rows]
+    if skipped:
+        print(f"\n  L={skipped} skipped: compile time grows with L "
+              f"(--compile-max-len={args.compile_max_len}). Raise the cap to "
+              f"measure them — and note that having to is itself the finding.")
+
     print("\nThe fusion win is a small internal effect and is NOT a headline. "
           "`reverse` exists as the substrate for the 2D cross-scan "
           "(see BIDIRECTIONAL_LOG.md); the vs-baseline rows are the result.")
