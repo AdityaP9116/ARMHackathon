@@ -6,8 +6,8 @@
 use proptest::prelude::*;
 
 use arm_scan_core::{
-    selective_scan, selective_scan_with_backend, selective_scan_with_options, Backend, ScanDims,
-    ScanInput, ScanOptions, Threading,
+    selective_scan, selective_scan_with_backend, selective_scan_with_options,
+    selective_scan_with_state, Backend, ScanDims, ScanInput, ScanOptions, Threading,
 };
 
 #[derive(Debug, Clone)]
@@ -238,6 +238,152 @@ proptest! {
             );
         }
     }
+}
+
+/// Streaming contract: scanning a prefix, then resuming the rest from the
+/// prefix's `last_state` fed back as `h0`, must reproduce the one-shot scan of
+/// the whole sequence. This is what autoregressive decode relies on. Checked
+/// for both backends, at N=16 (the fast path) and N=8 (the general path), with
+/// a mid-sequence split that is not a chunk boundary.
+#[test]
+fn streaming_matches_oneshot() {
+    fn fill(v: &mut [f32], mut seed: u32, lo: f32, hi: f32) {
+        for x in v.iter_mut() {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            *x = lo + (hi - lo) * (seed as f32 / u32::MAX as f32);
+        }
+    }
+    // Extract timesteps [t0, t1) from a (rows, len) row-major tensor.
+    fn slice_l(src: &[f32], rows: usize, len: usize, t0: usize, t1: usize) -> Vec<f32> {
+        let w = t1 - t0;
+        let mut out = vec![0.0_f32; rows * w];
+        for r in 0..rows {
+            out[r * w..(r + 1) * w].copy_from_slice(&src[r * len + t0..r * len + t1]);
+        }
+        out
+    }
+
+    fn check(state: usize) {
+        let (batch, dim, len, split) = (1usize, 4usize, 16usize, 7usize);
+        let bdl = batch * dim * len;
+        let bnl = batch * state * len;
+
+        let mut u = vec![0.0_f32; bdl];
+        let mut delta = vec![0.0_f32; bdl];
+        let mut a = vec![0.0_f32; dim * state];
+        let mut b = vec![0.0_f32; bnl];
+        let mut c = vec![0.0_f32; bnl];
+        let mut z = vec![0.0_f32; bdl];
+        let mut d_skip = vec![0.0_f32; dim];
+        let mut bias = vec![0.0_f32; dim];
+        fill(&mut u, 1, -3.0, 3.0);
+        fill(&mut delta, 2, -2.0, 2.0);
+        fill(&mut a, 3, -16.0, -0.5);
+        fill(&mut b, 4, -3.0, 3.0);
+        fill(&mut c, 5, -3.0, 3.0);
+        fill(&mut z, 6, -3.0, 3.0);
+        fill(&mut d_skip, 7, -1.0, 1.0);
+        fill(&mut bias, 8, -6.0, -3.0);
+
+        let dims = ScanDims {
+            batch,
+            dim,
+            len,
+            state,
+            groups: 1,
+        };
+        let full = ScanInput {
+            u: &u,
+            delta: &delta,
+            a: &a,
+            b: &b,
+            c: &c,
+            d_skip: Some(&d_skip),
+            z: Some(&z),
+            delta_bias: Some(&bias),
+            delta_softplus: true,
+        };
+
+        for backend in [Backend::Scalar, Backend::Auto] {
+            let opts = ScanOptions {
+                backend,
+                threading: Threading::Sequential,
+            };
+
+            let mut out_full = vec![0.0_f32; bdl];
+            selective_scan_with_state(&dims, &full, &mut out_full, None, None, opts).unwrap();
+
+            // Part 1: timesteps [0, split), capturing the intermediate state.
+            let (u1, d1, b1, c1, z1) = (
+                slice_l(&u, dim, len, 0, split),
+                slice_l(&delta, dim, len, 0, split),
+                slice_l(&b, state, len, 0, split),
+                slice_l(&c, state, len, 0, split),
+                slice_l(&z, dim, len, 0, split),
+            );
+            let dims1 = ScanDims { len: split, ..dims };
+            let in1 = ScanInput {
+                u: &u1,
+                delta: &d1,
+                a: &a,
+                b: &b1,
+                c: &c1,
+                d_skip: Some(&d_skip),
+                z: Some(&z1),
+                delta_bias: Some(&bias),
+                delta_softplus: true,
+            };
+            let mut out1 = vec![0.0_f32; dim * split];
+            let mut mid = vec![0.0_f32; dim * state];
+            selective_scan_with_state(&dims1, &in1, &mut out1, Some(&mut mid), None, opts).unwrap();
+
+            // Part 2: timesteps [split, len), resuming from `mid` as h0.
+            let rem = len - split;
+            let (u2, d2, b2, c2, z2) = (
+                slice_l(&u, dim, len, split, len),
+                slice_l(&delta, dim, len, split, len),
+                slice_l(&b, state, len, split, len),
+                slice_l(&c, state, len, split, len),
+                slice_l(&z, dim, len, split, len),
+            );
+            let dims2 = ScanDims { len: rem, ..dims };
+            let in2 = ScanInput {
+                u: &u2,
+                delta: &d2,
+                a: &a,
+                b: &b2,
+                c: &c2,
+                d_skip: Some(&d_skip),
+                z: Some(&z2),
+                delta_bias: Some(&bias),
+                delta_softplus: true,
+            };
+            let mut out2 = vec![0.0_f32; dim * rem];
+            selective_scan_with_state(&dims2, &in2, &mut out2, None, Some(&mid), opts).unwrap();
+
+            for dd in 0..dim {
+                for tt in 0..split {
+                    let (f, s) = (out_full[dd * len + tt], out1[dd * split + tt]);
+                    assert!(
+                        (f - s).abs() < 1e-6,
+                        "part1 {backend:?} N={state} d={dd} t={tt}: full={f} stream={s}"
+                    );
+                }
+                for tt in 0..rem {
+                    let (f, s) = (out_full[dd * len + split + tt], out2[dd * rem + tt]);
+                    assert!(
+                        (f - s).abs() < 1e-6,
+                        "part2 {backend:?} N={state} d={dd} t={tt}: full={f} stream={s}"
+                    );
+                }
+            }
+        }
+    }
+
+    check(16);
+    check(8);
 }
 
 /// Explicitly requesting NEON must work on aarch64 and error elsewhere.

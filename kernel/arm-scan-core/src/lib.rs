@@ -254,28 +254,58 @@ pub fn selective_scan_with_options<T: Float>(
     dims: &ScanDims,
     input: &ScanInput<'_, T>,
     out: &mut [T],
+    last_state: Option<&mut [T]>,
+    opts: ScanOptions,
+) -> Result<(), ScanError> {
+    selective_scan_with_state(dims, input, out, last_state, None, opts)
+}
+
+/// Like [`selective_scan_with_options`], but seeds the recurrence from a
+/// caller-provided initial state `h0` (shape `(batch, dim, state)`, the same
+/// layout as `last_state`) instead of zeros.
+///
+/// This is what makes the scan resumable: run a prefix, take its `last_state`,
+/// feed it back as `h0` for the next segment, and the concatenated output is
+/// identical to scanning the whole sequence at once. It is the kernel half of
+/// streaming / autoregressive decode. Pass `None` for the default
+/// zero-initialized behavior.
+pub fn selective_scan_with_state<T: Float>(
+    dims: &ScanDims,
+    input: &ScanInput<'_, T>,
+    out: &mut [T],
     // `mut` is only exercised by the aarch64 NEON dispatch below
     #[cfg_attr(not(target_arch = "aarch64"), allow(unused_mut))] mut last_state: Option<&mut [T]>,
+    h0: Option<&[T]>,
     opts: ScanOptions,
 ) -> Result<(), ScanError> {
     validate(dims, input, out, last_state.as_deref())?;
+    if let Some(h0) = h0 {
+        let expected = dims.batch * dims.dim * dims.state;
+        if h0.len() != expected {
+            return Err(ScanError::BadLen {
+                tensor: "h0",
+                expected,
+                got: h0.len(),
+            });
+        }
+    }
     let threading = opts.threading;
     match opts.backend {
         Backend::Scalar => {
-            scalar::scan(dims, input, out, last_state, threading);
+            scalar::scan(dims, input, h0, out, last_state, threading);
             Ok(())
         }
         Backend::Auto => {
             #[cfg(target_arch = "aarch64")]
-            if try_neon(dims, input, out, &mut last_state, threading) {
+            if try_neon(dims, input, h0, out, &mut last_state, threading) {
                 return Ok(());
             }
-            scalar::scan(dims, input, out, last_state, threading);
+            scalar::scan(dims, input, h0, out, last_state, threading);
             Ok(())
         }
         Backend::Neon => {
             #[cfg(target_arch = "aarch64")]
-            if try_neon(dims, input, out, &mut last_state, threading) {
+            if try_neon(dims, input, h0, out, &mut last_state, threading) {
                 return Ok(());
             }
             Err(ScanError::BackendUnavailable(Backend::Neon))
@@ -289,6 +319,7 @@ pub fn selective_scan_with_options<T: Float>(
 fn try_neon<T: Float>(
     dims: &ScanDims,
     input: &ScanInput<'_, T>,
+    h0: Option<&[T]>,
     out: &mut [T],
     last_state: &mut Option<&mut [T]>,
     threading: Threading,
@@ -319,6 +350,7 @@ fn try_neon<T: Float>(
     neon::scan(
         dims,
         &input_f32,
+        h0.map(cast),
         cast_mut(out),
         last_state.as_deref_mut().map(cast_mut),
         threading,
