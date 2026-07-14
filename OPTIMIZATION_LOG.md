@@ -78,3 +78,33 @@ Golden gate green (out_err unchanged at ~4e-6, ≪ 1e-4), scalar↔NEON parity
 - Extend the same treatment to **softplus's exp** (part of the ~19% discretize).
 - Now that the golden margin is known, evaluate dropping a **second degree**.
 - **SVE FEXPA** exp (§3.2) — the larger swing, hits the whole ~85%.
+
+---
+
+## Step 2 — reuse the fast exp in softplus
+
+**Branch:** `feature/exp-round2` · **Idea:** IMPROVEMENT_IDEAS §3.1 / §10 item 2
+
+### What
+`vsoftplusq_f32` (the softplus in the ~19% discretize phase) computes
+`exp(-|x|)`, whose argument is always ≤ 0, so it now uses the same
+`vexpq_f32_nonpos` from Step 1 instead of the general `vexpq_f32`. One-line
+change; no new function, no tolerance change.
+
+### Measured impact
+_Pending CI re-profile._ Expected ~14% off softplus's exp → roughly ~1–1.5%
+off total kernel time (softplus's exp is about half of the discretize phase).
+
+### Correctness
+_Pending CI._ Adds only ~1e-7 of exp error to softplus (nonpos exp ~6e-7 vs
+the previous ~5e-7); softplus's component sweep bound is 2e-6, and the golden
+gate is unchanged. The softplus sweep domain [-30, 30] never reaches the
+nonpos deep-underflow region.
+
+### Deliberately deferred (budget-checked, not done)
+Dropping a **second polynomial degree** in `vexpq_f32_nonpos` would add ~2.4e-6
+of exp error. The tightest golden floors — `tiny` (L=8, floor_bound 2.49e-6)
+and `edge_L1` (3.66e-6) — leave too little margin to attempt this without
+on-hardware validation or a proper degree-4 minimax refit (truncating Cephes
+degrades ~20× worse than a real minimax of the same degree). Revisit with
+either, or fold into the FEXPA work.

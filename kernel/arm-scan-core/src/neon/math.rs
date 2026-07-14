@@ -12,7 +12,7 @@
 
 use core::arch::aarch64::*;
 
-use super::exp::vexpq_f32;
+use super::exp::{vexpq_f32, vexpq_f32_nonpos};
 
 // Cephes logf polynomial coefficients
 const LP0: f32 = 7.037_683_6e-2;
@@ -83,7 +83,8 @@ pub(super) unsafe fn vlogq_f32(x: float32x4_t) -> float32x4_t {
 #[target_feature(enable = "neon")]
 pub(super) unsafe fn vsoftplusq_f32(x: float32x4_t) -> float32x4_t {
     let one = vdupq_n_f32(1.0);
-    let t = vexpq_f32(vnegq_f32(vabsq_f32(x)));
+    // argument -|x| is always <= 0 -> the non-positive fast exp.
+    let t = vexpq_f32_nonpos(vnegq_f32(vabsq_f32(x)));
     // log1p(t) as log(u) + (t - (u-1))/u with u = 1+t: the Goldberg
     // correction recovers the rounding error of the 1+t addition exactly
     // (u-1 is exact for u in (1, 2] by Sterbenz), keeping RELATIVE
