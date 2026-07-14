@@ -32,6 +32,8 @@
 
 mod exp;
 mod math;
+#[cfg(feature = "profiling")]
+pub mod profile;
 
 use core::arch::aarch64::*;
 

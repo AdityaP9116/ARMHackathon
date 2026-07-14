@@ -1,0 +1,96 @@
+name: Profile kernel
+
+# Free Tier-1 profiling on a real Neoverse (ubuntu-24.04-arm) runner.
+# Manual trigger: Actions tab -> "Profile kernel" -> Run workflow.
+# Produces (as the `kernel-profile` artifact + job summary):
+#   - per-phase timing breakdown (transpose/discretize/exp/proj/recurrence/epilogue)
+#   - the scalar -> NEON -> rayon criterion ladder
+#   - disassembly of the hottest kernel functions (for the §3.7 asm audit)
+# Also acts as the compile+lint gate for the aarch64-only profiling module.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: kernel
+
+jobs:
+  profile:
+    name: profile (linux-arm64)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: kernel
+
+      # --- The valuable part: build + run the phase profiler (this also
+      # compiles the aarch64-only profile.rs — the real correctness gate) ---
+      - name: Build phase profiler
+        run: cargo build --release --example profile_phases --features profiling
+      - name: Run phase profiler
+        run: |
+          set -o pipefail
+          cargo run --release --example profile_phases --features profiling \
+            2>&1 | tee profile-phases.txt
+
+      - name: Criterion ladder (scalar vs NEON vs rayon)
+        run: |
+          set -o pipefail
+          cargo bench -p arm-scan-core 2>&1 | tee bench-scan.txt
+
+      # --- §3.7 assembly audit: check for exp-constant re-materialization
+      # and register spills in the hottest functions. Best-effort. ---
+      - name: Disassemble hot functions
+        run: |
+          cargo install cargo-show-asm --locked || true
+          {
+            echo "===== vexpq_f32 (the exp polynomial) ====="
+            cargo asm --release -p arm-scan-core "arm_scan_core::neon::exp::vexpq_f32" 2>&1 || true
+            echo
+            echo "===== channel_n16 (the N=16 hot loop) ====="
+            cargo asm --release -p arm-scan-core "arm_scan_core::neon::channel_n16" 2>&1 || true
+            echo
+            echo "(if a symbol was inlined away, cargo-asm lists available ones above)"
+          } | tee kernel-asm.txt
+
+      # --- Reported checks (don't block the profiling above) ---
+      - name: Format check
+        if: always()
+        run: cargo fmt --check
+      - name: Clippy (incl. profiling feature)
+        if: always()
+        run: cargo clippy --all-targets --features profiling -- -D warnings
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Kernel phase profile (linux-arm64 runner)"
+            echo "Read the **relative %** per phase. Full guide: PROFILING.md."
+            echo '```'
+            cat profile-phases.txt 2>/dev/null || echo "(profiler did not run)"
+            echo '```'
+            echo "### Criterion ladder"
+            echo '```'
+            grep -E "selective_scan/|time:|thrpt:" bench-scan.txt 2>/dev/null | head -60 || echo "(bench did not run)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kernel-profile
+          path: |
+            kernel/profile-phases.txt
+            kernel/bench-scan.txt
+            kernel/kernel-asm.txt
+          if-no-files-found: warn

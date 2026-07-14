@@ -10,6 +10,9 @@ repository.workspace = true
 [features]
 default = ["parallel"]
 parallel = ["dep:rayon"]
+# Diagnostic phase-level profiler (aarch64 only). Never enabled in a shipping
+# build; see PROFILING.md. Exposes `scan_profiled` / `PhaseTimings`.
+profiling = []
 
 [dependencies]
 rayon = { version = "1", optional = true }

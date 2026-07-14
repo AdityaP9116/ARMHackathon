@@ -390,6 +390,12 @@ Add rows nobody will think to demand, before someone does:
 
 ## 9. Measure-first program (protects “benchmark honestly”)
 
+> **Tooling now exists — see [`PROFILING.md`](./PROFILING.md).** The
+> instrumented phase profiler (`scan_profiled`), the one-click free
+> `Profile kernel` GitHub Actions workflow (Tier 1, real Neoverse), the
+> Oracle A1 perf script (Tier 2), and the asm-audit script (Tier 0) are all
+> built. Run Tier 1 first; its per-phase table reorders §10 below.
+
 1. **PMU cycle accounting — do this FIRST, before any §3 kernel work.**
    The PMU (Performance Monitoring Unit) is the CPU's hardware counters
    (cycles, instructions, stalls, cache misses); a "session" is 1–2 hours of

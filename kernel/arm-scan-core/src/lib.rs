@@ -23,6 +23,12 @@ mod scalar;
 
 pub use float::Float;
 
+/// Phase-level profiling of the NEON fast path. Diagnostic tool, not part of
+/// the stable API — only present on aarch64 with the `profiling` feature.
+/// See `neon/profile.rs` and `PROFILING.md`.
+#[cfg(all(target_arch = "aarch64", feature = "profiling"))]
+pub use neon::profile::{scan_profiled, PhaseTimings};
+
 /// Which implementation to run. `Auto` picks the fastest correct backend
 /// for the platform and element type; the explicit variants exist for A/B
 /// parity testing and benchmark ladders.
