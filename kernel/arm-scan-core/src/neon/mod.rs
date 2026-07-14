@@ -260,9 +260,18 @@ unsafe fn channel_n16(
             // dt*A is always <= 0 (A < 0, dt >= 0); the decay factor tolerates
             // the degree-3 exp (contraction + golden margin) -> nonpos_fast.
             vst1q_f32(abar.add(o), exp::vexpq_f32_nonpos_fast(vmulq_f32(vdt, a0)));
-            vst1q_f32(abar.add(o + 4), exp::vexpq_f32_nonpos_fast(vmulq_f32(vdt, a1)));
-            vst1q_f32(abar.add(o + 8), exp::vexpq_f32_nonpos_fast(vmulq_f32(vdt, a2)));
-            vst1q_f32(abar.add(o + 12), exp::vexpq_f32_nonpos_fast(vmulq_f32(vdt, a3)));
+            vst1q_f32(
+                abar.add(o + 4),
+                exp::vexpq_f32_nonpos_fast(vmulq_f32(vdt, a1)),
+            );
+            vst1q_f32(
+                abar.add(o + 8),
+                exp::vexpq_f32_nonpos_fast(vmulq_f32(vdt, a2)),
+            );
+            vst1q_f32(
+                abar.add(o + 12),
+                exp::vexpq_f32_nonpos_fast(vmulq_f32(vdt, a3)),
+            );
             vst1q_f32(bbar.add(o), vmulq_f32(vld1q_f32(b), vdtu));
             vst1q_f32(bbar.add(o + 4), vmulq_f32(vld1q_f32(b.add(4)), vdtu));
             vst1q_f32(bbar.add(o + 8), vmulq_f32(vld1q_f32(b.add(8)), vdtu));
