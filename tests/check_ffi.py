@@ -48,6 +48,29 @@ def run_case(meta):
     return out_err, last_rel
 
 
+def check_streaming():
+    """h0 through the Python->C path: a scan split in two, with the first
+    half's last_state resumed as initial_state, matches the one-shot scan."""
+    rng = np.random.default_rng(0)
+    B, D, L, N, split = 1, 4, 12, 16, 5
+    f = lambda *s: rng.standard_normal(s).astype(np.float32)
+    u, delta, z = f(B, D, L), f(B, D, L), f(B, D, L)
+    A = (-np.abs(f(D, N)) - 0.5).astype(np.float32)
+    Bm, Cm, Dv = f(B, N, L), f(B, N, L), f(D)
+
+    kw = dict(D=Dv, delta_softplus=True)
+    out_full, _ = arm_scan.selective_scan_numpy(
+        u, delta, A, Bm, Cm, z=z, return_last_state=True, **kw)
+    out1, state = arm_scan.selective_scan_numpy(
+        u[..., :split], delta[..., :split], A, Bm[..., :split],
+        Cm[..., :split], z=z[..., :split], return_last_state=True, **kw)
+    out2 = arm_scan.selective_scan_numpy(
+        u[..., split:], delta[..., split:], A, Bm[..., split:],
+        Cm[..., split:], z=z[..., split:], initial_state=state, **kw)
+    return float(max(np.abs(out_full[..., :split] - out1).max(),
+                     np.abs(out_full[..., split:] - out2).max()))
+
+
 def main():
     print(f"kernel library: {arm_scan.lib_path()}")
     manifest = json.loads((GOLDEN_DIR / "manifest.json").read_text())
@@ -63,6 +86,13 @@ def main():
               f"last_rel={last_rel:.3e}  {'ok' if ok else 'FAIL'}")
         if not ok:
             failures.append(meta["name"])
+
+    serr = check_streaming()
+    ok = serr < 1e-5
+    print(f"  {'streaming (h0 resume)':24s} max_abs={serr:.3e}  "
+          f"{'ok' if ok else 'FAIL'}")
+    if not ok:
+        failures.append("streaming-h0")
 
     # error paths must reject, not crash or write garbage
     try:
