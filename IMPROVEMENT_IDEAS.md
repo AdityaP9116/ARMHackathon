@@ -1,21 +1,63 @@
 # IMPROVEMENT_IDEAS — Kernel & Integration Optimization Backlog
 
-**Status: research/ideas only — nothing here is implemented or committed to.**
+**Status:** ideas backlog. The **profiling tooling is built and merged**
+(`scan_profiled` + the `Profile kernel` workflow); the **measured phase split
+is in §1.0** and now drives priorities. No *optimization* here is implemented
+yet — that work starts with the faster-exp branch.
 Written Jul 14, 2026, from a deep read of the kernel at `ce07edd`, the measured
-numbers in [`BASELINE_REPORT.md`](./BASELINE_REPORT.md), Neoverse
-microarchitecture docs, and prior art (sources at the bottom).
+numbers in [`BASELINE_REPORT.md`](./BASELINE_REPORT.md), the §1.0 profile,
+Neoverse microarchitecture docs, and prior art (sources at the bottom).
 
 Rules that bind every idea below (per [`CLAUDE.md`](./CLAUDE.md)):
 - **Correctness gates speed.** Every new mode/path gets its own golden gate and
   recorded error floor before it is benchmarked. Never loosen a tolerance.
-- **Measure before optimizing.** The diagnosis in §1 is inference from public
-  latency/throughput tables; a PMU session (§9) confirms or reorders the list.
+- **Measure before optimizing.** DONE for single-thread NEON: the §1.0 profile
+  (via §9's tooling) confirmed exp dominance and reordered §10. Re-profile on
+  Graviton4 and at extreme L before building §3.3 / §4.2.
 - **Disclose approximations.** Any mode that trades accuracy is opt-in, named,
   and shipped with measured output-level model metrics.
 
 ---
 
 ## 1. Diagnosis — where the cycles go today
+
+### 1.0 MEASURED (profiled Jul 14, 2026 — GitHub arm64 runner, single-thread NEON)
+
+Ran via the phase profiler (`scan_profiled`, see [`PROFILING.md`](./PROFILING.md)).
+The split is **stable across every shape** (L=128→2048, B=1→8):
+
+| Phase | % of total | What it is |
+|---|---|---|
+| **exp** | **~59%** | the 16 `exp`s per timestep (Pass A2) |
+| discretize | ~19% | softplus = **another exp + a log + a divide** (Pass A1) |
+| recurrence | ~10.5% | the FMA chain + C·h dot (Pass B) |
+| epilogue | ~6–7% | SiLU gate = **another exp + a divide** |
+| projection | ~5% | the B multiply (Pass A2) |
+| transpose | **~0.1%** | negligible |
+
+**Conclusions (these now drive §10, replacing the pre-profiling guesses):**
+1. **Overwhelmingly compute-bound on transcendental math.** `exp` is 59%, and
+   softplus (discretize) + SiLU (epilogue) are *also* exp/log/sigmoid polynomials
+   → **~80–85% of runtime is transcendental polynomial evaluation.** A faster
+   exp/log core cascades into all three phases.
+2. **Transpose is negligible (0.1%).** This disproves the earlier hypothesis
+   that §2.1/§4.1 (transpose/workspace) are top kernel-throughput levers — they
+   are not. Even at 64 cores (Amdahl, ~×64 on the serial prologue) it's ~6%.
+   §2.1 remains worthwhile only as an *e2e* copy-elimination on the Python side,
+   not for kernel speed.
+3. **Recurrence is only ~10%** on this 2-pipe Neoverse-N-class core → §3.3
+   chain-breaking is low priority *here*. It should rise on Graviton4 (4 pipes,
+   exp throughput doubles) — re-profile there before investing.
+4. **Flat % across L** → no cache cliff at these sizes; §4.2 cache-blocking is
+   relevant only at extreme L (131k genomics) or under multi-core plane
+   contention — re-profile in those regimes, don't build it speculatively.
+5. **Tier-2 (Oracle perf) not needed.** The phase split already localizes the
+   cost to a compute phase; memory-bound is ruled out (transpose 0.1%, flat in L).
+
+**Revised direction: make `exp` cheaper first (§3.1), then SVE FEXPA (§3.2).**
+Both hit the ~85% transcendental share, gated at the existing 1e-4 tolerance.
+
+### 1.1 Inference (pre-profiling — the 2-pipe exp-bound call was confirmed above)
 
 Back-of-envelope from our own measurements: 25.08 ms single-thread at
 D=1536, L=512 (Surface A) ≈ **~32 ns ≈ ~90 cycles per (channel, timestep)**.
@@ -433,26 +475,33 @@ Add rows nobody will think to demand, before someone does:
 
 ## 10. Priority shortlist
 
+**Reordered by the §1.0 measured profile** (exp/softplus/SiLU = ~85% of
+runtime; transpose = 0.1%; recurrence = 10%). The transcendental-math items are
+now the whole game on the 2-pipe core.
+
 | # | Idea | § | Effort | Expected effect | Risk |
 |---|---|---|---|---|---|
-| 1 | B/C layout flag — kill double transpose/copies | 2.1 | Low | e2e prefill +10–25%; op-level too | ~0 |
-| 2 | Workspace reuse + parallel transpose | 4.1 | Low | Fixes B=8 / D=3072 dips; closes scaling gap | ~0 |
-| 3 | Decode-step kernel via `h0` input | 2.4 | Med | Total `generate()` × moves toward/past prefill × | Low |
-| 4 | Cheaper exp (domain, degree-4, Estrin) | 3.1 | Med | 10–25% op-level (exp ≈ half the cycles) | Low (gated) |
-| 5 | L cache-blocking | 4.2 | Med | Protects long-L/131k headline; 64-core scaling | Low |
-| 6 | Pass B chain-breaking (interleave / compose) | 3.3 | Med | 10–30% op-level on Graviton4 specifically | Low |
-| 7 | target-cpu builds + LTO + PGO | 6 | Low | 5–15% across the board | ~0 |
-| 8 | SVE2 FEXPA exp | 3.2 | Med-Hi | up to ~1.5–1.8× on the exp pass; big WOW | Med (asm) |
-| 9 | L-parallel chunk scan | 4.3 | High | Single-stream scaling story (B=1 demos) | Med |
-| 10 | Conv1d+SiLU fusion | 2.5 | Med | e2e prefill; widens the moat | Low |
-| 11 | fp16 plane storage (opt-in) | 5.1 | Med | Bandwidth-bound regimes; needs accuracy data | Med |
-| 12 | A-cache + misc patch trims | 2.3, 8 | Low | e2e, esp. many-layer models | ~0 |
+| 1 | **Cheaper exp** (domain-restrict, degree cut, Estrin) | 3.1 | Med | **~15–30% of TOTAL** (exp is 59%; cascades to softplus/SiLU) | Low (gated) |
+| 2 | **Cheaper softplus/SiLU** (share the exp core, `vrecpe` for the divides) | 3.1/3.5 | Med | hits the ~26% in discretize+epilogue | Low (gated) |
+| 3 | SVE2 FEXPA exp | 3.2 | Med-Hi | up to ~1.5–1.8× on the ~85% transcendental share; big WOW | Med (asm) |
+| 4 | Decode-step kernel via `h0` input | 2.4 | Med | Total `generate()` × moves toward/past prefill × | Low |
+| 5 | target-cpu builds + LTO + PGO | 6 | Low | 5–15% across the board | ~0 |
+| 6 | Conv1d+SiLU fusion | 2.5 | Med | e2e prefill; widens the moat | Low |
+| 7 | A-cache + misc patch trims | 2.3, 8 | Low | e2e, esp. many-layer models | ~0 |
+| 8 | B/C layout flag (e2e copy elimination only) | 2.1 | Low | e2e prefill; **NOT** a kernel-throughput lever (transpose 0.1%) | ~0 |
+| — | ~~Workspace reuse / parallel transpose~~ | 4.1 | — | *demoted:* transpose is 0.1% single-thread; revisit only if multi-core plane contention shows on `c8g` | — |
+| — | Pass B chain-breaking | 3.3 | Med | *deferred:* only ~10% here; re-profile on Graviton4 (4 pipes) first | Low |
+| — | L cache-blocking | 4.2 | Med | *deferred:* % flat in L here; build only for 131k / multi-core contention | Low |
+| — | L-parallel chunk scan | 4.3 | High | single-stream (B=1) scaling story — application-driven, not throughput | Med |
+| — | fp16 plane storage | 5.1 | Med | *deferred:* helps bandwidth, but we're compute-bound, not bandwidth-bound | Med |
 
-**The theme:** the inner math is already close to SIMD peak on 2-pipe cores.
-The remaining big wins are (a) stop doing redundant memory work around the
-kernel, (b) make exp cheaper, and (c) break the serial chain that 4-pipe
-Graviton4 exposes. Items 1–3 alone would visibly move every table in
-`BASELINE_REPORT.md` without touching a single polynomial coefficient.
+**The theme (measured):** the kernel is **compute-bound on transcendental
+polynomial evaluation** — exp, softplus's exp+log, and SiLU's exp+divide are
+~85% of runtime, and the inner FMA/memory work is not the constraint on this
+core. So the wins are, in order: (a) a cheaper exp core (helps all three
+phases at once), (b) FEXPA to hardware-accelerate it, (c) accelerate decode for
+the e2e story. The transpose/workspace/cache items I originally ranked top-3 are
+**demoted or deferred** — the profile says they aren't where the time goes.
 
 ---
 

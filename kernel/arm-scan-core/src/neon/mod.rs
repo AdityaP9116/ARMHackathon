@@ -257,10 +257,11 @@ unsafe fn channel_n16(
             let vdtu = vdupq_n_f32(scratch.dtu[t]);
             let b = bt.as_ptr().add((start + t) * 16);
             let o = t * 16;
-            vst1q_f32(abar.add(o), exp::vexpq_f32(vmulq_f32(vdt, a0)));
-            vst1q_f32(abar.add(o + 4), exp::vexpq_f32(vmulq_f32(vdt, a1)));
-            vst1q_f32(abar.add(o + 8), exp::vexpq_f32(vmulq_f32(vdt, a2)));
-            vst1q_f32(abar.add(o + 12), exp::vexpq_f32(vmulq_f32(vdt, a3)));
+            // dt*A is always <= 0 (A < 0, dt >= 0) -> the non-positive fast exp.
+            vst1q_f32(abar.add(o), exp::vexpq_f32_nonpos(vmulq_f32(vdt, a0)));
+            vst1q_f32(abar.add(o + 4), exp::vexpq_f32_nonpos(vmulq_f32(vdt, a1)));
+            vst1q_f32(abar.add(o + 8), exp::vexpq_f32_nonpos(vmulq_f32(vdt, a2)));
+            vst1q_f32(abar.add(o + 12), exp::vexpq_f32_nonpos(vmulq_f32(vdt, a3)));
             vst1q_f32(bbar.add(o), vmulq_f32(vld1q_f32(b), vdtu));
             vst1q_f32(bbar.add(o + 4), vmulq_f32(vld1q_f32(b.add(4)), vdtu));
             vst1q_f32(bbar.add(o + 8), vmulq_f32(vld1q_f32(b.add(8)), vdtu));
@@ -330,7 +331,8 @@ unsafe fn channel_general(
             for i in (0..n4).step_by(4) {
                 let a_v = vld1q_f32(scratch.a_pad.as_ptr().add(i));
                 let h_v = vld1q_f32(scratch.h_buf.as_ptr().add(i));
-                let e = exp::vexpq_f32(vmulq_f32(vdt, a_v));
+                // dt*A <= 0 on real lanes; zero-padded A lanes give exp(0)=1.
+                let e = exp::vexpq_f32_nonpos(vmulq_f32(vdt, a_v));
                 let h_new = vfmaq_f32(vmulq_f32(vld1q_f32(b.add(i)), vdtu), e, h_v);
                 vst1q_f32(scratch.h_buf.as_mut_ptr().add(i), h_new);
                 acc = vfmaq_f32(acc, vld1q_f32(c.add(i)), h_new);
