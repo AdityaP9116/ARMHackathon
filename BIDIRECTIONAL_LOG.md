@@ -20,10 +20,25 @@ first so the fusion is justified by a measurement instead of an assumption.
 
 ## Step 1 — correctness path (plan §2.1)
 
-**Branch:** `feature/bidirectional-scan` · **Status:** code complete. Math gate
-green locally. Kernel gate has now run on CI (linux-arm64): 12/13 green on the
-first attempt; the one failure was a bug in the test, not the kernel (see
-*Errors and surprises* §6 below) — fixed, awaiting re-run.
+**Branch:** `feature/bidirectional-scan` · **Status:** ✅ **done and verified.**
+Both gates green on CI. The kernel gate failed once on first run — a bug in the
+test, not the kernel (see *Errors and surprises* §6) — and passed after the fix.
+
+Full CI result (run `29323871999`, commit `bbc2722`):
+
+| Job | Gate | Result |
+|---|---|---|
+| `test (linux-arm64)` | definition check (numpy) | ✅ |
+| `test (macos-arm64)` | definition check (numpy) | ✅ |
+| `test (linux-x86_64)` | definition check (numpy) | ✅ |
+| `bench-op (linux-arm64)` | **correctness through the real kernel** | ✅ |
+
+The `bench-op` row is the meaningful one: `bidirectional.py` running against the
+real compiled NEON kernel on real Arm silicon, matching an f64 reference within
+1e-4 across all 13 cases — including the NEON tail path (`state=13`), grouped
+B/C, `L=1`, every merge mode, untied `reverse_params`, and `fwd == plain 1D
+scan` (bit-identical). Wheels still build and golden-check on all three
+platforms; op-level bench unregressed.
 
 ### What
 
@@ -189,30 +204,64 @@ module so nobody wires it into an outer-pattern model by mistake.
 
 ### Not yet done
 
-- Kernel-level gate has **not run** (no local torch/cdylib) — first CI push proves it.
-- No measurement yet of the flip-copy overhead the fused path would remove. Per
-  plan §4.3 that measurement is the gate on whether §2.2 is worth the time.
-- No HF integration (`patch.py` dispatch for a bidirectional mixer class) — blocked
-  on the application decision.
+- **Fast** is not done. *Correct* is. Each direction runs on the full fast NEON
+  kernel, but the six flip copies around them are pure overhead that only the
+  fused `reverse` flag (Step 3) removes. **No Rust was written for this step.**
+- No HF integration (`patch.py` dispatch for a bidirectional mixer class) —
+  blocked on the application decision.
 
 ---
 
-## Step 2 — fused `reverse` flag in Rust (plan §2.2)
+## Step 2 — measure what the flips cost (the gate on Step 3)
 
-Not started — and deliberately **gated on a measurement**, not scheduled.
+**Status:** benchmark written (`bench/bench_bidirectional.py`), wired into CI's
+`bench-op` job. **No numbers yet.**
 
-The fused path's whole value is deleting the flip copies (four tensors in, one
-out) that Step 1 pays for. Per plan §4.3, the decision to spend the ~half day on
-it should follow from measuring how much those copies actually cost at the
-chosen application's real shapes — at short sequence lengths they may be noise,
-in which case the correctness path is what ships and the fusion is future work
-in the writeup.
+Step 3 (the fused kernel) is deliberately **gated on this measurement rather
+than scheduled**. Its entire value is deleting the six copies Step 1 pays for —
+so if those copies are cheap, the fused kernel is worthless and should not be
+built. The kernel-side profiling work already produced the cautionary example:
+the plane transpose that everyone *assumed* was a top-priority cost measured
+**0.1%** ([`OPTIMIZATION_LOG.md`](./OPTIMIZATION_LOG.md)). Assuming here would be
+repeating a mistake this project has already made once and caught.
 
-Two prerequisites, both outside this log:
+### What it times
+
+| Series | What it is |
+|---|---|
+| `scan_fwd` | one forward scan — the floor |
+| `fused_estimate` | two forward scans + merge, **zero flips** — the proxy for a fused `reverse` |
+| `bidirectional` | the real thing today: flips + two scans + un-flip + merge |
+| `flips_only` | the six copies alone, no scans — reads the cost directly instead of by subtraction |
+
+**The decision number:** `fusion_headroom = bidirectional / fused_estimate`.
+
+- `~1.0×` → the flips are noise. **Do not build Step 3.** Ship §2.1 and say so
+  plainly in the writeup.
+- `>1.15×` → the flips are real and the fused flag pays for itself.
+
+### The proxy is a ceiling, and is reported as one
+
+`fused_estimate` is an **upper bound** on what fusion could achieve, not a
+measurement of a fused path (which does not exist). It runs identical scan work
+with zero flip traffic, so a real fused kernel *cannot beat it* — a real one
+also walks the sequence backward, which is less cache-friendly than the forward
+stream being timed. So: a low ceiling is conclusive (don't fuse); a high ceiling
+is permission to try, not a promise. It is never to be quoted as an achieved
+speedup.
+
+---
+
+## Step 3 — fused `reverse` flag in Rust (plan §2.2)
+
+Not started. **Blocked on Step 2's number**, plus two prerequisites outside this
+log:
+
 - **The application decision** (`APPLICATIONS.md`) — it determines whether the
   target model is *inner* or *outer* bidirectional (see the design boundary
-  above). If it is outer, a `reverse` flag buys that model **nothing**, and this
-  step should not be built for it at all.
+  above). If it is **outer** (Caduceus, Vim), both of that model's scans are
+  ordinary forward scans and a `reverse` flag accelerates **nothing**. In that
+  case Step 3 should not be built for it at all, regardless of what Step 2 says.
 - The overlap flagged in plan §2.2 with `IMPROVEMENT_IDEAS.md` §4.2
   (cache-blocking over L): both restructure the same chunk loop in
   `neon/mod.rs`. Whoever gets there first should leave it in a shape the other

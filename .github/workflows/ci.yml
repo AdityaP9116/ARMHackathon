@@ -117,6 +117,26 @@ jobs:
       - name: Bidirectional correctness through the kernel
         working-directory: .
         run: python3 tests/check_bidirectional.py
+      # Measures what the flip copies cost — the gate on whether the fused
+      # `reverse` kernel (TOPOLOGY_IMPLEMENTATION_PLAN.md §2.2) is worth
+      # building at all. Provisional (shared runner); a headline number needs a
+      # dedicated Arm host per bench/README.md.
+      - name: Bidirectional flip-overhead study
+        working-directory: .
+        run: |
+          set -o pipefail
+          python3 bench/bench_bidirectional.py --quick 2>&1 | tee bench-bidi.log
+      - name: Publish flip-overhead result
+        if: always()
+        working-directory: .
+        run: |
+          {
+            echo "## Bidirectional flip overhead (linux-arm64 CI runner)"
+            echo "Decides TOPOLOGY_IMPLEMENTATION_PLAN.md §2.2. Headroom is a *ceiling*, not an achieved speedup."
+            echo '```'
+            grep -E "^===|fusion_headroom|^  (scan_fwd|fused_estimate|bidirectional|flips_only)|-> " bench-bidi.log 2>/dev/null || echo "(bench did not run)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Op-level benchmark (kernel vs eager vs torch.compile)
         working-directory: .
         run: |
