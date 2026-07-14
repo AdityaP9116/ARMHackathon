@@ -30,6 +30,7 @@ def _selective_scan_op(
     d_skip: Optional[torch.Tensor],
     z: Optional[torch.Tensor],
     delta_bias: Optional[torch.Tensor],
+    h0: Optional[torch.Tensor],
     delta_softplus: bool,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     batch, dim, length = u.shape
@@ -44,25 +45,28 @@ def _selective_scan_op(
         dims, u.data_ptr(), delta.data_ptr(), a.data_ptr(), b.data_ptr(),
         c.data_ptr(), ptr(d_skip), ptr(z), ptr(delta_bias),
         delta_softplus, "auto", "auto", out.data_ptr(),
-        last_state.data_ptr(),
+        last_state.data_ptr(), ptr_h0=ptr(h0),
     )
     _CALLS["n"] += 1
     return out, last_state
 
 
 @_selective_scan_op.register_fake
-def _(u, delta, a, b, c, d_skip, z, delta_bias, delta_softplus):
+def _(u, delta, a, b, c, d_skip, z, delta_bias, h0, delta_softplus):
     return torch.empty_like(u), u.new_empty(
         (u.shape[0], u.shape[1], a.shape[1]))
 
 
 def selective_scan(u, delta, A, B, C, D=None, z=None, delta_bias=None,
-                   delta_softplus=False, return_last_state=False):
+                   delta_softplus=False, return_last_state=False,
+                   initial_state=None):
     """Selective scan on CPU float32 torch tensors.
 
     u, delta, z: (batch, dim, len); A: (dim, state);
     B, C: (batch, state, len) or (batch, groups, state, len);
     D, delta_bias: (dim,).
+    initial_state: optional (batch, dim, state) SSM state to resume from
+    (defaults to zeros); pair with return_last_state to stream/decode.
     Returns out (batch, dim, len) [, last_state (batch, dim, state)].
 
     Tensors are made contiguous/f32 here, so callers can pass transposed
@@ -79,6 +83,7 @@ def selective_scan(u, delta, A, B, C, D=None, z=None, delta_bias=None,
         None if D is None else _c(D),
         None if z is None else _c(z),
         None if delta_bias is None else _c(delta_bias),
+        None if initial_state is None else _c(initial_state),
         delta_softplus,
     )
     return (out, last_state) if return_last_state else out

@@ -11,6 +11,7 @@ use crate::{Float, ScanDims, ScanInput, Threading};
 pub(crate) fn scan<T: Float>(
     dims: &ScanDims,
     input: &ScanInput<'_, T>,
+    h0: Option<&[T]>,
     out: &mut [T],
     last_state: Option<&mut [T]>,
     threading: Threading,
@@ -43,7 +44,10 @@ pub(crate) fn scan<T: Float>(
             let delta_row = &input.delta[row..row + len];
             let z_row = input.z.map(|z| &z[row..row + len]);
 
-            h.fill(T::ZERO);
+            match h0 {
+                Some(h0) => h.copy_from_slice(&h0[ch_idx * state..(ch_idx + 1) * state]),
+                None => h.fill(T::ZERO),
+            }
             for (t, out_slot) in out_row.iter_mut().enumerate() {
                 let mut dt = delta_row[t] + bias;
                 if input.delta_softplus {
