@@ -65,28 +65,28 @@ fn case_strategy() -> impl Strategy<Value = Case> {
         })
         .prop_map(
             |(dims, u, delta, a, b, c, d_skip, z, delta_bias, (sp, reverse))| {
-            let mut case = Case {
-                dims,
-                u,
-                delta,
-                a,
-                b,
-                c,
-                d_skip,
-                z,
-                delta_bias,
-                delta_softplus: sp,
-                reverse,
-            };
-            if !case.delta_softplus {
-                // raw delta is the timestep: must be positive like a
-                // real post-softplus value
-                for v in &mut case.delta {
-                    *v = v.abs() * 0.01 + 1e-3;
+                let mut case = Case {
+                    dims,
+                    u,
+                    delta,
+                    a,
+                    b,
+                    c,
+                    d_skip,
+                    z,
+                    delta_bias,
+                    delta_softplus: sp,
+                    reverse,
+                };
+                if !case.delta_softplus {
+                    // raw delta is the timestep: must be positive like a
+                    // real post-softplus value
+                    for v in &mut case.delta {
+                        *v = v.abs() * 0.01 + 1e-3;
+                    }
+                    case.delta_bias = None;
                 }
-                case.delta_bias = None;
-            }
-            case
+                case
             },
         )
 }

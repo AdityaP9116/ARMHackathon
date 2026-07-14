@@ -87,11 +87,9 @@ unsafe fn channel_profiled(
     let mut h3 = vdupq_n_f32(0.0);
 
     let len = out_row.len();
-    let mut start = 0;
-    while start < len {
-        let tlen = CHUNK.min(len - start);
-
-        // Pass A1: discretization across time.
+    for (start, tlen) in super::chunks_in_scan_order(len, ch.reverse) {
+        // Pass A1: discretization across time. Pointwise, so direction-agnostic
+        // (as are the two A2 loops below) — only Pass B walks time.
         let c0 = Instant::now();
         super::discretize_chunk(ch, start, tlen, scratch);
         t.discretize_ns += c0.elapsed().as_nanos();
@@ -132,11 +130,13 @@ unsafe fn channel_profiled(
         }
         t.proj_ns += c0.elapsed().as_nanos();
 
-        // Pass B: pure-FMA recurrence + output dot product.
+        // Pass B: pure-FMA recurrence + output dot product. The only pass that
+        // walks time, so the only one `reverse` touches (mirrors channel_n16).
         let abar = scratch.abar.as_ptr();
         let bbar = scratch.bbar.as_ptr();
         let c0 = Instant::now();
-        for i in 0..tlen {
+        for step in 0..tlen {
+            let i = if ch.reverse { tlen - 1 - step } else { step };
             let o = i * 16;
             let c = ct.as_ptr().add((start + i) * 16);
             h0 = vfmaq_f32(vld1q_f32(bbar.add(o)), vld1q_f32(abar.add(o)), h0);
@@ -151,8 +151,6 @@ unsafe fn channel_profiled(
             *out_row.get_unchecked_mut(start + i) = vaddvq_f32(acc);
         }
         t.recurrence_ns += c0.elapsed().as_nanos();
-
-        start += tlen;
     }
 
     let c0 = Instant::now();
@@ -218,6 +216,7 @@ pub fn scan_profiled(dims: &ScanDims, input: &ScanInput<'_, f32>, out: &mut [f32
             bias: input.delta_bias.map_or(0.0, |v| v[d]),
             d_skip: input.d_skip.map(|v| v[d]),
             softplus: input.delta_softplus,
+            reverse: input.reverse,
         };
         let a_row = &input.a[d * state..(d + 1) * state];
         let bt_plane = &bt[plane..plane + len * n4];
