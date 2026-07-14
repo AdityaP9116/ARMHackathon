@@ -91,20 +91,47 @@ Golden gate green (out_err unchanged at ~4e-6, ≪ 1e-4), scalar↔NEON parity
 `vexpq_f32_nonpos` from Step 1 instead of the general `vexpq_f32`. One-line
 change; no new function, no tolerance change.
 
-### Measured impact
-_Pending CI re-profile._ Expected ~14% off softplus's exp → roughly ~1–1.5%
-off total kernel time (softplus's exp is about half of the discretize phase).
+### Measured impact (profiler, vs the Step-1 run)
+
+| Shape | discretize phase | total kernel |
+|---|---|---|
+| L128 | −9.5% | −2.1% |
+| L512 | −10.3% | −1.9% |
+| L2048 | −6.2% | −1.4% |
+| batch8 | −7.5% | −2.4% |
+
+Clean attribution: the exp / recurrence / projection phases moved < ~1% in
+absolute ns (untouched); only discretize fell. **Cumulative Step 1 + Step 2:
+~10% faster total kernel vs baseline** (L512: 24.62M → 21.96M ns).
 
 ### Correctness
-_Pending CI._ Adds only ~1e-7 of exp error to softplus (nonpos exp ~6e-7 vs
-the previous ~5e-7); softplus's component sweep bound is 2e-6, and the golden
-gate is unchanged. The softplus sweep domain [-30, 30] never reaches the
+Golden gate green on the PR (tolerances unchanged). Adds only ~1e-7 of exp
+error to softplus (nonpos exp ~6e-7 vs the previous ~5e-7); softplus's
+component sweep bound is 2e-6. The sweep domain [-30, 30] never reaches the
 nonpos deep-underflow region.
 
-### Deliberately deferred (budget-checked, not done)
-Dropping a **second polynomial degree** in `vexpq_f32_nonpos` would add ~2.4e-6
-of exp error. The tightest golden floors — `tiny` (L=8, floor_bound 2.49e-6)
-and `edge_L1` (3.66e-6) — leave too little margin to attempt this without
-on-hardware validation or a proper degree-4 minimax refit (truncating Cephes
-degrades ~20× worse than a real minimax of the same degree). Revisit with
-either, or fold into the FEXPA work.
+### Second-degree drop — deferred here, then reopened by the golden table
+Initially deferred: `tiny`'s floor_bound (2.49e-6) looked too tight for the
+~2.4e-6 error a degree-3 exp adds. But the PR's per-case golden table showed
+`tiny` actually runs at `out_err = 1.978e-7` (parity 1.198e-7) — ~12× of
+headroom — so a degree-3 Pass-A2 exp projects to ~1.2e-6, still ~2× under the
+ceiling. **Now the next step** (branch `feature/exp-degree-cut`), keeping
+softplus on the degree-4 exp to protect its own 2e-6 sweep bound.
+
+---
+
+## Cumulative vs baselines (op-level, measured on the PR CI, after Step 2)
+
+`bench_op.py` on the GitHub arm64 runner (4-core, torch 2.13.0) — kernel vs
+PyTorch eager and torch.compile, the fair baselines. Correctness in the same
+run: kernel-vs-ref max_abs_err 1.9e-6 (L128) / 3.0e-6 (L512), well under 1e-4.
+
+| Shape | kernel | vs eager | vs torch.compile | baseline (`ce07edd`) |
+|---|---|---|---|---|
+| B1 D768 L128 | 0.85 ms | 16.3× | **3.74×** | 0.96 ms / 3.3× |
+| B1 D768 L512 | 2.87 ms | 23.2× | (compile skipped) | 3.27 ms / 4.2× |
+
+The two exp steps made the kernel ~11–12% faster op-level and **widened the lead
+over both baselines** (vs torch.compile 3.3× → 3.74× at L128; vs eager 14.4× →
+16.3×). Shared-runner numbers are provisional per BASELINE_REPORT — headline
+figures still need a dedicated Graviton instance.
