@@ -335,6 +335,16 @@ credibility with numerics-literate judges.
 
 ## 6. Build & toolchain (boring, compounding)
 
+> **MEASURED (Jul 14, 2026, Neoverse-N2 CI runner) — largely a dead end.**
+> `target-cpu=native` vs generic aarch64: **~0%, within noise** on every
+> criterion rung (e.g. L512 neon_par 5.05 → 5.08 ms; criterion reports "no
+> change", p=0.22). Fat LTO: neutral (numbers match prior runs). Reason: the
+> hot path is hand-written NEON intrinsics, so there is nothing for
+> `target-cpu` scheduling / auto-vectorization to improve. **Deprioritized** —
+> PGO/per-arch tuning are not worth pursuing for this kernel. Re-check
+> target-cpu once on Graviton (V1/V2) in case the scheduling model differs,
+> but do not expect a win.
+
 1. **`-C target-cpu=neoverse-{n1,v1,v2}` builds with runtime dispatch**
    (function-pointer selection at init keyed on MIDR/`hwcaps` — no nightly
    needed). Currently the wheel is generic aarch64; per-core scheduling models
