@@ -50,6 +50,13 @@ jobs:
           python3 -m pip install --quiet numpy \
             || python3 -m pip install --quiet --break-system-packages numpy
           python3 tests/check_ffi.py
+      # Definition check for the bidirectional scan: flip-forward-flip must
+      # equal a backward-in-time recurrence. numpy-only (no torch, no kernel),
+      # so it runs on every platform. Also the executable spec for the future
+      # Rust `reverse` flag — see TOPOLOGY_IMPLEMENTATION_PLAN.md §2.
+      - name: Bidirectional definition check (numpy)
+        working-directory: .
+        run: python3 tests/check_bidirectional_math.py
       - name: Bench ladder (scalar vs NEON)
         if: matrix.name == 'linux-arm64'
         run: |
@@ -104,6 +111,12 @@ jobs:
       - name: Install torch (CPU aarch64)
         working-directory: .
         run: python3 -m pip install --quiet numpy torch
+      # Correctness gates speed (CLAUDE.md): the bidirectional wrapper is
+      # checked against the vendored f64 reference through the real kernel
+      # before anything here is benchmarked.
+      - name: Bidirectional correctness through the kernel
+        working-directory: .
+        run: python3 tests/check_bidirectional.py
       - name: Op-level benchmark (kernel vs eager vs torch.compile)
         working-directory: .
         run: |

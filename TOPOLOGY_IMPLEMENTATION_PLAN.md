@@ -1,6 +1,10 @@
 # TOPOLOGY_IMPLEMENTATION_PLAN — 1D bidirectional & 2D cross-scan (SS2D)
 
-**Status:** plan, not yet implemented. Written Jul 14, 2026. Companion to [`APPLICATIONS.md`](APPLICATIONS.md) (which topology feeds which showcase app) and [`INTEGRATION_PLAN.md`](INTEGRATION_PLAN.md) (Phases 0–6, already landed).
+**Status:** the plan. Written Jul 14, 2026. Companion to [`APPLICATIONS.md`](APPLICATIONS.md) (which topology feeds which showcase app) and [`INTEGRATION_PLAN.md`](INTEGRATION_PLAN.md) (Phases 0–6, already landed).
+
+> **Execution is tracked in per-topology logs** — what has actually been built against this plan, what it is verified against, and what broke on the way. This file stays the plan; the logs are the record.
+> - §2 (1D bidirectional) → [`BIDIRECTIONAL_LOG.md`](BIDIRECTIONAL_LOG.md) — §2.1 landed, §2.2 gated on a measurement.
+> - §3 (2D cross-scan / SS2D) → not started; gets its own log when it does.
 
 **Scope:** how to take 1D bidirectional and 2D cross-scan from "correct via Python rearrangement" to "fast AND correct in Rust," using the already-shipped 1D unidirectional kernel as the architectural template. Section 1 documents that template as the reference; Sections 2 and 3 are the plans for the two new topologies; Section 4 is cross-cutting methodology and sequencing.
 
