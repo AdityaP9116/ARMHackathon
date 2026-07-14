@@ -135,3 +135,46 @@ The two exp steps made the kernel ~11–12% faster op-level and **widened the le
 over both baselines** (vs torch.compile 3.3× → 3.74× at L128; vs eager 14.4× →
 16.3×). Shared-runner numbers are provisional per BASELINE_REPORT — headline
 figures still need a dedicated Graviton instance.
+
+---
+
+## Step 3 — degree-3 exp for the Pass-A2 decay factor
+
+**Branch:** `feature/exp-degree-cut` · **Idea:** IMPROVEMENT_IDEAS §3.1 (degree cut)
+
+### What
+Added `vexpq_f32_nonpos_fast` — the same non-positive exp as Step 1 but one more
+degree lower (drops `P1` as well as `P0`), so ~2.7e-6 worst-case vs ~2.6e-7.
+Pointed **only Pass A2** at it (`channel_n16`, `channel_general`, profiler). One
+more FMA off the 56%-of-runtime exp phase. softplus stays on the degree-4
+`vexpq_f32_nonpos` — its 2e-6 sweep bound is left untouched.
+
+### Why it's now safe (it wasn't attempted at Step 2)
+The PR-CI golden table gave the real budget. The binding case `tiny` runs at
+`out_err = 1.978e-7` against a 2.487e-6 floor_bound (~12× headroom); with the
+degree-3 exp its NEON-exp contribution ~4×'s, projecting to ~1.2e-6 — still
+~2× under the ceiling. Every other case has 10–40× more room; parity projects
+to ~1.1e-6 vs the 1e-5 gate. `tiny` is the case to watch.
+
+### Measured impact (profiler, vs the Step-2 run)
+
+| Shape | exp phase | total kernel |
+|---|---|---|
+| L128 | −8.9% | −5.2% |
+| L512 | −9.2% | −4.9% |
+| L2048 | −8.8% | −5.2% |
+| batch8 | −8.9% | −5.3% |
+
+Beat the ~4% projection. **Cumulative over Steps 1–3: exp phase −22%, total
+kernel −15%** vs baseline (L512: 24.62M → 20.89M ns). Op-level vs baselines
+(`bench_op.py`): kernel 0.82 ms / 2.77 ms (was 0.96 / 3.27), **24.1× vs eager,
+3.7× vs torch.compile**.
+
+### Correctness — green, comfortable margins
+`vexpq_f32_nonpos_fast` sweep worst 3.353e-6 (< 4e-6 bound). Golden gate passes
+every case; the errors rose as expected but stay 15–25× under each case's
+floor_bound (e.g. `small` auto 3.15e-6 vs 4.8e-5; `extreme_delta` 1.83e-5 vs
+4.19e-4). Notably the tight-floor cases (`tiny`, `edge_L1`) barely moved — they
+are short sequences where exp accuracy hardly matters, while the exp-sensitive
+cases all have generous floors. Proptest `f32_matches_f64` and parity (<1e-5)
+green. kernel-vs-ref in bench_op 4–5e-6, ~20× under the 1e-4 gate.
