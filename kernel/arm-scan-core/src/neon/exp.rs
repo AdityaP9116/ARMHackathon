@@ -241,7 +241,10 @@ mod tests {
         assert!((out[3] as f64 - (-87.0_f64).exp()).abs() / (-87.0_f64).exp() < 1.5e-6);
         // deep underflow stays finite and negligibly small (not necessarily 0)
         let out = exp4_nonpos([-160.0, -1000.0, -104.0, -300.0]);
-        assert!(out.iter().all(|v| v.is_finite() && *v >= 0.0 && *v < 1e-30), "{out:?}");
+        assert!(
+            out.iter().all(|v| v.is_finite() && *v >= 0.0 && *v < 1e-30),
+            "{out:?}"
+        );
     }
 
     #[test]
