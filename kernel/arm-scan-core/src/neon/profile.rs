@@ -155,12 +155,11 @@ unsafe fn channel_profiled(
 /// N=16 fast path only (the production shape for every mamba checkpoint).
 ///
 /// Panics if `dims.state != 16`.
-pub fn scan_profiled(
-    dims: &ScanDims,
-    input: &ScanInput<'_, f32>,
-    out: &mut [f32],
-) -> PhaseTimings {
-    assert_eq!(dims.state, 16, "scan_profiled supports the N=16 fast path only");
+pub fn scan_profiled(dims: &ScanDims, input: &ScanInput<'_, f32>, out: &mut [f32]) -> PhaseTimings {
+    assert_eq!(
+        dims.state, 16,
+        "scan_profiled supports the N=16 fast path only"
+    );
     let ScanDims {
         batch,
         dim,
@@ -217,7 +216,15 @@ pub fn scan_profiled(
         let out_row = &mut out[row..row + len];
         // SAFETY: NEON is always available on aarch64; shapes validated above.
         unsafe {
-            channel_profiled(a_row, bt_plane, ct_plane, &ch, out_row, &mut scratch, &mut timings);
+            channel_profiled(
+                a_row,
+                bt_plane,
+                ct_plane,
+                &ch,
+                out_row,
+                &mut scratch,
+                &mut timings,
+            );
         }
     }
     timings

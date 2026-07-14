@@ -104,7 +104,12 @@ fn main() {
         for (name, ns) in rows {
             println!("   {name:<13} {ns:>12}   {:>5.1}", pct(ns));
         }
-        println!("   {:<13} {:>12}   {:>5.1}\n", "TOTAL", best.total_ns(), 100.0);
+        println!(
+            "   {:<13} {:>12}   {:>5.1}\n",
+            "TOTAL",
+            best.total_ns(),
+            100.0
+        );
     }
 
     println!("Interpretation (see IMPROVEMENT_IDEAS.md):");
