@@ -74,11 +74,27 @@ def reference_bidirectional(u, delta, A, B, C, D=None, z=None,
 def make_case(batch, dim, length, state, groups=1, seed=0, **opts):
     g = torch.Generator().manual_seed(seed)
     r = lambda *s: torch.randn(*s, generator=g, dtype=torch.float32)
+    softplus = opts.get("delta_softplus", True)
+
+    # The kernel's Pass-A2 exp is `vexpq_f32_nonpos`, specialized for the
+    # scan's always-non-positive argument dt*A. That holds because A < 0 and
+    # the timestep dt >= 0 — and dt >= 0 is only guaranteed if delta is either
+    # raw (softplus applied inside the kernel) or ALREADY positive. So when
+    # delta_softplus=False, delta *is* the timestep and must be drawn positive,
+    # exactly as gen_golden.py does for its own no_softplus case. Feeding a
+    # negative delta here violates the kernel's documented precondition and is
+    # a regime no real Mamba ever produces (HF's slow path pre-applies
+    # softplus). See BIDIRECTIONAL_LOG.md.
+    if softplus:
+        delta = r(batch, dim, length)                      # raw, any sign
+    else:
+        delta = (torch.rand(batch, dim, length, generator=g,
+                            dtype=torch.float32) * 0.099) + 1e-3  # (0.001, 0.1]
+
     case = dict(
         u=r(batch, dim, length),
-        delta=r(batch, dim, length),
-        # A must be negative (the model parameterizes it as -exp(A_log)), and
-        # the kernel's non-positive fast exp depends on dt*A <= 0.
+        delta=delta,
+        # A must be negative (the model parameterizes it as -exp(A_log)).
         A=-torch.rand(dim, state, generator=g, dtype=torch.float32) - 0.1,
         B=r(batch, groups, state, length),
         C=r(batch, groups, state, length),
@@ -88,8 +104,13 @@ def make_case(batch, dim, length, state, groups=1, seed=0, **opts):
     if opts.get("z"):
         case["z"] = r(batch, dim, length)
     if opts.get("delta_bias"):
+        if not softplus:
+            # a bias could push the raw positive timestep negative, breaking
+            # the same precondition; gen_golden.py forces bias=None here too.
+            raise ValueError("delta_bias with delta_softplus=False would "
+                             "violate the dt >= 0 precondition")
         case["delta_bias"] = r(dim)
-    case["delta_softplus"] = opts.get("delta_softplus", True)
+    case["delta_softplus"] = softplus
     return case
 
 

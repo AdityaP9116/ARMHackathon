@@ -110,6 +110,17 @@ def backward_via_flip(u, delta, A, B, C, D_skip=None, z=None, delta_bias=None,
 
 def make_case(batch, dim, length, state, groups=None, seed=0,
               D=False, z=False, delta_bias=False, delta_softplus=True):
+    """Note: `delta` is drawn from a normal (either sign) even in the
+    no_softplus case, which DIFFERS from `check_bidirectional.py` on purpose.
+
+    That file must draw a positive delta because the kernel's Pass-A2 exp is
+    specialized for dt*A <= 0 and a negative timestep breaks its precondition.
+    Here there is no kernel — numpy's exp is exact over the whole line — and the
+    identity under test (flip-forward-flip == backward recurrence) is a
+    mathematical fact that holds for ANY delta. Restricting the sign would only
+    narrow coverage of the thing this file exists to prove. Do not "fix" it to
+    match.
+    """
     rng = np.random.default_rng(seed)
     f32 = lambda *s: rng.standard_normal(s).astype(np.float32)
     bc_shape = ((batch, groups, state, length) if groups

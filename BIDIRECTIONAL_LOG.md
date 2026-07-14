@@ -20,8 +20,10 @@ first so the fusion is justified by a measurement instead of an assumption.
 
 ## Step 1 — correctness path (plan §2.1)
 
-**Branch:** `feature/bidirectional-scan` · **Status:** code complete; math gate
-green locally, kernel gate pending first CI run.
+**Branch:** `feature/bidirectional-scan` · **Status:** code complete. Math gate
+green locally. Kernel gate has now run on CI (linux-arm64): 12/13 green on the
+first attempt; the one failure was a bug in the test, not the kernel (see
+*Errors and surprises* §6 below) — fixed, awaiting re-run.
 
 ### What
 
@@ -121,6 +123,47 @@ split so the *definitional* correctness could be proven with numpy alone (a
 the kernel-level check deferred to CI. This is why there are two gates and not
 one — and it turned out to be a better structure anyway, since the math gate is
 portable and catches the class of bug that kernel testing structurally cannot.
+
+**6. The kernel gate failed on first CI run — and it was right to.** ⚠ *The most
+instructive failure so far.* `no_softplus` came back at **max_abs = 3.3e-3**,
+33× over the 1e-4 gate, while all 12 other cases passed.
+
+Root cause was **the test, not the kernel**. `make_case` drew `delta` from a
+normal distribution unconditionally. That is fine when `delta_softplus=True`
+(delta is raw; the kernel applies softplus and the timestep comes out positive),
+but with `delta_softplus=False` **delta *is* the timestep** and must already be
+positive — HF's slow path pre-applies softplus, so no real Mamba ever passes a
+negative one. `gen_golden.py` knows this and draws `uniform(1e-3, 0.1)` for its
+own `no_softplus` case; my test drew `randn` and produced negative timesteps.
+
+Why that blows up *now* specifically: with `delta < 0` and `A < 0`, the argument
+`dt·A` goes **positive** — violating the precondition of the `vexpq_f32_nonpos`
+optimization landed in [`OPTIMIZATION_LOG.md`](./OPTIMIZATION_LOG.md) Step 1,
+whose docstring states it outright ("*positive input can overflow to inf because
+the upper clamp is absent — the scan never passes positive*"). The 3.3e-3 is a
+degree-reduced, unclamped exp being evaluated outside its fitted domain, exactly
+as designed.
+
+**Fixed** by drawing a positive delta when softplus is off (mirroring
+`gen_golden.py`), and by making `make_case` *reject* `delta_bias` in that mode —
+a bias could push a positive timestep negative and reintroduce the same
+violation silently.
+
+Two things worth taking from this:
+- The precondition behind the exp optimization is **real and load-bearing**, and
+  it now has a second, independent test exercising it. An unrelated workstream
+  tripped over it within a day of it landing.
+- `check_bidirectional_math.py` deliberately *keeps* drawing `randn` delta for
+  its no_softplus case and still passes — numpy's exp is exact over the whole
+  line, and the identity it tests (flip-forward-flip == backward recurrence) is
+  a mathematical fact that holds for any delta. The two files differ on purpose;
+  a comment in each says so, so nobody "fixes" one to match the other.
+
+**Result after the fix:** 12 of 13 cases were already green on the first run,
+including `state13_neon_tail`, `grouped_bc`, `edge_len1`, all merge modes, the
+untied-`reverse_params` path, and `fwd == plain 1D scan` (bit-identical). Only
+`no_softplus` failed, and only because it was asking the kernel a question no
+model asks.
 
 ### Design boundary — which bidirectional models this is for
 
