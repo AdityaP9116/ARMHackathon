@@ -102,10 +102,10 @@ unsafe fn channel_profiled(
         for i in 0..tlen {
             let vdt = vdupq_n_f32(scratch.dt[i]);
             let o = i * 16;
-            vst1q_f32(abar.add(o), exp::vexpq_f32(vmulq_f32(vdt, a0)));
-            vst1q_f32(abar.add(o + 4), exp::vexpq_f32(vmulq_f32(vdt, a1)));
-            vst1q_f32(abar.add(o + 8), exp::vexpq_f32(vmulq_f32(vdt, a2)));
-            vst1q_f32(abar.add(o + 12), exp::vexpq_f32(vmulq_f32(vdt, a3)));
+            vst1q_f32(abar.add(o), exp::vexpq_f32_nonpos(vmulq_f32(vdt, a0)));
+            vst1q_f32(abar.add(o + 4), exp::vexpq_f32_nonpos(vmulq_f32(vdt, a1)));
+            vst1q_f32(abar.add(o + 8), exp::vexpq_f32_nonpos(vmulq_f32(vdt, a2)));
+            vst1q_f32(abar.add(o + 12), exp::vexpq_f32_nonpos(vmulq_f32(vdt, a3)));
         }
         t.exp_ns += c0.elapsed().as_nanos();
 
