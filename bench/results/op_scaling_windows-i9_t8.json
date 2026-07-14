@@ -1,0 +1,54 @@
+{
+  "kind": "op",
+  "env": {
+    "platform": "Windows-10-10.0.26200-SP0",
+    "machine": "AMD64",
+    "processor": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "cpu_count": 32,
+    "torch": "2.11.0.dev20260208+cu128",
+    "torch_threads": 24,
+    "python": "3.11.9",
+    "kernel_lib": "C:\\Users\\Adity\\Downloads\\Projects\\ARMHackathon\\kernel\\target\\release\\arm_scan_ffi.dll",
+    "tag": "windows-i9-t8",
+    "git_sha": "cea6d1e",
+    "timestamp_utc": "2026-07-13T15:06:24Z"
+  },
+  "reps": 7,
+  "suite": "scaling-point",
+  "args": {
+    "suite": "scaling-point",
+    "shapes": null,
+    "quick": false,
+    "reps": 7,
+    "warmup": null,
+    "compile_max_len": 512,
+    "no_compile": true,
+    "torch_threads": null,
+    "tag": "windows-i9-t8"
+  },
+  "shapes": [
+    {
+      "shape": [
+        1,
+        1536,
+        512,
+        16
+      ],
+      "baselines": {
+        "ref_eager": {
+          "median_s": 0.22754120000172406,
+          "min_s": 0.20988130000478122,
+          "max_s": 0.23272430000361055,
+          "reps": 7
+        },
+        "kernel": {
+          "median_s": 0.015493099999730475,
+          "min_s": 0.014929500001017004,
+          "max_s": 0.01650559999688994,
+          "reps": 7
+        }
+      },
+      "kernel_vs_ref_max_abs": 1.9073486328125e-06
+    }
+  ]
+}

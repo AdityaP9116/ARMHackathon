@@ -1,0 +1,129 @@
+{
+  "kind": "op",
+  "env": {
+    "platform": "Windows-10-10.0.26200-SP0",
+    "machine": "AMD64",
+    "processor": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "cpu_count": 32,
+    "torch": "2.11.0.dev20260208+cu128",
+    "torch_threads": 24,
+    "python": "3.11.9",
+    "kernel_lib": "C:\\Users\\Adity\\Downloads\\Projects\\ARMHackathon\\kernel\\target\\release\\arm_scan_ffi.dll",
+    "tag": "windows-i9",
+    "git_sha": "4c18403",
+    "timestamp_utc": "2026-07-13T14:59:23Z"
+  },
+  "reps": 10,
+  "suite": "basic",
+  "args": {
+    "suite": "basic",
+    "shapes": null,
+    "quick": false,
+    "reps": null,
+    "warmup": null,
+    "compile_max_len": 512,
+    "no_compile": false,
+    "torch_threads": null,
+    "tag": "windows-i9"
+  },
+  "shapes": [
+    {
+      "shape": [
+        1,
+        768,
+        128,
+        16
+      ],
+      "baselines": {
+        "ref_eager": {
+          "median_s": 0.01878240000223741,
+          "min_s": 0.017272900004172698,
+          "max_s": 0.025410900001588743,
+          "reps": 10
+        },
+        "ref_compile": {
+          "error": "RuntimeError: Compiler: cl is not found.\n\nSet TORCHDYNAMO_VERBOSE=1 for the internal stack trace (please do this especially if you're reporting a bug to PyTorch). For even more developer context, set "
+        },
+        "kernel": {
+          "median_s": 0.0016934000013861805,
+          "min_s": 0.001470399998652283,
+          "max_s": 0.00195460000395542,
+          "reps": 10
+        }
+      },
+      "kernel_vs_ref_max_abs": 9.5367431640625e-07
+    },
+    {
+      "shape": [
+        1,
+        768,
+        512,
+        16
+      ],
+      "baselines": {
+        "ref_eager": {
+          "median_s": 0.12722545000360697,
+          "min_s": 0.09779520000302,
+          "max_s": 0.14237810000486206,
+          "reps": 10
+        },
+        "ref_compile": {
+          "error": "RuntimeError: Compiler: cl is not found.\n\nSet TORCHDYNAMO_VERBOSE=1 for the internal stack trace (please do this especially if you're reporting a bug to PyTorch). For even more developer context, set "
+        },
+        "kernel": {
+          "median_s": 0.004181899996183347,
+          "min_s": 0.003147499999613501,
+          "max_s": 0.006188699997437652,
+          "reps": 10
+        }
+      },
+      "kernel_vs_ref_max_abs": 1.9073486328125e-06
+    },
+    {
+      "shape": [
+        1,
+        768,
+        2048,
+        16
+      ],
+      "baselines": {
+        "ref_eager": {
+          "median_s": 0.6333673000008275,
+          "min_s": 0.6122548999992432,
+          "max_s": 0.6467402000052971,
+          "reps": 10
+        },
+        "kernel": {
+          "median_s": 0.009924400001182221,
+          "min_s": 0.009621999997762032,
+          "max_s": 0.010023799994087312,
+          "reps": 10
+        }
+      },
+      "kernel_vs_ref_max_abs": 1.9073486328125e-06
+    },
+    {
+      "shape": [
+        8,
+        1536,
+        1024,
+        16
+      ],
+      "baselines": {
+        "ref_eager": {
+          "median_s": 1.3072222999981022,
+          "min_s": 1.2465077000015299,
+          "max_s": 1.3155948999992688,
+          "reps": 10
+        },
+        "kernel": {
+          "median_s": 0.07357425000373041,
+          "min_s": 0.07274709999910556,
+          "max_s": 0.07598169999982929,
+          "reps": 10
+        }
+      },
+      "kernel_vs_ref_max_abs": 2.384185791015625e-06
+    }
+  ]
+}

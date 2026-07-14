@@ -1,0 +1,36 @@
+
+running 2 tests
+test scalar::tests::hand_computed_single_step ... ignored
+test scalar::tests::hand_computed_state_carryover ... ignored
+
+test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+selective_scan/scalar_seq/small_d64_l128
+                        time:   [1.6777 ms 1.6851 ms 1.6925 ms]
+                        thrpt:  [9.6802 Melem/s 9.7230 Melem/s 9.7657 Melem/s]
+Found 2 outliers among 10 measurements (20.00%)
+  1 (10.00%) low mild
+  1 (10.00%) high mild
+selective_scan/neon_seq/small_d64_l128
+                        time:   [1.6745 ms 1.6818 ms 1.6874 ms]
+                        thrpt:  [9.7098 Melem/s 9.7418 Melem/s 9.7847 Melem/s]
+selective_scan/neon_par/small_d64_l128
+                        time:   [123.65 µs 124.82 µs 125.68 µs]
+                        thrpt:  [130.36 Melem/s 131.26 Melem/s 132.50 Melem/s]
+selective_scan/scalar_seq/mamba130m_layer_l512
+                        time:   [80.375 ms 80.595 ms 80.792 ms]
+                        thrpt:  [9.7341 Melem/s 9.7578 Melem/s 9.7846 Melem/s]
+selective_scan/neon_seq/mamba130m_layer_l512
+                        time:   [80.439 ms 80.711 ms 81.074 ms]
+                        thrpt:  [9.7001 Melem/s 9.7438 Melem/s 9.7767 Melem/s]
+selective_scan/neon_par/mamba130m_layer_l512
+                        time:   [4.3578 ms 4.3658 ms 4.3769 ms]
+                        thrpt:  [179.68 Melem/s 180.13 Melem/s 180.46 Melem/s]
+
+
+running 2 tests
+test tests::ffi_rejects_null_and_bad_enum ... ignored
+test tests::ffi_roundtrip_single_step ... ignored
+
+test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
