@@ -196,7 +196,10 @@ unsafe fn discretize_chunk(
             v = math::vsoftplusq_f32(v);
         }
         vst1q_f32(dt_buf.as_mut_ptr().add(t), v);
-        vst1q_f32(dtu_buf.as_mut_ptr().add(t), vmulq_f32(v, vld1q_f32(u.add(t))));
+        vst1q_f32(
+            dtu_buf.as_mut_ptr().add(t),
+            vmulq_f32(v, vld1q_f32(u.add(t))),
+        );
         t += 4;
     }
     while t < tlen {
@@ -516,13 +519,27 @@ pub(crate) fn scan_bidirectional(
             unsafe {
                 if state == 16 {
                     channel_n16_bidir(
-                        a_row, bt_plane, ct_plane, &ch, out_fwd_row, out_bwd_row, last_f, last_b,
+                        a_row,
+                        bt_plane,
+                        ct_plane,
+                        &ch,
+                        out_fwd_row,
+                        out_bwd_row,
+                        last_f,
+                        last_b,
                         scratch,
                     );
                 } else {
                     scratch.a_pad[..state].copy_from_slice(a_row);
                     channel_general_bidir(
-                        bt_plane, ct_plane, &ch, out_fwd_row, out_bwd_row, last_f, last_b, scratch,
+                        bt_plane,
+                        ct_plane,
+                        &ch,
+                        out_fwd_row,
+                        out_bwd_row,
+                        last_f,
+                        last_b,
+                        scratch,
                     );
                 }
                 epilogue_row(&ch, out_fwd_row);
@@ -606,7 +623,10 @@ unsafe fn channel_n16_bidir(
             let vdtu = vdupq_n_f32(scratch.dtu[t]);
             let b = bt.as_ptr().add((start + t) * 16);
             let o = (start + t) * 16;
-            vst1q_f32(abar_mut.add(o), exp::vexpq_f32_nonpos_fast(vmulq_f32(vdt, a0)));
+            vst1q_f32(
+                abar_mut.add(o),
+                exp::vexpq_f32_nonpos_fast(vmulq_f32(vdt, a0)),
+            );
             vst1q_f32(
                 abar_mut.add(o + 4),
                 exp::vexpq_f32_nonpos_fast(vmulq_f32(vdt, a1)),
