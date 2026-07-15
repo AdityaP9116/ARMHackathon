@@ -161,9 +161,9 @@ pub(crate) fn scan_bidirectional<T: Float>(
                     dt = dt.softplus();
                 }
                 let dt_u = dt * u_row[t];
-                for n in 0..state {
+                for (n, &a_n) in a_row.iter().enumerate() {
                     let bc_idx = bc_base + n * len + t;
-                    scratch.abar[t * state + n] = (dt * a_row[n]).exp();
+                    scratch.abar[t * state + n] = (dt * a_n).exp();
                     scratch.bbar[t * state + n] = dt_u * input.b[bc_idx];
                 }
             }
