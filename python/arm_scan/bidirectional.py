@@ -1,16 +1,17 @@
 """Bidirectional selective scan (TOPOLOGY_IMPLEMENTATION_PLAN.md §2).
 
 Runs the recurrence over the sequence in both time directions and merges the
-two outputs. The backward direction is **fused in the kernel** — it walks the
-sequence backward in place via `selective_scan(..., reverse=True)` rather than
-materializing flipped copies of u/delta/B/C/z and un-flipping the result.
+two outputs. For the common (tied-weights) case it uses the **fused two-direction
+kernel** (`selective_scan_bidirectional`): one call that produces both directions
+while computing the direction-independent Pass A — discretize + exp, ~85% of the
+work — **once** instead of twice. See BIDIRECTIONAL_SPEEDUP_IDEAS.md §3.2 and
+BIDIRECTIONAL_LOG.md.
 
-Honest framing of what that fusion is worth: it removes six full-tensor copies,
-which `bench/bench_bidirectional.py` measured at **~2%** of runtime (falling as
-the sequence lengthens). It is not a speedup story. It was built because the 2D
-cross-scan needs a backward traversal anyway — its column-backward and
-row-backward directions are this same primitive — so `reverse` is the substrate
-for SS2D, not a bidirectional optimization. See BIDIRECTIONAL_LOG.md.
+It falls back to two separate `selective_scan` calls (the backward one via the
+`reverse` flag, no copies) when the fused path does not apply: **untied weights**
+(`reverse_params`, where the two directions use different A/delta/B/C so Pass A
+cannot be shared) or when a **`last_state`** is requested (the fused op does not
+produce one — bidirectional models are non-causal and ignore it).
 
 WHICH BIDIRECTIONAL MODELS THIS IS FOR
 --------------------------------------
@@ -61,7 +62,7 @@ pass `D=None` here and add the skip yourself after merging.
 
 import torch
 
-from .op import selective_scan
+from .op import selective_scan, selective_scan_bidirectional
 
 _MERGES = ("sum", "mean", "concat", "none")
 
@@ -126,28 +127,38 @@ def bidirectional_scan(u, delta, A, B, C, D=None, z=None, delta_bias=None,
     if merge not in _MERGES:
         raise ValueError(f"merge must be one of {_MERGES}, got {merge!r}")
 
-    p = reverse_params or {}
-    rev = _scan_reverse(
-        u,
-        p.get("delta", delta),
-        p.get("A", A),
-        p.get("B", B),
-        p.get("C", C),
-        p.get("D", D),
-        z,
-        p.get("delta_bias", delta_bias),
-        delta_softplus,
-        return_last_state,
-    )
-    fwd = selective_scan(
-        u, delta, A, B, C, D=D, z=z, delta_bias=delta_bias,
-        delta_softplus=delta_softplus, return_last_state=return_last_state,
-    )
-
-    if return_last_state:
-        (out_f, last_f), (out_b, last_b) = fwd, rev
+    # The fused kernel shares Pass A (the exp) between directions, which is only
+    # valid when both directions use the SAME A/delta/B/C — i.e. tied weights.
+    # It also does not produce last_state (bidirectional models are non-causal
+    # and ignore it). So the fused fast path handles the common case; untied
+    # weights or an explicit last_state request fall back to two scans.
+    if reverse_params is None and not return_last_state:
+        out_f, out_b = selective_scan_bidirectional(
+            u, delta, A, B, C, D=D, z=z, delta_bias=delta_bias,
+            delta_softplus=delta_softplus,
+        )
     else:
-        out_f, out_b = fwd, rev
+        p = reverse_params or {}
+        rev = _scan_reverse(
+            u,
+            p.get("delta", delta),
+            p.get("A", A),
+            p.get("B", B),
+            p.get("C", C),
+            p.get("D", D),
+            z,
+            p.get("delta_bias", delta_bias),
+            delta_softplus,
+            return_last_state,
+        )
+        fwd = selective_scan(
+            u, delta, A, B, C, D=D, z=z, delta_bias=delta_bias,
+            delta_softplus=delta_softplus, return_last_state=return_last_state,
+        )
+        if return_last_state:
+            (out_f, last_f), (out_b, last_b) = fwd, rev
+        else:
+            out_f, out_b = fwd, rev
 
     if merge == "sum":
         out = out_f + out_b

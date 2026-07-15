@@ -148,7 +148,7 @@ jobs:
             echo "## Bidirectional scan (linux-arm64 CI runner)"
             echo "vs-baseline rows are the result. The internal fusion win is small and is NOT a headline — see BIDIRECTIONAL_LOG.md."
             echo '```'
-            grep -E "^===|^====|^  (ref_|scan_fwd|fused_estimate|bidirectional|flips_only)|^  =>|^bidirectional scan|^fused reverse|^torch.compile COST|^  +[0-9]+ +[0-9.]+s|^  +L|^  L=" bench-bidi.log 2>/dev/null || echo "(bench did not run)"
+            grep -E "^===|fused ==|^  (ref_|scan_fwd|bidirectional)|^  =>|exp-sharing|^bidirectional \(fused\)|torch.compile COST|^  +[0-9]+ +[0-9.]+s|^  +L|^  L=" bench-bidi.log 2>/dev/null || echo "(bench did not run)"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       # The bench flushes JSON after every shape, so this survives even if a

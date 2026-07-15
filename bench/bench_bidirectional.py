@@ -1,22 +1,10 @@
-"""What did fusing the backward traversal actually buy? (TOPOLOGY_IMPLEMENTATION_PLAN.md §2)
+"""Bidirectional scan: kernel vs PyTorch, and the fused-kernel exp-sharing win.
 
-A backward scan can be had two ways:
-
-  flip-based   flip u/delta/B/C/z along time, run the ordinary FORWARD kernel,
-               flip the output back. Correct, but six full-tensor copies.
-  fused        `selective_scan(..., reverse=True)` — the kernel walks the
-               sequence backward in place. Zero copies.
-
-This benchmark ran BEFORE the fused path existed, to decide whether to build it
-at all: it measured a *ceiling* on the win (2 forward scans with no flips) and
-reported **1.085x at L=128, falling to 1.025x at L=512** — i.e. the copies are
-worth ~2%. That was the honest answer, and it is why the fused path was NOT
-built as a speedup.
-
-It was built anyway, because the 2D cross-scan needs a backward traversal for
-its row-backward and column-backward directions — `reverse` is the substrate for
-SS2D, not a bidirectional optimization. Now that it exists, this file measures
-the REAL before/after instead of a proxy.
+A bidirectional scan runs the recurrence in both time directions and sums them.
+The direction-independent Pass A (discretize + exp, ~85% of the work) can be
+computed once and SHARED between the two directions — that is the fused
+two-direction kernel (BIDIRECTIONAL_SPEEDUP_IDEAS.md §3.2). This file measures
+what that sharing buys, and where the fused path stands against stock PyTorch.
 
 WHAT IS TIMED
 
@@ -26,29 +14,28 @@ Baselines — the rows that matter, and the only ones fit to publish:
   ref_compile_bidi    the same under torch.compile — the FAIR baseline, since
                       compile is what a competent user would already be doing.
 
-Ours:
-  bidirectional       forward + kernel-fused reverse. No copies.
+Our two implementations:
+  bidirectional_twocall   two separate kernel scans (forward + the `reverse`
+                          flag), summed. Each recomputes Pass A → exp twice.
+  bidirectional           the FUSED two-direction kernel: exp computed once and
+                          shared. This is `arm_scan.bidirectional_scan`.
 
-Diagnostics — internal, not for publication:
-  scan_fwd            one forward scan. Half the work; the floor.
-  fused_estimate      two forward scans + merge, no flips. Theoretical floor.
-  bidirectional_flip  the OLD path: explicit flips + two forward scans + un-flip.
-  flips_only          the six copies alone — what fusion actually removed.
+Diagnostic:
+  scan_fwd            one forward scan — half the work; the floor.
 
 THE NUMBERS
 
-  speedup_vs_eager / speedup_vs_compile   <- the result. Kernel vs stock PyTorch.
-  fusion_speedup = bidirectional_flip / bidirectional
-                                          <- INTERNAL. ~2%. Never a headline.
+  speedup_vs_eager / speedup_vs_compile   <- the result. Fused kernel vs PyTorch.
+  exp_sharing_speedup = twocall / fused   <- the Stage-3 win, projected ~1.7x
+                                             (exp is ~85% and direction-independent).
 
 Both baselines are built on the SAME vendored reference (tests/reference/) that
 the rest of the project measures against, so these rows are directly comparable
 to bench_op.py's.
 
-Two correctness gates run before any timing: the fused reverse must be
-bit-identical to the flip-based definition, AND the kernel must agree with the
-PyTorch reference it is being timed against. Beating a baseline you do not match
-is not a result.
+Two correctness gates run before any timing: the fused op must equal the two-call
+path (bit-identical — sharing the exp reuses identical values), AND the kernel
+must agree with the PyTorch reference it is being timed against.
 
 Usage:
     python bench/bench_bidirectional.py            # sweep over L
@@ -149,40 +136,26 @@ def make_ref_compile_bidi(t):
     return (lambda: _bidi_ref(call, t)), compile_s
 
 
-def fused_estimate(t):
-    """Two forward scans + merge, zero flips — the theoretical floor for any
-    bidirectional implementation. Not a real backward scan: it computes the
-    wrong answer on purpose, because we are timing the WORK, not the result.
-    (Correctness lives in `tests/check_bidirectional.py`, which is green.)"""
-    return scan_fwd(t) + scan_fwd(t)
-
-
-def bidirectional_flip(t):
-    """The OLD path, kept explicitly so the fusion has a real before/after to be
-    measured against: flip the five time-varying inputs, scan forward, flip the
-    output back, merge. This is also exactly the DEFINITION `reverse=True` must
-    reproduce, so `bidirectional()` below must equal it bit-for-bit."""
-    flipped = {k: flip_time(t[k]) for k in _FLIP_KEYS}
-    back = arm_scan.selective_scan(
-        flipped["u"], flipped["delta"], t["A"], flipped["B"], flipped["C"],
-        D=t["D"], z=flipped["z"], delta_bias=t["delta_bias"],
-        delta_softplus=True)
-    return scan_fwd(t) + flip_time(back)
+def bidirectional_twocall(t):
+    """Two separate scans (forward + the `reverse` flag), summed — NO exp
+    sharing. This is what `bidirectional_scan` did before the fused two-direction
+    kernel (Stage 3): each direction recomputes the full Pass A (discretize +
+    exp). `bidirectional()` below must equal this bit-for-bit, and the ratio
+    twocall / bidirectional is the exp-sharing win."""
+    fwd = scan_fwd(t)
+    bwd = arm_scan.selective_scan(
+        t["u"], t["delta"], t["A"], t["B"], t["C"], D=t["D"], z=t["z"],
+        delta_bias=t["delta_bias"], delta_softplus=True, reverse=True)
+    return fwd + bwd
 
 
 def bidirectional(t):
-    """The NEW path: forward + kernel-fused reverse. No copies."""
+    """The FUSED path: one call, Pass A (the exp) computed once and shared
+    between both directions. This is `arm_scan.bidirectional_scan`, which uses
+    the fused two-direction kernel for the tied-weights sum case."""
     return arm_scan.bidirectional_scan(
         t["u"], t["delta"], t["A"], t["B"], t["C"], D=t["D"], z=t["z"],
         delta_bias=t["delta_bias"], delta_softplus=True, merge="sum")
-
-
-def flips_only(t):
-    """The six copies in isolation: five time-varying inputs in, one output
-    back — precisely the work fusion removes. The list keeps every flip
-    referenced so none can be elided."""
-    flipped = [flip_time(t[k]) for k in _FLIP_KEYS]   # 5 input copies
-    return flip_time(flipped[0])                       # 1 output copy
 
 
 def main():
@@ -224,13 +197,12 @@ def main():
     print(f"\nbidirectional scan — suite="
           f"{'quick' if args.quick else args.suite} reps={reps} "
           f"warmup={warmup} compile_max_len={args.compile_max_len}")
-    print("  vs eager / vs torch.compile : the numbers that matter "
-          "(kernel vs stock PyTorch)")
-    print("  fusion_speedup              : internal — what the fused reverse "
-          "removed vs the flip-based path (~2%, not a headline)\n")
+    print("  vs eager / vs torch.compile : kernel (fused) vs stock PyTorch")
+    print("  exp-sharing speedup         : fused vs two-call — the Stage-3 win "
+          "(exp computed once, not twice; projected ~1.7x)\n")
 
     results = {
-        "kind": "bidirectional-fused-reverse",
+        "kind": "bidirectional-fused-exp-sharing",
         "env": env,
         "reps": reps,
         "suite": "quick" if args.quick else args.suite,
@@ -243,50 +215,41 @@ def main():
             print(f"=== {label} ===")
             t = make_inputs(batch, dim, length, state)
 
-            # CORRECTNESS GATE 1: the fused reverse must reproduce the flip-based
-            # definition. If it does not, those two series are not the same
-            # computation and the whole comparison is meaningless — so refuse to
-            # report a speedup rather than quote a fast wrong answer.
-            #
-            # NOT asserted bit-exactly. On NEON the two agree to ~1e-7, not to
-            # the last bit: discretize/epilogue run 4-wide with a scalar tail,
-            # and the vector and tail branches evaluate softplus/SiLU by
-            # different means, so flipping the array can move a timestep across
-            # that boundary. (It happens to be bit-exact at every length here,
-            # since they are all multiples of 4 and no tail exists — but relying
-            # on that would make this gate silently shape-dependent.)
-            fused_out, flip_out = bidirectional(t), bidirectional_flip(t)
-            drift = (fused_out - flip_out).abs().max().item()
+            # CORRECTNESS GATE 1: the fused two-direction op must reproduce the
+            # two-call path (each direction scanned separately). They share no
+            # code beyond the kernel, so if they disagree the exp-sharing changed
+            # the answer — refuse to report a speedup over a wrong result. This is
+            # expected BIT-IDENTICAL (the Rust test proves it): sharing Pass A
+            # reuses the identical exp values, it does not approximate them.
+            fused_out, twocall_out = bidirectional(t), bidirectional_twocall(t)
+            drift = (fused_out - twocall_out).abs().max().item()
             scale = max(1.0, fused_out.abs().max().item())
-            if drift / scale > 1e-5:
-                print(f"  !! fused reverse != flip-forward-flip "
-                      f"(rel={drift/scale:.3e}) — refusing to benchmark")
+            if drift / scale > 1e-6:
+                print(f"  !! fused != two-call (rel={drift/scale:.3e}) — "
+                      f"exp-sharing changed the answer; refusing to benchmark")
                 sys.exit(1)
             exact = " (bit-identical)" if drift == 0.0 else ""
 
             # CORRECTNESS GATE 2: the kernel must agree with the PyTorch
-            # reference it is being timed against. Beating a baseline you do not
-            # match is meaningless.
+            # reference it is being timed against.
             ref_out = ref_eager_bidi(t)
             max_err = (fused_out - ref_out).abs().max().item()
             row = {"shape": [batch, dim, length, state], "timings": {},
                    "kernel_vs_ref_max_abs": max_err,
-                   "fused_vs_flip_max_abs": drift}
-            print(f"  fused == flip-based: rel {drift/scale:.1e}{exact}   "
+                   "fused_vs_twocall_max_abs": drift}
+            print(f"  fused == two-call: rel {drift/scale:.1e}{exact}   "
                   f"kernel-vs-ref max_abs {max_err:.3e}")
 
             series = [
                 ("ref_eager_bidi", ref_eager_bidi),
                 ("scan_fwd", scan_fwd),
-                ("fused_estimate", fused_estimate),
-                ("bidirectional_flip", bidirectional_flip),
+                ("bidirectional_twocall", bidirectional_twocall),
                 ("bidirectional", bidirectional),
-                ("flips_only", flips_only),
             ]
             for name, fn in series:
                 r = bench(lambda fn=fn: fn(t), warmup, reps)
                 row["timings"][name] = r
-                print(f"  {name:19s} {r['median_s']*1e3:9.3f} ms")
+                print(f"  {name:22s} {r['median_s']*1e3:9.3f} ms")
 
             # torch.compile — the fair baseline. Compile cost is reported, never
             # timed. Unavailable inductor (e.g. no MSVC on Windows) is a skip,
@@ -309,21 +272,14 @@ def main():
                       f"compile_max_len={args.compile_max_len})")
 
             bi = row["timings"]["bidirectional"]["median_s"]
-            fp = row["timings"]["bidirectional_flip"]["median_s"]
-            fu = row["timings"]["fused_estimate"]["median_s"]
+            tc = row["timings"]["bidirectional_twocall"]["median_s"]
             eager = row["timings"]["ref_eager_bidi"]["median_s"]
 
             row["speedup_vs_eager"] = eager / bi
-            row["fusion_speedup"] = fp / bi     # the real before/after
-            # `fused_estimate` was the pre-fusion PROXY for a fused reverse (two
-            # forward scans, no flips) and was treated as a lower bound. IT IS
-            # NOT ONE: the real fused path beats it by 3-6% consistently, across
-            # runs and shapes. A bound the real thing beats is a broken proxy,
-            # and the mechanism is unclear — so it is kept only as a diagnostic
-            # timing, never as a ceiling. The honest number is `fusion_speedup`,
-            # which measures the actual old path against the actual new one and
-            # reproduces to ~0.001x across runs. See BIDIRECTIONAL_LOG.md Step 5.
-            row["fused_estimate_ratio"] = fp / fu
+            # The Stage-3 win: fused (shares the exp) vs two-call (recomputes it).
+            # Projected ~1.7x from the profiler's phase split (exp ~85% of the
+            # work, direction-independent). This is the ACHIEVED number.
+            row["exp_sharing_speedup"] = tc / bi
 
             line = f"  => {row['speedup_vs_eager']:.2f}x vs eager"
             comp = row["timings"].get("ref_compile_bidi", {})
@@ -331,8 +287,8 @@ def main():
                 row["speedup_vs_compile"] = comp["median_s"] / bi
                 line += f", {row['speedup_vs_compile']:.2f}x vs torch.compile"
             print(line)
-            print(f"     (internal: fused reverse won "
-                  f"{row['fusion_speedup']:.3f}x over the flip-based path)\n")
+            print(f"     (exp-sharing: fused won {row['exp_sharing_speedup']:.3f}x "
+                  f"over the two-call path)\n")
             results["shapes"].append(row)
 
             # Flush after EVERY shape, not just at the end. At long L,
@@ -347,19 +303,19 @@ def main():
     ev = [r["speedup_vs_eager"] for r in results["shapes"]]
     cv = [r["speedup_vs_compile"] for r in results["shapes"]
           if "speedup_vs_compile" in r]
-    sp = [r["fusion_speedup"] for r in results["shapes"]]
+    xs = [r["exp_sharing_speedup"] for r in results["shapes"]]
 
     print("=" * 62)
-    print(f"bidirectional scan vs eager        : "
+    print(f"bidirectional (fused) vs eager        : "
           f"{min(ev):.2f}x – {max(ev):.2f}x")
     if cv:
-        print(f"bidirectional scan vs torch.compile: "
+        print(f"bidirectional (fused) vs torch.compile: "
               f"{min(cv):.2f}x – {max(cv):.2f}x   <- the headline")
     else:
-        print("bidirectional scan vs torch.compile: (not measured on this host)")
-    print(f"fused reverse vs flip-based path   : "
-          f"{min(sp):.3f}x – {max(sp):.3f}x (internal; small, and NOT stable "
-          f"run-to-run on a shared host)")
+        print("bidirectional (fused) vs torch.compile: (not measured on this host)")
+    print(f"exp-sharing: fused vs two-call        : "
+          f"{min(xs):.3f}x – {max(xs):.3f}x   <- the Stage-3 win "
+          f"(projected ~1.7x)")
 
     # ---- torch.compile's COST, reported rather than hidden in a skip message.
     #
@@ -404,9 +360,9 @@ def main():
               f"(--compile-max-len={args.compile_max_len}). Raise the cap to "
               f"measure them — and note that having to is itself the finding.")
 
-    print("\nThe fusion win is a small internal effect and is NOT a headline. "
-          "`reverse` exists as the substrate for the 2D cross-scan "
-          "(see BIDIRECTIONAL_LOG.md); the vs-baseline rows are the result.")
+    print("\nHeadline: the vs-torch.compile row. The exp-sharing speedup is the "
+          "Stage-3 fused-kernel win (one exp sweep, not two) and doubles as the "
+          "SS2D substrate — see BIDIRECTIONAL_LOG.md.")
 
     if args.json:
         Path(args.json).parent.mkdir(parents=True, exist_ok=True)

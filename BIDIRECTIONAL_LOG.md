@@ -826,8 +826,10 @@ the graph stops fitting, which is a sharper number than "≥ 8192 on 16 GB."
 
 ## Step 7 — fused two-direction kernel: share the exp
 
-**Status:** Stage 1 (scalar) ✅ green on all platforms (commit `4805aa7`). Stage 2
-(NEON) written, awaiting CI. Stage 3 (FFI + Python + benchmark) is next.
+**Status:** Stage 1 (scalar) ✅ and Stage 2 (NEON) ✅ green on all platforms —
+the fused kernel is bit-identical to two scans on real Arm. Stage 3 (FFI +
+Python + benchmark) written, awaiting CI — it produces the first *measured*
+exp-sharing number.
 
 Motivated by the roofline in
 [`BIDIRECTIONAL_SPEEDUP_IDEAS.md`](./BIDIRECTIONAL_SPEEDUP_IDEAS.md) §5: we are
@@ -915,13 +917,41 @@ Two incidental breakages on the same push, neither a Stage-2 numerics bug:
    accuracy. This also removes a latent flake that could have failed any prior run
    whose random seed hit a large output.
 
-### Stage 3 (next) — make it measurable
+### Stage 3 — plumbing + measurement (written, awaiting CI)
 
-FFI entry point (`arm_scan_selective_scan_bidirectional_f32`, ABI bump) →
-`_ffi`/`op.py` binding → `bidirectional.py` calls the fused op instead of two
-`selective_scan` calls → `bench_bidirectional.py` gets a `bidirectional_fused`
-series. Only then does the ~1.7× projection become a measured number — and only
-then is the L2-round-trip tradeoff (below) settled.
+Wired the fused kernel all the way out to the benchmark:
+
+| Layer | Change |
+|---|---|
+| `arm-scan-ffi` | `arm_scan_selective_scan_bidirectional_f32` (out_fwd, out_bwd, last_fwd, last_bwd); **ABI 4 → 5**; a hand-computed FFI test |
+| `_ffi.py` | ABI 5, argtypes, `scan_bidir_raw` wrapper |
+| `op.py` | `_selective_scan_bidir_op` (`torch.library` custom op, two outputs, registered fake) + public `selective_scan_bidirectional` |
+| `bidirectional.py` | `bidirectional_scan` now uses the fused op for the common case; **falls back to two calls** for untied weights (`reverse_params` — Pass A can't be shared) or when a `last_state` is requested (the fused op doesn't produce one) |
+| `bench_bidirectional.py` | new `bidirectional_twocall` (two scans, exp recomputed) vs `bidirectional` (fused, exp shared); reports `exp_sharing_speedup = twocall / fused` |
+
+The benchmark's correctness gate now checks **fused == two-call bit-identical**
+(sharing the exp reuses identical values, so it must be exact — no SIMD-tail
+caveat, unlike the flip-vs-reverse comparison). `check_bidirectional.py` already
+exercises the fused op end-to-end (its tied cases route through it), so the
+f64-reference gate covers it too.
+
+**The dispatch boundary is deliberate.** The fused op is only valid when both
+directions share A/delta/B/C (tied weights) — an *untied* model (Vim v2's
+separate `A_b`/`D_b`) genuinely cannot share Pass A, so it correctly falls back.
+And the fused op omits `last_state` because bidirectional models are non-causal
+and ignore it; requesting one also falls back. Neither fallback is a compromise —
+each is the right computation for a case the fused kernel does not cover.
+
+### The number this finally produces
+
+`exp_sharing_speedup = twocall / fused` is the measured Stage-7 payoff, projected
+**~1.7×** from the profiler's phase split (exp+softplus ~85% of runtime,
+direction-independent). This run also **settles the one open risk**: whether
+sharing the exp beats the extra L2 traffic from materializing `abar`/`bbar`
+full-row. If `exp_sharing_speedup` lands near 1.7×, the bet paid off; if it is
+~1.0× or below, the L2 round-trip ate the saving and the fused path is not worth
+keeping for bidirectional (though the *structure* still feeds SS2D). Measured,
+not assumed — the number decides.
 
 ### Known tradeoff to watch
 

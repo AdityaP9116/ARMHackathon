@@ -18,17 +18,19 @@
 use std::os::raw::c_int;
 
 use arm_scan_core::{
-    selective_scan_with_state, Backend, ScanDims, ScanError, ScanInput, ScanOptions, Threading,
+    selective_scan_bidirectional, selective_scan_with_state, Backend, ScanDims, ScanError,
+    ScanInput, ScanOptions, Threading,
 };
 
 /// ABI version. The Python loader checks this before calling anything else.
-/// Bump on any signature or semantic change to `arm_scan_selective_scan_f32`.
+/// Bump on any signature or semantic change to the entry points.
 ///
 /// 4: `h0` (resumable initial state) and `reverse` (backward-in-time traversal)
 ///    were developed on separate branches, each bumping to 3. Both are in 4.
+/// 5: added `arm_scan_selective_scan_bidirectional_f32` (fused two-direction).
 #[no_mangle]
 pub extern "C" fn arm_scan_abi_version() -> u32 {
-    4
+    5
 }
 
 /// Dimensions for a scan call. `groups` must divide `dim`.
@@ -207,6 +209,143 @@ pub unsafe extern "C" fn arm_scan_selective_scan_f32(
     }
 }
 
+/// Fused bidirectional scan: one set of inputs, both the forward output
+/// (`out_fwd`) and the backward output (`out_bwd`), computing the shared,
+/// direction-independent Pass A (discretize + exp) once. Semantically equal to
+/// two [`arm_scan_selective_scan_f32`] calls (forward, then `reverse=1`) but
+/// sharing the ~85% exp cost; see BIDIRECTIONAL_SPEEDUP_IDEAS.md.
+///
+/// No `reverse`/`h0` params: direction is inherent, and both directions seed
+/// from zero. `last_fwd`/`last_bwd` are nullable but must be null together or
+/// non-null together.
+///
+/// # Safety
+/// Same contract as [`arm_scan_selective_scan_f32`]: every non-null pointer
+/// references a buffer of the element count implied by `dims`, valid for the
+/// call, non-overlapping. `out_fwd`/`out_bwd` are `(batch, dim, len)`;
+/// `last_fwd`/`last_bwd` are `(batch, dim, state)`.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn arm_scan_selective_scan_bidirectional_f32(
+    dims: *const ArmScanDims,
+    u: *const f32,
+    delta: *const f32,
+    a: *const f32,
+    b: *const f32,
+    c: *const f32,
+    d_skip: *const f32,
+    z: *const f32,
+    delta_bias: *const f32,
+    delta_softplus: c_int,
+    backend: c_int,
+    threading: c_int,
+    out_fwd: *mut f32,
+    out_bwd: *mut f32,
+    last_fwd: *mut f32,
+    last_bwd: *mut f32,
+) -> c_int {
+    if dims.is_null()
+        || u.is_null()
+        || delta.is_null()
+        || a.is_null()
+        || b.is_null()
+        || c.is_null()
+        || out_fwd.is_null()
+        || out_bwd.is_null()
+    {
+        return ARM_SCAN_ERR_NULL_POINTER;
+    }
+    let (Some(backend), Some(threading)) = (backend_from(backend), threading_from(threading)) else {
+        return ARM_SCAN_ERR_BAD_ENUM;
+    };
+
+    let d = &*dims;
+    let Some(bdl) = d
+        .batch
+        .checked_mul(d.dim)
+        .and_then(|v| v.checked_mul(d.len))
+    else {
+        return ARM_SCAN_ERR_INVALID_DIMS;
+    };
+    let Some(bgnl) = d
+        .batch
+        .checked_mul(d.groups)
+        .and_then(|v| v.checked_mul(d.state))
+        .and_then(|v| v.checked_mul(d.len))
+    else {
+        return ARM_SCAN_ERR_INVALID_DIMS;
+    };
+    let Some(dn) = d.dim.checked_mul(d.state) else {
+        return ARM_SCAN_ERR_INVALID_DIMS;
+    };
+    let Some(bdn) = d
+        .batch
+        .checked_mul(d.dim)
+        .and_then(|v| v.checked_mul(d.state))
+    else {
+        return ARM_SCAN_ERR_INVALID_DIMS;
+    };
+
+    let scan_dims = ScanDims {
+        batch: d.batch,
+        dim: d.dim,
+        len: d.len,
+        state: d.state,
+        groups: d.groups,
+    };
+
+    let opt = |p: *const f32, n: usize| {
+        if p.is_null() {
+            None
+        } else {
+            Some(std::slice::from_raw_parts(p, n))
+        }
+    };
+    let input = ScanInput {
+        u: std::slice::from_raw_parts(u, bdl),
+        delta: std::slice::from_raw_parts(delta, bdl),
+        a: std::slice::from_raw_parts(a, dn),
+        b: std::slice::from_raw_parts(b, bgnl),
+        c: std::slice::from_raw_parts(c, bgnl),
+        d_skip: opt(d_skip, d.dim),
+        z: opt(z, bdl),
+        delta_bias: opt(delta_bias, d.dim),
+        delta_softplus: delta_softplus != 0,
+        reverse: false, // ignored by the fused path (both directions produced)
+    };
+    let out_fwd_slice = std::slice::from_raw_parts_mut(out_fwd, bdl);
+    let out_bwd_slice = std::slice::from_raw_parts_mut(out_bwd, bdl);
+    let last_fwd_slice = if last_fwd.is_null() {
+        None
+    } else {
+        Some(std::slice::from_raw_parts_mut(last_fwd, bdn))
+    };
+    let last_bwd_slice = if last_bwd.is_null() {
+        None
+    } else {
+        Some(std::slice::from_raw_parts_mut(last_bwd, bdn))
+    };
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        selective_scan_bidirectional(
+            &scan_dims,
+            &input,
+            out_fwd_slice,
+            out_bwd_slice,
+            last_fwd_slice,
+            last_bwd_slice,
+            ScanOptions { backend, threading },
+        )
+    }));
+
+    match result {
+        Ok(Ok(())) => ARM_SCAN_OK,
+        Ok(Err(ScanError::BackendUnavailable(_))) => ARM_SCAN_ERR_BACKEND_UNAVAILABLE,
+        Ok(Err(_)) => ARM_SCAN_ERR_INVALID_DIMS,
+        Err(_) => ARM_SCAN_ERR_PANIC,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -301,6 +440,62 @@ mod tests {
         assert!((out[0] - h0).abs() < 1e-6, "out[0]={} want {h0}", out[0]);
         // last_state under reverse is the state after consuming t == 0
         assert!((last[0] - h0).abs() < 1e-6);
+    }
+
+    /// Fused bidirectional across the C ABI, hand-computed. Two steps, N=1: the
+    /// forward output is the ordinary scan; the backward output must match the
+    /// `reverse` case above. Both from one call sharing Pass A.
+    #[test]
+    fn ffi_bidirectional_two_steps() {
+        let dims = ArmScanDims {
+            batch: 1,
+            dim: 1,
+            len: 2,
+            state: 1,
+            groups: 1,
+        };
+        let (u, dt, a, b, c) = (
+            [1.0_f32, 2.0],
+            [0.1_f32, 0.2],
+            [-2.0_f32],
+            [1.0_f32, 3.0],
+            [1.0_f32, 1.0],
+        );
+        let mut out_fwd = [0.0_f32; 2];
+        let mut out_bwd = [0.0_f32; 2];
+        let code = unsafe {
+            arm_scan_selective_scan_bidirectional_f32(
+                &dims,
+                u.as_ptr(),
+                dt.as_ptr(),
+                a.as_ptr(),
+                b.as_ptr(),
+                c.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+                0, // delta_softplus
+                0, // backend = auto
+                0, // threading = auto
+                out_fwd.as_mut_ptr(),
+                out_bwd.as_mut_ptr(),
+                std::ptr::null_mut(), // last_fwd
+                std::ptr::null_mut(), // last_bwd
+            )
+        };
+        assert_eq!(code, ARM_SCAN_OK);
+
+        // forward: h at t=0, then t=1
+        let f0 = 0.1_f32 * 1.0 * 1.0; // dt*u*b at t=0
+        let f1 = (0.2_f32 * -2.0).exp() * f0 + 0.2 * 2.0 * 3.0;
+        assert!((out_fwd[0] - f0).abs() < 1e-6, "out_fwd[0]={}", out_fwd[0]);
+        assert!((out_fwd[1] - f1).abs() < 1e-6, "out_fwd[1]={}", out_fwd[1]);
+
+        // backward: h at t=1, then t=0 (matches ffi_reverse_two_steps)
+        let b1 = 0.2_f32 * 2.0 * 3.0;
+        let b0 = (0.1_f32 * -2.0).exp() * b1 + 0.1 * 1.0 * 1.0;
+        assert!((out_bwd[1] - b1).abs() < 1e-6, "out_bwd[1]={}", out_bwd[1]);
+        assert!((out_bwd[0] - b0).abs() < 1e-6, "out_bwd[0]={}", out_bwd[0]);
     }
 
     #[test]

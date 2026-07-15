@@ -13,7 +13,8 @@ from pathlib import Path
 
 # 3: `h0` (initial state) and `reverse` (backward traversal) landed on separate
 #    branches, each claiming 3. Reconciled at merge -> both are in ABI 4.
-ABI_VERSION = 4
+# 5: fused bidirectional entry point (arm_scan_selective_scan_bidirectional_f32).
+ABI_VERSION = 5
 
 _LIB_NAMES = {
     "win32": ["arm_scan_ffi.dll"],
@@ -89,6 +90,18 @@ def load():
                 ctypes.c_void_p,  # last_state
                 ctypes.c_void_p,  # h0
             ]
+            lib.arm_scan_selective_scan_bidirectional_f32.restype = ctypes.c_int
+            lib.arm_scan_selective_scan_bidirectional_f32.argtypes = [
+                ctypes.POINTER(ArmScanDims),
+                *([ctypes.c_void_p] * 8),  # u delta a b c d_skip z delta_bias
+                ctypes.c_int,  # delta_softplus
+                ctypes.c_int,  # backend
+                ctypes.c_int,  # threading
+                ctypes.c_void_p,  # out_fwd
+                ctypes.c_void_p,  # out_bwd
+                ctypes.c_void_p,  # last_fwd
+                ctypes.c_void_p,  # last_bwd
+            ]
             _lib, _lib_path = lib, path
             return lib
     raise OSError(
@@ -122,6 +135,26 @@ def scan_raw(dims, ptr_u, ptr_delta, ptr_a, ptr_b, ptr_c, ptr_d_skip, ptr_z,
         int(bool(delta_softplus)), int(bool(reverse)),
         BACKENDS[backend], THREADING[threading],
         ptr_out, ptr_last or None, ptr_h0 or None,
+    )
+    if code != 0:
+        raise RuntimeError(
+            f"arm_scan kernel error {code}: "
+            f"{ERROR_NAMES.get(code, 'unknown')}"
+        )
+
+
+def scan_bidir_raw(dims, ptr_u, ptr_delta, ptr_a, ptr_b, ptr_c, ptr_d_skip,
+                   ptr_z, ptr_delta_bias, delta_softplus, backend, threading,
+                   ptr_out_fwd, ptr_out_bwd, ptr_last_fwd=0, ptr_last_bwd=0):
+    """Fused bidirectional call-through. Produces both directions from one set
+    of inputs, sharing the exp. `ptr_last_*` are optional (0 = null); pass both
+    or neither. Pointers are integer addresses; 0 means null."""
+    lib = load()
+    code = lib.arm_scan_selective_scan_bidirectional_f32(
+        ctypes.byref(dims), ptr_u, ptr_delta, ptr_a, ptr_b, ptr_c,
+        ptr_d_skip or None, ptr_z or None, ptr_delta_bias or None,
+        int(bool(delta_softplus)), BACKENDS[backend], THREADING[threading],
+        ptr_out_fwd, ptr_out_bwd, ptr_last_fwd or None, ptr_last_bwd or None,
     )
     if code != 0:
         raise RuntimeError(

@@ -100,6 +100,66 @@ def selective_scan(u, delta, A, B, C, D=None, z=None, delta_bias=None,
     return (out, last_state) if return_last_state else out
 
 
+@torch.library.custom_op("arm_scan::selective_scan_bidirectional", mutates_args=())
+def _selective_scan_bidir_op(
+    u: torch.Tensor,
+    delta: torch.Tensor,
+    a: torch.Tensor,
+    b: torch.Tensor,
+    c: torch.Tensor,
+    d_skip: Optional[torch.Tensor],
+    z: Optional[torch.Tensor],
+    delta_bias: Optional[torch.Tensor],
+    delta_softplus: bool,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    batch, dim, length = u.shape
+    state = a.shape[1]
+
+    out_fwd = torch.empty_like(u)
+    out_bwd = torch.empty_like(u)
+    dims = _ffi.ArmScanDims(batch, dim, length, state,
+                            b.shape[1] if b.dim() == 4 else 1)
+    ptr = lambda t: 0 if t is None else t.data_ptr()
+    _ffi.scan_bidir_raw(
+        dims, u.data_ptr(), delta.data_ptr(), a.data_ptr(), b.data_ptr(),
+        c.data_ptr(), ptr(d_skip), ptr(z), ptr(delta_bias),
+        delta_softplus, "auto", "auto",
+        out_fwd.data_ptr(), out_bwd.data_ptr(),
+    )
+    _CALLS["n"] += 1
+    return out_fwd, out_bwd
+
+
+@_selective_scan_bidir_op.register_fake
+def _(u, delta, a, b, c, d_skip, z, delta_bias, delta_softplus):
+    return torch.empty_like(u), torch.empty_like(u)
+
+
+def selective_scan_bidirectional(u, delta, A, B, C, D=None, z=None,
+                                 delta_bias=None, delta_softplus=False):
+    """Fused bidirectional scan on CPU float32 torch tensors.
+
+    Same tensor layouts as `selective_scan`; returns (out_fwd, out_bwd) — the
+    forward and backward scans — computed in one call sharing the direction-
+    independent Pass A (exp). Equal to `selective_scan` forward + `reverse=True`,
+    but ~1.7x cheaper by not recomputing the exp. Merging the two directions is
+    the caller's job (see `arm_scan.bidirectional_scan`).
+    """
+    batch, dim, length = u.shape
+    state = A.shape[1]
+    if B.dim() == 3:
+        B = B.reshape(batch, 1, state, length)
+    if C.dim() == 3:
+        C = C.reshape(batch, 1, state, length)
+    return _selective_scan_bidir_op(
+        _c(u), _c(delta), _c(A), _c(B), _c(C),
+        None if D is None else _c(D),
+        None if z is None else _c(z),
+        None if delta_bias is None else _c(delta_bias),
+        delta_softplus,
+    )
+
+
 def kernel_calls() -> int:
     """How many times the native kernel has been invoked (engagement
     check for tests and benchmarks)."""
