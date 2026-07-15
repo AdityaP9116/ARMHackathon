@@ -88,6 +88,119 @@ pub(crate) fn scan<T: Float>(
     );
 }
 
+/// Per-channel scratch for the fused bidirectional scan: the shared,
+/// direction-independent Pass-A products (materialized for the whole row so
+/// both directions can read them) plus one recurrence state.
+struct BidirScratch<T> {
+    abar: Vec<T>, // len * state — exp(dt*A), computed once
+    bbar: Vec<T>, // len * state — dt*u*B, computed once
+    h: Vec<T>,    // state — the recurrence state, reused per direction
+}
+
+/// Fused bidirectional scan (scalar). Computes Pass A — discretize, exp, input
+/// projection — **once** per channel, then runs the recurrence in both time
+/// directions over those shared products. Because Pass A is pointwise in time
+/// (direction-independent) and the exp is ~85% of the work, sharing it is the
+/// point: this is one exp sweep + two cheap FMA sweeps, versus two full scans.
+///
+/// Output is **bit-identical** to two standalone scans — `selective_scan` with
+/// `reverse: false` into `out_fwd`, and `reverse: true` into `out_bwd` — because
+/// the shared products hold exactly the same values the standalone paths compute
+/// inline, consumed in the same order. Enforced by
+/// `fused_bidirectional_matches_two_scans` in `tests/property.rs`.
+///
+/// No `h0`: bidirectional models are non-causal and seed both directions from
+/// zero. `input.reverse` is ignored (both directions are produced regardless).
+pub(crate) fn scan_bidirectional<T: Float>(
+    dims: &ScanDims,
+    input: &ScanInput<'_, T>,
+    out_fwd: &mut [T],
+    out_bwd: &mut [T],
+    last_fwd: Option<&mut [T]>,
+    last_bwd: Option<&mut [T]>,
+    threading: Threading,
+) {
+    let ScanDims {
+        batch: _,
+        dim,
+        len,
+        state,
+        groups,
+    } = *dims;
+    let group_size = dim / groups;
+
+    crate::parallel::for_each_channel_bidir(
+        len,
+        state,
+        out_fwd,
+        out_bwd,
+        last_fwd,
+        last_bwd,
+        threading,
+        || BidirScratch {
+            abar: vec![T::ZERO; len * state],
+            bbar: vec![T::ZERO; len * state],
+            h: vec![T::ZERO; state],
+        },
+        |scratch, ch_idx, out_fwd_row, out_bwd_row, last_f, last_b| {
+            let (bi, d) = (ch_idx / dim, ch_idx % dim);
+            let a_row = &input.a[d * state..(d + 1) * state];
+            let bias = input.delta_bias.map_or(T::ZERO, |v| v[d]);
+            let d_skip = input.d_skip.map(|v| v[d]);
+            let bc_base = (bi * groups + d / group_size) * state * len;
+            let row = ch_idx * len;
+            let u_row = &input.u[row..row + len];
+            let delta_row = &input.delta[row..row + len];
+            let z_row = input.z.map(|z| &z[row..row + len]);
+
+            // Pass A (shared): discretize + exp + input projection, ONCE.
+            // Identical values to what each standalone direction computes inline.
+            for t in 0..len {
+                let mut dt = delta_row[t] + bias;
+                if input.delta_softplus {
+                    dt = dt.softplus();
+                }
+                let dt_u = dt * u_row[t];
+                for n in 0..state {
+                    let bc_idx = bc_base + n * len + t;
+                    scratch.abar[t * state + n] = (dt * a_row[n]).exp();
+                    scratch.bbar[t * state + n] = dt_u * input.b[bc_idx];
+                }
+            }
+
+            // Pass B, both directions. `t` is the timestep consumed at step `i`;
+            // output still lands at index `t` (layout never flips) — matching
+            // scalar::scan's reverse handling exactly.
+            let BidirScratch { abar, bbar, h } = &mut *scratch;
+            for (reverse, out_row, last) in [
+                (false, out_fwd_row, last_f),
+                (true, out_bwd_row, last_b),
+            ] {
+                h.fill(T::ZERO);
+                for i in 0..len {
+                    let t = if reverse { len - 1 - i } else { i };
+                    let mut y = T::ZERO;
+                    for (n, h_n) in h.iter_mut().enumerate() {
+                        let new = abar[t * state + n] * *h_n + bbar[t * state + n];
+                        *h_n = new;
+                        y = y + input.c[bc_base + n * len + t] * new;
+                    }
+                    if let Some(ds) = d_skip {
+                        y = y + ds * u_row[t];
+                    }
+                    if let Some(z) = z_row {
+                        y = y * z[t].silu();
+                    }
+                    out_row[t] = y;
+                }
+                if let Some(ls) = last {
+                    ls.copy_from_slice(h);
+                }
+            }
+        },
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{Float, ScanDims, ScanInput};

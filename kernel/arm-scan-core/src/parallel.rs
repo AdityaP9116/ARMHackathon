@@ -83,3 +83,97 @@ pub(crate) fn for_each_channel<T, S, I, F>(
     #[cfg(not(feature = "parallel"))]
     unreachable!("parallel=true requires the `parallel` feature");
 }
+
+/// Like [`for_each_channel`], but for the fused bidirectional scan: each channel
+/// produces TWO output rows (forward and backward) and, optionally, two final
+/// states. Parallelism is still across channels — each channel computes the
+/// shared Pass A once and both directions' recurrences — so a rayon worker owns
+/// disjoint `out_fwd`/`out_bwd`/`last_*` rows and the output is schedule-
+/// independent, exactly as the single-output driver guarantees.
+///
+/// `last_fwd` and `last_bwd` must both be `Some` or both `None`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn for_each_channel_bidir<T, S, I, F>(
+    len: usize,
+    state: usize,
+    out_fwd: &mut [T],
+    out_bwd: &mut [T],
+    last_fwd: Option<&mut [T]>,
+    last_bwd: Option<&mut [T]>,
+    threading: Threading,
+    init: I,
+    f: F,
+) where
+    T: Float,
+    S: Send,
+    I: Fn() -> S + Sync + Send,
+    F: Fn(&mut S, usize, &mut [T], &mut [T], Option<&mut [T]>, Option<&mut [T]>) + Sync + Send,
+{
+    let n_channels = out_fwd.len() / len;
+    let parallel = match threading {
+        Threading::Sequential => false,
+        Threading::Rayon => cfg!(feature = "parallel"),
+        Threading::Auto => cfg!(feature = "parallel") && should_parallelize(n_channels, len, state),
+    };
+
+    // Collapse the four last-state cases to "have them" vs "don't".
+    let last = match (last_fwd, last_bwd) {
+        (Some(lf), Some(lb)) => Some((lf, lb)),
+        (None, None) => None,
+        _ => unreachable!("fused bidir: last_fwd and last_bwd must both be Some or both None"),
+    };
+
+    if !parallel {
+        let mut scratch = init();
+        match last {
+            Some((lf, lb)) => {
+                for (i, (((of, ob), lf), lb)) in out_fwd
+                    .chunks_exact_mut(len)
+                    .zip(out_bwd.chunks_exact_mut(len))
+                    .zip(lf.chunks_exact_mut(state))
+                    .zip(lb.chunks_exact_mut(state))
+                    .enumerate()
+                {
+                    f(&mut scratch, i, of, ob, Some(lf), Some(lb));
+                }
+            }
+            None => {
+                for (i, (of, ob)) in out_fwd
+                    .chunks_exact_mut(len)
+                    .zip(out_bwd.chunks_exact_mut(len))
+                    .enumerate()
+                {
+                    f(&mut scratch, i, of, ob, None, None);
+                }
+            }
+        }
+        return;
+    }
+
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        match last {
+            Some((lf, lb)) => {
+                out_fwd
+                    .par_chunks_exact_mut(len)
+                    .zip_eq(out_bwd.par_chunks_exact_mut(len))
+                    .zip_eq(lf.par_chunks_exact_mut(state))
+                    .zip_eq(lb.par_chunks_exact_mut(state))
+                    .enumerate()
+                    .for_each_init(&init, |s, (i, (((of, ob), lf), lb))| {
+                        f(s, i, of, ob, Some(lf), Some(lb))
+                    });
+            }
+            None => {
+                out_fwd
+                    .par_chunks_exact_mut(len)
+                    .zip_eq(out_bwd.par_chunks_exact_mut(len))
+                    .enumerate()
+                    .for_each_init(&init, |s, (i, (of, ob))| f(s, i, of, ob, None, None));
+            }
+        }
+    }
+    #[cfg(not(feature = "parallel"))]
+    unreachable!("parallel=true requires the `parallel` feature");
+}

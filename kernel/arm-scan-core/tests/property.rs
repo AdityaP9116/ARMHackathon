@@ -6,8 +6,9 @@
 use proptest::prelude::*;
 
 use arm_scan_core::{
-    selective_scan, selective_scan_with_backend, selective_scan_with_options,
-    selective_scan_with_state, Backend, ScanDims, ScanInput, ScanOptions, Threading,
+    selective_scan, selective_scan_bidirectional, selective_scan_with_backend,
+    selective_scan_with_options, selective_scan_with_state, Backend, ScanDims, ScanInput,
+    ScanOptions, Threading,
 };
 
 #[derive(Debug, Clone)]
@@ -222,6 +223,64 @@ proptest! {
                     );
                 }
             }
+        }
+    }
+
+    /// The fused bidirectional scan must be **bit-identical** to running the
+    /// scan twice — once forward, once reversed. That is the definition it
+    /// shares Pass A under: the shared exp/discretize/projection products hold
+    /// exactly the values each standalone direction computes inline, consumed in
+    /// the same order, so the result is not merely close but bit-for-bit equal.
+    ///
+    /// Checked on the SAME backend on both sides (scalar-fused vs scalar-twice),
+    /// so any difference is a bug in the fusion, not a SIMD-vs-libm gap. Stage 1
+    /// is scalar; when the NEON fused path lands this extends to Backend::Auto.
+    #[test]
+    fn fused_bidirectional_matches_two_scans(case in case_strategy()) {
+        let n_out = case.dims.batch * case.dims.dim * case.dims.len;
+        let n_last = case.dims.batch * case.dims.dim * case.dims.state;
+        let mk = |reverse| ScanInput {
+            u: &case.u, delta: &case.delta, a: &case.a, b: &case.b, c: &case.c,
+            d_skip: case.d_skip.as_deref(),
+            z: case.z.as_deref(),
+            delta_bias: case.delta_bias.as_deref(),
+            delta_softplus: case.delta_softplus,
+            reverse,
+        };
+        let backend = Backend::Scalar;
+
+        // reference: two standalone scans
+        let mut ref_fwd = vec![0.0_f32; n_out];
+        let mut ref_fwd_last = vec![0.0_f32; n_last];
+        selective_scan_with_backend(
+            &case.dims, &mk(false), &mut ref_fwd, Some(&mut ref_fwd_last), backend,
+        ).unwrap();
+        let mut ref_bwd = vec![0.0_f32; n_out];
+        let mut ref_bwd_last = vec![0.0_f32; n_last];
+        selective_scan_with_backend(
+            &case.dims, &mk(true), &mut ref_bwd, Some(&mut ref_bwd_last), backend,
+        ).unwrap();
+
+        // fused: both directions in one call, sharing Pass A. Checked under
+        // BOTH threadings so the new two-output parallel driver is exercised
+        // (small proptest shapes would otherwise keep Auto sequential) and
+        // proven schedule-independent, exactly like the single-output path.
+        let bits_eq = |a: &[f32], b: &[f32]| a.iter().zip(b).all(|(x, y)| x.to_bits() == y.to_bits());
+        for threading in [Threading::Sequential, Threading::Rayon] {
+            let mut f_fwd = vec![0.0_f32; n_out];
+            let mut f_bwd = vec![0.0_f32; n_out];
+            let mut f_fwd_last = vec![0.0_f32; n_last];
+            let mut f_bwd_last = vec![0.0_f32; n_last];
+            selective_scan_bidirectional(
+                &case.dims, &mk(false), &mut f_fwd, &mut f_bwd,
+                Some(&mut f_fwd_last), Some(&mut f_bwd_last),
+                ScanOptions { backend, threading },
+            ).unwrap();
+
+            prop_assert!(bits_eq(&f_fwd, &ref_fwd), "fwd output differs ({threading:?}) dims={:?}", case.dims);
+            prop_assert!(bits_eq(&f_bwd, &ref_bwd), "bwd output differs ({threading:?}) dims={:?}", case.dims);
+            prop_assert!(bits_eq(&f_fwd_last, &ref_fwd_last), "fwd last_state differs ({threading:?}) dims={:?}", case.dims);
+            prop_assert!(bits_eq(&f_bwd_last, &ref_bwd_last), "bwd last_state differs ({threading:?}) dims={:?}", case.dims);
         }
     }
 

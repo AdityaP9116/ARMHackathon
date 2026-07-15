@@ -16,18 +16,19 @@ benchmarked, and no fusion work starts, until the correctness path is green.
 *fast* (fused in Rust, via a kernel `reverse` flag). The correct stage lands
 first so the fusion is justified by a measurement instead of an assumption.
 
-> ## ✅ Bottom line (all CI green; full L sweep, `3c7a7c3`)
+> ## ✅ Bottom line (all CI green; canonical sweep `883943f`, reps=10)
 >
-> **A bidirectional selective scan on Arm runs 5.2–5.6× faster than
-> `torch.compile` (L ≥ 512) and 16–27× faster than PyTorch eager**, holding
+> **A bidirectional selective scan on Arm runs 5.3–5.6× faster than
+> `torch.compile` (L ≥ 1024) and 16–28× faster than PyTorch eager**, holding
 > 4.3e-6 – 8.6e-6 max abs error vs the f64 reference (gate: 1e-4) all the way out
 > to **L = 8192**.
 >
 > **And `torch.compile` cannot follow us to the lengths the applications need.**
-> Compile time is **linear in L** — it converges to ~0.26 s *per timestep* — because
-> the recurrence is unrolled into an L-step graph. L=8192 would take ~36 minutes to
-> compile; the 131k-token genomics context would take **~9.5 hours**, if it did not
-> OOM first. That is not a slow baseline; it is an absent one.
+> Compile time is linear-through-2048 then **super-linear** (~0.26 s/timestep,
+> rising to 0.31 at L=4096) because the recurrence is unrolled into an L-step graph.
+> L=4096 already takes **21 minutes** to compile; at **L=8192 inductor OOM-kills the
+> runner outright** (Step 6). The 131k-token genomics context is unreachable — not
+> a slow baseline, an absent one.
 >
 > The `reverse` kernel flag exists as the **substrate for the 2D cross-scan**, not
 > as a bidirectional speedup — its own contribution is 1–7% with no stable pattern.
@@ -559,22 +560,29 @@ Host: GitHub `ubuntu-24.04-arm` runner — 4-core aarch64, torch 2.13.0, `--quic
 a dedicated Arm host. Two independent runs are reported, because the agreement
 between them is what makes the numbers credible.
 
-### The result (run `3c7a7c3` — full L sweep, 128 → 8192)
+### The result (canonical run `883943f` — sweep 128 → 8192, **reps=10, warmup=3**)
+
+Dispatched on `bench-baseline` (long-L job), the higher-quality settings than the
+per-push `--quick` runs. This is the run to cite.
 
 | L | eager | torch.compile | **kernel** | vs eager | **vs torch.compile** |
 |---|---|---|---|---|---|
-| 128 | 27.84 ms | 6.66 ms | **1.70 ms** | 16.4× | **3.92×** |
-| 512 | 136.06 ms | 30.86 ms | **5.74 ms** | 23.7× | **5.38×** |
-| 1024 | 262.57 ms | 56.70 ms | **10.95 ms** | 24.0× | **5.18×** |
-| 2048 | 540.64 ms | 118.25 ms | **21.03 ms** | 25.7× | **5.62×** |
-| 4096 | 1130.13 ms | *(compile capped)* | **41.87 ms** | 27.0× | — |
-| 8192 | 2303.90 ms | *(compile capped)* | **87.67 ms** | 26.3× | — |
+| 128 | 27.25 ms | 6.35 ms | **1.68 ms** | 16.2× | **3.78×** |
+| 512 | 131.16 ms | 26.03 ms | **5.50 ms** | 23.8× | **4.73×** |
+| 1024 | 264.30 ms | 57.41 ms | **10.75 ms** | 24.6× | **5.34×** |
+| 2048 | 575.51 ms | 119.89 ms | **21.41 ms** | 26.9× | **5.60×** |
+| 4096 | 1138.52 ms | 234.27 ms | **42.51 ms** | 26.8× | **5.51×** |
+| 8192 | 2441.15 ms | *(compile capped at 4096)* | **87.54 ms** | 27.9× | — |
 
 B=1, D=768, N=16. Correctness in the same run: kernel-vs-f64 max abs **4.3e-6 →
 8.6e-6**, against the 1e-4 gate — and, importantly, **it does not drift with L**.
 Accumulating 8192 sequential steps through a chunked scan with a degree-3 exp
 could plausibly have degraded; it did not. All 13 cases of
 `check_bidirectional.py` green.
+
+Earlier `--quick` runs (`3c7a7c3`, reps=5) gave 3.92× / 5.38× / 5.18× / 5.62×
+at L=128/512/1024/2048 — consistent with this one to within shared-runner noise.
+The canonical numbers above are from reps=10.
 
 ### The ratio improves, then PLATEAUS — it does not keep growing
 
@@ -605,19 +613,35 @@ that 59 s → 134 s (L 128 → 512) is only 2.3× for 4× the length, i.e. sub-l
 | 1024 | 251.0 s | 0.245 |
 | 2048 | 533.5 s | **0.260** |
 
-The per-timestep cost **converges to ~0.26 s**. Compile time is **linear in L** —
-doubling the sequence doubles the compilation. The apparent sub-linearity at
-128→512 was just the fixed compiler startup cost washing out.
+The per-timestep cost holds near ~0.26 s from L=512 through 2048 — then **bends
+upward**. The canonical run added the L=4096 point:
 
-Extrapolating that constant:
+| L | compile | s/timestep |
+|---|---|---|
+| 128 | 66.1 s | 0.517 |
+| 512 | 135.4 s | 0.264 |
+| 1024 | 251.6 s | 0.246 |
+| 2048 | 544.0 s | 0.266 |
+| **4096** | **1254.1 s** | **0.306** |
 
-| L | projected compile time |
+So compile time is **linear-ish through 2048, then super-linear** — L=4096 came in
+~18% *above* the linear extrapolation (1254 s vs ~1067 s). The graph is large
+enough by 4096 that compilation itself is scaling worse than O(L). That makes the
+projections *conservative*, not optimistic:
+
+| L | projected compile (≥ linear) |
 |---|---|
-| 8192 | **~36 minutes** |
-| 131,072 (genomics context) | **~9.5 hours** |
+| 8192 | **≥ 36 min** (measured to OOM instead — see Step 6) |
+| 131,072 (genomics context) | **≥ 9.5 hours, and rising super-linearly** |
 
-…assuming it does not OOM first, which a 131k-step unrolled graph almost
-certainly would.
+…if it does not OOM first, which at 8192 it already does (Step 6).
+
+**Amortization is non-monotonic, and that is the super-linearity showing through.**
+Iterations-to-break-even vs our kernel: 14,160 (128) → 6,595 (512) → 5,393 (1024)
+→ 5,524 (2048) → **6,540 (4096)**. It bottoms out near L=1024–2048 and *rises*
+again at 4096, because compile is now growing faster than linear while our
+runtime stays linear. There is no sequence length at which `torch.compile`
+becomes cheap; past ~2048 the trade only worsens.
 
 **This is the moat, stated precisely.** At the sequence lengths our headline
 applications actually use, `torch.compile` is not a slow baseline — it is an
@@ -709,7 +733,7 @@ is withdrawn.
 on a shared 4-core runner, and pinning it down is not worth another CI cycle.** It
 was never the justification: `reverse` exists because **SS2D needs a backward
 traversal** (plan §3.2's row-backward and column-backward directions). The number
-to quote is 3.63–4.67× vs `torch.compile`. Nothing else.
+to quote is 5.3–5.6× vs `torch.compile` (L ≥ 1024). Nothing else.
 
 **Two lessons worth keeping:**
 1. A proxy is only trustworthy until the real thing exists. If the real thing
@@ -797,3 +821,66 @@ runner's memory) so the job completes and uploads. The L=8192 OOM is already
 established qualitatively by this run; it does not need re-running to be cited —
 though a dedicated host with more RAM would let us find the *exact* L at which
 the graph stops fitting, which is a sharper number than "≥ 8192 on 16 GB."
+
+---
+
+## Step 7 — fused two-direction kernel: share the exp (Stage 1, scalar)
+
+**Status:** scalar path + bit-identity gate written, awaiting CI. NEON is Stage 2.
+
+Motivated by the roofline in
+[`BIDIRECTIONAL_SPEEDUP_IDEAS.md`](./BIDIRECTIONAL_SPEEDUP_IDEAS.md) §5: we are
+**compute-bound on the exp** (85% of runtime), not bandwidth-bound. And Pass A
+(discretize + exp + input projection) is **pointwise in time — direction-
+independent** — yet `bidirectional_scan` computes it *twice* by calling the
+kernel twice. Sharing it is the win: **one exp sweep + two cheap FMA sweeps**
+instead of two full scans, projecting to **~1.7×** on bidirectional (and the
+same structure amortizes exp across SS2D's four directions — this is the SS2D
+substrate, exactly as `reverse` was).
+
+### What landed (Stage 1)
+
+A new core entry point `selective_scan_bidirectional` that produces `out_fwd` and
+`out_bwd` from one input, computing Pass A once per channel:
+
+| Layer | Change |
+|---|---|
+| `src/parallel.rs` | `for_each_channel_bidir` — two-output rayon driver; parallel across channels, each channel does the shared Pass A + both recurrences |
+| `src/scalar.rs` | `scan_bidirectional` + `BidirScratch` (materializes `abar`/`bbar` for the whole row so both directions read them) |
+| `src/lib.rs` | `selective_scan_bidirectional` public API + dispatch (scalar now; NEON = Stage 2) |
+| `tests/property.rs` | `fused_bidirectional_matches_two_scans` — the gate |
+
+### The correctness argument, and why the gate is bit-exact
+
+Fused output **= two standalone scans**: `out_fwd` bit-identical to
+`selective_scan(reverse=false)`, `out_bwd` to `selective_scan(reverse=true)`.
+This holds bit-for-bit (not merely within tolerance) because the shared products
+carry exactly the values each standalone direction computes inline: `abar =
+exp(dt·A)` is a pure function of pointwise inputs, `bbar = dt·u·B` likewise, and
+the recurrence `abar·h + bbar` and dot `C·h` are consumed in the same order.
+Scalar generates no FMA contraction by default, so `mul(exp,h) + mul(dtu,b)` is
+identical whether the second product is computed inline or read from `bbar`.
+
+The gate checks scalar-fused vs scalar-twice **on the same backend**, so any
+difference is a fusion bug, not a SIMD-vs-libm gap — and under **both** threadings
+(Sequential and Rayon), since small proptest shapes would otherwise leave the new
+two-output parallel driver untested.
+
+### Staged deliberately (scalar before NEON)
+
+Same discipline as the original kernel (Phase 1 scalar, Phase 2 NEON) and forced
+by the no-local-Rust constraint: prove the *structure* — the API, the parallel
+driver, the bit-identity — on the low-risk scalar path first. The **speed** win
+lands in Stage 2 (NEON: materialize `abar`/`bbar` full-row via the existing Pass
+A2 exp, run Pass B forward then reversed over the shared scratch), and the
+**measurement** in Stage 3 (FFI entry point → `bidirectional_scan` uses it →
+`bench_bidirectional.py`). Stage 1 changes no numerics and touches no FFI, so the
+existing bidirectional path is unaffected until Stage 3 rewires it.
+
+### Known tradeoff to watch
+
+Sharing Pass A across directions requires `abar`/`bbar` materialized for the
+whole row (`L × state` each) rather than the current chunk-local scratch
+(`CHUNK × state`). At long L this spills L1 → L2 (same order as the existing
+`bt`/`ct` planes, so not a new category of cost), but the NEON Stage 2 must
+confirm the exp saving beats the extra L2 round-trip — measure, do not assume.

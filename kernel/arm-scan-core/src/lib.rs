@@ -340,6 +340,73 @@ pub fn selective_scan_with_state<T: Float>(
     }
 }
 
+/// Fused bidirectional scan: produce both the forward and backward outputs from
+/// one set of inputs, computing the shared, direction-independent Pass A
+/// (discretize + exp + input projection — ~85% of the work) **once** instead of
+/// twice. `out_fwd`/`out_bwd` are `(batch, dim, len)`; `last_fwd`/`last_bwd` are
+/// `(batch, dim, state)` and must both be `Some` or both `None`.
+///
+/// Semantically equal to calling [`selective_scan`] twice (once forward, once
+/// with `reverse: true`) and is checked bit-for-bit against exactly that. The
+/// backward output's `last_state` is the state after consuming `t == 0` (the
+/// start of the sequence). No `h0`: both directions seed from zero.
+/// `input.reverse` is ignored.
+///
+/// See `BIDIRECTIONAL_SPEEDUP_IDEAS.md §3.2` for why sharing Pass A is the win,
+/// and `TOPOLOGY_IMPLEMENTATION_PLAN.md §3.2` — this is the 1D form of the SS2D
+/// "read once, emit multiple directions" structure.
+pub fn selective_scan_bidirectional<T: Float>(
+    dims: &ScanDims,
+    input: &ScanInput<'_, T>,
+    out_fwd: &mut [T],
+    out_bwd: &mut [T],
+    last_fwd: Option<&mut [T]>,
+    last_bwd: Option<&mut [T]>,
+    opts: ScanOptions,
+) -> Result<(), ScanError> {
+    validate(dims, input, out_fwd, last_fwd.as_deref())?;
+    let bdl = dims.batch * dims.dim * dims.len;
+    if out_bwd.len() != bdl {
+        return Err(ScanError::BadLen {
+            tensor: "out_bwd",
+            expected: bdl,
+            got: out_bwd.len(),
+        });
+    }
+    let bdn = dims.batch * dims.dim * dims.state;
+    if let Some(lb) = last_bwd.as_deref() {
+        if lb.len() != bdn {
+            return Err(ScanError::BadLen {
+                tensor: "last_bwd",
+                expected: bdn,
+                got: lb.len(),
+            });
+        }
+    }
+    if last_fwd.is_some() != last_bwd.is_some() {
+        // The kernel requires both or neither; report it as a shape error
+        // rather than panicking in the parallel driver.
+        return Err(ScanError::BadLen {
+            tensor: "last_bwd",
+            expected: if last_fwd.is_some() { bdn } else { 0 },
+            got: if last_bwd.is_some() { bdn } else { 0 },
+        });
+    }
+
+    match opts.backend {
+        // Stage 1: scalar only. The NEON fused fast path (where the exp-sharing
+        // speedup actually lands) is the immediate follow-on; until then Auto
+        // uses the correct scalar path and Neon reports unavailable.
+        Backend::Scalar | Backend::Auto => {
+            scalar::scan_bidirectional(
+                dims, input, out_fwd, out_bwd, last_fwd, last_bwd, opts.threading,
+            );
+            Ok(())
+        }
+        Backend::Neon => Err(ScanError::BackendUnavailable(Backend::Neon)),
+    }
+}
+
 /// Route to the NEON implementation when `T` is f32. The `TypeId` check
 /// proves `T == f32`, making the slice reinterpretations sound.
 #[cfg(target_arch = "aarch64")]
