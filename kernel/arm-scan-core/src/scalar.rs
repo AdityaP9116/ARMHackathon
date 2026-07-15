@@ -172,10 +172,9 @@ pub(crate) fn scan_bidirectional<T: Float>(
             // output still lands at index `t` (layout never flips) — matching
             // scalar::scan's reverse handling exactly.
             let BidirScratch { abar, bbar, h } = &mut *scratch;
-            for (reverse, out_row, last) in [
-                (false, out_fwd_row, last_f),
-                (true, out_bwd_row, last_b),
-            ] {
+            for (reverse, out_row, last) in
+                [(false, out_fwd_row, last_f), (true, out_bwd_row, last_b)]
+            {
                 h.fill(T::ZERO);
                 for i in 0..len {
                     let t = if reverse { len - 1 - i } else { i };

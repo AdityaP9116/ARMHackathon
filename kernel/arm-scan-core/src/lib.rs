@@ -399,7 +399,13 @@ pub fn selective_scan_bidirectional<T: Float>(
         // uses the correct scalar path and Neon reports unavailable.
         Backend::Scalar | Backend::Auto => {
             scalar::scan_bidirectional(
-                dims, input, out_fwd, out_bwd, last_fwd, last_bwd, opts.threading,
+                dims,
+                input,
+                out_fwd,
+                out_bwd,
+                last_fwd,
+                last_bwd,
+                opts.threading,
             );
             Ok(())
         }
