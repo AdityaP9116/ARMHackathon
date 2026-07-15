@@ -360,8 +360,8 @@ pub fn selective_scan_bidirectional<T: Float>(
     input: &ScanInput<'_, T>,
     out_fwd: &mut [T],
     out_bwd: &mut [T],
-    last_fwd: Option<&mut [T]>,
-    last_bwd: Option<&mut [T]>,
+    #[cfg_attr(not(target_arch = "aarch64"), allow(unused_mut))] mut last_fwd: Option<&mut [T]>,
+    #[cfg_attr(not(target_arch = "aarch64"), allow(unused_mut))] mut last_bwd: Option<&mut [T]>,
     opts: ScanOptions,
 ) -> Result<(), ScanError> {
     validate(dims, input, out_fwd, last_fwd.as_deref())?;
@@ -394,10 +394,7 @@ pub fn selective_scan_bidirectional<T: Float>(
     }
 
     match opts.backend {
-        // Stage 1: scalar only. The NEON fused fast path (where the exp-sharing
-        // speedup actually lands) is the immediate follow-on; until then Auto
-        // uses the correct scalar path and Neon reports unavailable.
-        Backend::Scalar | Backend::Auto => {
+        Backend::Scalar => {
             scalar::scan_bidirectional(
                 dims,
                 input,
@@ -409,8 +406,96 @@ pub fn selective_scan_bidirectional<T: Float>(
             );
             Ok(())
         }
-        Backend::Neon => Err(ScanError::BackendUnavailable(Backend::Neon)),
+        Backend::Auto => {
+            #[cfg(target_arch = "aarch64")]
+            if try_neon_bidir(
+                dims,
+                input,
+                out_fwd,
+                out_bwd,
+                &mut last_fwd,
+                &mut last_bwd,
+                opts.threading,
+            ) {
+                return Ok(());
+            }
+            scalar::scan_bidirectional(
+                dims,
+                input,
+                out_fwd,
+                out_bwd,
+                last_fwd,
+                last_bwd,
+                opts.threading,
+            );
+            Ok(())
+        }
+        Backend::Neon => {
+            #[cfg(target_arch = "aarch64")]
+            if try_neon_bidir(
+                dims,
+                input,
+                out_fwd,
+                out_bwd,
+                &mut last_fwd,
+                &mut last_bwd,
+                opts.threading,
+            ) {
+                return Ok(());
+            }
+            Err(ScanError::BackendUnavailable(Backend::Neon))
+        }
     }
+}
+
+/// NEON dispatch for the fused bidirectional scan — the `T == f32` analog of
+/// [`try_neon`], returning `false` for other element types so the caller falls
+/// back to scalar.
+#[cfg(target_arch = "aarch64")]
+#[allow(clippy::too_many_arguments)]
+fn try_neon_bidir<T: Float>(
+    dims: &ScanDims,
+    input: &ScanInput<'_, T>,
+    out_fwd: &mut [T],
+    out_bwd: &mut [T],
+    last_fwd: &mut Option<&mut [T]>,
+    last_bwd: &mut Option<&mut [T]>,
+    threading: Threading,
+) -> bool {
+    use core::any::TypeId;
+    if TypeId::of::<T>() != TypeId::of::<f32>() {
+        return false;
+    }
+    fn cast<T: 'static>(s: &[T]) -> &[f32] {
+        // SAFETY: caller verified T == f32; same pointer, same length.
+        unsafe { core::slice::from_raw_parts(s.as_ptr().cast::<f32>(), s.len()) }
+    }
+    fn cast_mut<T: 'static>(s: &mut [T]) -> &mut [f32] {
+        // SAFETY: as above.
+        unsafe { core::slice::from_raw_parts_mut(s.as_mut_ptr().cast::<f32>(), s.len()) }
+    }
+    let input_f32 = ScanInput {
+        u: cast(input.u),
+        delta: cast(input.delta),
+        a: cast(input.a),
+        b: cast(input.b),
+        c: cast(input.c),
+        d_skip: input.d_skip.map(cast),
+        z: input.z.map(cast),
+        delta_bias: input.delta_bias.map(cast),
+        delta_softplus: input.delta_softplus,
+        reverse: input.reverse,
+    };
+    neon::scan_bidirectional(
+        dims,
+        &input_f32,
+        cast_mut(out_fwd),
+        cast_mut(out_bwd),
+        last_fwd.as_deref_mut().map(cast_mut),
+        last_bwd.as_deref_mut().map(cast_mut),
+        threading,
+    );
+    true
 }
 
 /// Route to the NEON implementation when `T` is f32. The `TypeId` check

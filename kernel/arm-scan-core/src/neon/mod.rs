@@ -174,9 +174,17 @@ fn chunks_in_scan_order(len: usize, reverse: bool) -> impl Iterator<Item = (usiz
 }
 
 /// Pass A1: dt = softplus(delta + bias), dtu = dt*u for `tlen` timesteps
-/// starting at `start`, vectorized across time with a scalar tail.
+/// starting at `start`, vectorized across time with a scalar tail. Writes into
+/// caller-provided `dt_buf`/`dtu_buf` (both at least `tlen` long) so the single
+/// and fused-bidirectional paths can share it with different scratch layouts.
 #[target_feature(enable = "neon")]
-unsafe fn discretize_chunk(ch: &Channel<'_>, start: usize, tlen: usize, scratch: &mut Scratch) {
+unsafe fn discretize_chunk(
+    ch: &Channel<'_>,
+    start: usize,
+    tlen: usize,
+    dt_buf: &mut [f32],
+    dtu_buf: &mut [f32],
+) {
     let delta = ch.delta[start..start + tlen].as_ptr();
     let u = ch.u[start..start + tlen].as_ptr();
     let vbias = vdupq_n_f32(ch.bias);
@@ -187,11 +195,8 @@ unsafe fn discretize_chunk(ch: &Channel<'_>, start: usize, tlen: usize, scratch:
         if ch.softplus {
             v = math::vsoftplusq_f32(v);
         }
-        vst1q_f32(scratch.dt.as_mut_ptr().add(t), v);
-        vst1q_f32(
-            scratch.dtu.as_mut_ptr().add(t),
-            vmulq_f32(v, vld1q_f32(u.add(t))),
-        );
+        vst1q_f32(dt_buf.as_mut_ptr().add(t), v);
+        vst1q_f32(dtu_buf.as_mut_ptr().add(t), vmulq_f32(v, vld1q_f32(u.add(t))));
         t += 4;
     }
     while t < tlen {
@@ -199,8 +204,8 @@ unsafe fn discretize_chunk(ch: &Channel<'_>, start: usize, tlen: usize, scratch:
         if ch.softplus {
             dt = dt.softplus();
         }
-        scratch.dt[t] = dt;
-        scratch.dtu[t] = dt * *u.add(t);
+        dt_buf[t] = dt;
+        dtu_buf[t] = dt * *u.add(t);
         t += 1;
     }
 }
@@ -283,7 +288,7 @@ unsafe fn channel_n16(
     for (start, tlen) in chunks_in_scan_order(len, ch.reverse) {
         // Pass A1: discretization across time. Pointwise in t, so it is
         // direction-agnostic — no `reverse` handling needed here or in A2.
-        discretize_chunk(ch, start, tlen, scratch);
+        discretize_chunk(ch, start, tlen, &mut scratch.dt, &mut scratch.dtu);
 
         // Pass A2: batch all exps + input projections for the chunk
         let abar = scratch.abar.as_mut_ptr();
@@ -374,7 +379,7 @@ unsafe fn channel_general(
     let len = out_row.len();
     for (start, tlen) in chunks_in_scan_order(len, ch.reverse) {
         // Pointwise, direction-agnostic (see `chunks_in_scan_order`).
-        discretize_chunk(ch, start, tlen, scratch);
+        discretize_chunk(ch, start, tlen, &mut scratch.dt, &mut scratch.dtu);
 
         // This path keeps exp inline in the recurrence, so this single loop is
         // the time walk — `step` counts scan steps, `t` is the timestep it
@@ -402,5 +407,302 @@ unsafe fn channel_general(
 
     if let Some(ls) = last_state {
         ls.copy_from_slice(&scratch.h_buf[..ls.len()]);
+    }
+}
+
+// ==========================================================================
+// Fused bidirectional scan (NEON). Shares Pass A — discretize + exp + input
+// projection, ~85% of the work and direction-independent — between the two scan
+// directions instead of computing it twice. See BIDIRECTIONAL_SPEEDUP_IDEAS.md
+// §3.2. Bit-identical to two standalone scans (fwd + reverse); enforced by
+// `fused_bidirectional_matches_two_scans` in tests/property.rs.
+//
+// The one structural cost: `abar`/`bbar` are materialized for the WHOLE row
+// (`len * n4`) rather than chunk-local, so both directions can read them. At long
+// L this streams from L2 rather than L1 — the exp saving must beat that round
+// trip (a Stage-3 measurement, not an assumption).
+// ==========================================================================
+
+/// Per-worker scratch for the fused path — like [`Scratch`] but `abar`/`bbar`
+/// span the full row.
+struct BidirScratch {
+    dt: Vec<f32>,    // CHUNK
+    dtu: Vec<f32>,   // CHUNK
+    abar: Vec<f32>,  // len * n4 — FULL ROW
+    bbar: Vec<f32>,  // len * n4
+    a_pad: Vec<f32>, // n4, zero-padded A row (general path)
+    h_buf: Vec<f32>, // n4 (general path)
+}
+
+impl BidirScratch {
+    fn new(len: usize, n4: usize) -> Self {
+        BidirScratch {
+            dt: vec![0.0; CHUNK],
+            dtu: vec![0.0; CHUNK],
+            abar: vec![0.0; len * n4],
+            bbar: vec![0.0; len * n4],
+            a_pad: vec![0.0; n4],
+            h_buf: vec![0.0; n4],
+        }
+    }
+}
+
+/// Fused bidirectional entry point. B/C are transposed once (shared across
+/// channels *and* directions), then each channel computes Pass A once and both
+/// recurrences.
+pub(crate) fn scan_bidirectional(
+    dims: &ScanDims,
+    input: &ScanInput<'_, f32>,
+    out_fwd: &mut [f32],
+    out_bwd: &mut [f32],
+    last_fwd: Option<&mut [f32]>,
+    last_bwd: Option<&mut [f32]>,
+    threading: Threading,
+) {
+    let ScanDims {
+        batch,
+        dim,
+        len,
+        state,
+        groups,
+    } = *dims;
+    let group_size = dim / groups;
+    let n4 = state.div_ceil(4) * 4;
+
+    let planes = batch * groups;
+    let mut bt = vec![0.0_f32; planes * len * n4];
+    let mut ct = vec![0.0_f32; planes * len * n4];
+    for p in 0..planes {
+        let src_base = p * state * len;
+        let dst_base = p * len * n4;
+        for n in 0..state {
+            let src_b = &input.b[src_base + n * len..src_base + (n + 1) * len];
+            let src_c = &input.c[src_base + n * len..src_base + (n + 1) * len];
+            for t in 0..len {
+                bt[dst_base + t * n4 + n] = src_b[t];
+                ct[dst_base + t * n4 + n] = src_c[t];
+            }
+        }
+    }
+    let (bt, ct) = (&bt[..], &ct[..]);
+
+    crate::parallel::for_each_channel_bidir(
+        len,
+        state,
+        out_fwd,
+        out_bwd,
+        last_fwd,
+        last_bwd,
+        threading,
+        || BidirScratch::new(len, n4),
+        |scratch, ch_idx, out_fwd_row, out_bwd_row, last_f, last_b| {
+            let (bi, d) = (ch_idx / dim, ch_idx % dim);
+            let plane = (bi * groups + d / group_size) * len * n4;
+            let row = ch_idx * len;
+            let ch = Channel {
+                u: &input.u[row..row + len],
+                delta: &input.delta[row..row + len],
+                z: input.z.map(|z| &z[row..row + len]),
+                bias: input.delta_bias.map_or(0.0, |v| v[d]),
+                d_skip: input.d_skip.map(|v| v[d]),
+                softplus: input.delta_softplus,
+                reverse: false, // fused produces both directions; field unused
+            };
+            let a_row = &input.a[d * state..(d + 1) * state];
+            let bt_plane = &bt[plane..plane + len * n4];
+            let ct_plane = &ct[plane..plane + len * n4];
+
+            // SAFETY: NEON is always available on aarch64.
+            unsafe {
+                if state == 16 {
+                    channel_n16_bidir(
+                        a_row, bt_plane, ct_plane, &ch, out_fwd_row, out_bwd_row, last_f, last_b,
+                        scratch,
+                    );
+                } else {
+                    scratch.a_pad[..state].copy_from_slice(a_row);
+                    channel_general_bidir(
+                        bt_plane, ct_plane, &ch, out_fwd_row, out_bwd_row, last_f, last_b, scratch,
+                    );
+                }
+                epilogue_row(&ch, out_fwd_row);
+                epilogue_row(&ch, out_bwd_row);
+            }
+        },
+    );
+}
+
+/// Pass B (N=16) over a full-row `abar`/`bbar` in one direction. `reverse`
+/// flips only the timestep index; layout is untouched, exactly as `channel_n16`.
+#[target_feature(enable = "neon")]
+unsafe fn pass_b_n16(
+    abar: *const f32,
+    bbar: *const f32,
+    ct: &[f32],
+    len: usize,
+    reverse: bool,
+    out_row: &mut [f32],
+    last: Option<&mut [f32]>,
+) {
+    let mut h0 = vdupq_n_f32(0.0);
+    let mut h1 = vdupq_n_f32(0.0);
+    let mut h2 = vdupq_n_f32(0.0);
+    let mut h3 = vdupq_n_f32(0.0);
+    for i in 0..len {
+        let t = if reverse { len - 1 - i } else { i };
+        let o = t * 16;
+        let c = ct.as_ptr().add(o);
+        h0 = vfmaq_f32(vld1q_f32(bbar.add(o)), vld1q_f32(abar.add(o)), h0);
+        h1 = vfmaq_f32(vld1q_f32(bbar.add(o + 4)), vld1q_f32(abar.add(o + 4)), h1);
+        h2 = vfmaq_f32(vld1q_f32(bbar.add(o + 8)), vld1q_f32(abar.add(o + 8)), h2);
+        h3 = vfmaq_f32(vld1q_f32(bbar.add(o + 12)), vld1q_f32(abar.add(o + 12)), h3);
+
+        let mut acc = vmulq_f32(vld1q_f32(c), h0);
+        acc = vfmaq_f32(acc, vld1q_f32(c.add(4)), h1);
+        acc = vfmaq_f32(acc, vld1q_f32(c.add(8)), h2);
+        acc = vfmaq_f32(acc, vld1q_f32(c.add(12)), h3);
+        *out_row.get_unchecked_mut(t) = vaddvq_f32(acc);
+    }
+    if let Some(ls) = last {
+        let p = ls.as_mut_ptr();
+        vst1q_f32(p, h0);
+        vst1q_f32(p.add(4), h1);
+        vst1q_f32(p.add(8), h2);
+        vst1q_f32(p.add(12), h3);
+    }
+}
+
+/// N=16 fused fast path: Pass A once into full-row `abar`/`bbar`, then Pass B
+/// forward and backward over them.
+#[target_feature(enable = "neon")]
+#[allow(clippy::too_many_arguments)]
+unsafe fn channel_n16_bidir(
+    a_row: &[f32],
+    bt: &[f32],
+    ct: &[f32],
+    ch: &Channel<'_>,
+    out_fwd: &mut [f32],
+    out_bwd: &mut [f32],
+    last_fwd: Option<&mut [f32]>,
+    last_bwd: Option<&mut [f32]>,
+    scratch: &mut BidirScratch,
+) {
+    let a = a_row.as_ptr();
+    let a0 = vld1q_f32(a);
+    let a1 = vld1q_f32(a.add(4));
+    let a2 = vld1q_f32(a.add(8));
+    let a3 = vld1q_f32(a.add(12));
+    let len = out_fwd.len();
+
+    // Pass A (shared): exp + input projection for the whole row, once.
+    let abar_mut = scratch.abar.as_mut_ptr();
+    let bbar_mut = scratch.bbar.as_mut_ptr();
+    let mut start = 0;
+    while start < len {
+        let tlen = CHUNK.min(len - start);
+        discretize_chunk(ch, start, tlen, &mut scratch.dt, &mut scratch.dtu);
+        for t in 0..tlen {
+            let vdt = vdupq_n_f32(scratch.dt[t]);
+            let vdtu = vdupq_n_f32(scratch.dtu[t]);
+            let b = bt.as_ptr().add((start + t) * 16);
+            let o = (start + t) * 16;
+            vst1q_f32(abar_mut.add(o), exp::vexpq_f32_nonpos_fast(vmulq_f32(vdt, a0)));
+            vst1q_f32(
+                abar_mut.add(o + 4),
+                exp::vexpq_f32_nonpos_fast(vmulq_f32(vdt, a1)),
+            );
+            vst1q_f32(
+                abar_mut.add(o + 8),
+                exp::vexpq_f32_nonpos_fast(vmulq_f32(vdt, a2)),
+            );
+            vst1q_f32(
+                abar_mut.add(o + 12),
+                exp::vexpq_f32_nonpos_fast(vmulq_f32(vdt, a3)),
+            );
+            vst1q_f32(bbar_mut.add(o), vmulq_f32(vld1q_f32(b), vdtu));
+            vst1q_f32(bbar_mut.add(o + 4), vmulq_f32(vld1q_f32(b.add(4)), vdtu));
+            vst1q_f32(bbar_mut.add(o + 8), vmulq_f32(vld1q_f32(b.add(8)), vdtu));
+            vst1q_f32(bbar_mut.add(o + 12), vmulq_f32(vld1q_f32(b.add(12)), vdtu));
+        }
+        start += tlen;
+    }
+
+    // Pass B, both directions, over the shared products.
+    let abar = scratch.abar.as_ptr();
+    let bbar = scratch.bbar.as_ptr();
+    pass_b_n16(abar, bbar, ct, len, false, out_fwd, last_fwd);
+    pass_b_n16(abar, bbar, ct, len, true, out_bwd, last_bwd);
+}
+
+/// General-N fused path: same structure, `n4` lanes with the recurrence state in
+/// `h_buf` and exp materialized (unlike the single-direction `channel_general`,
+/// which keeps exp inline — the fused path must store it to share it).
+#[target_feature(enable = "neon")]
+#[allow(clippy::too_many_arguments)]
+unsafe fn channel_general_bidir(
+    bt: &[f32],
+    ct: &[f32],
+    ch: &Channel<'_>,
+    out_fwd: &mut [f32],
+    out_bwd: &mut [f32],
+    last_fwd: Option<&mut [f32]>,
+    last_bwd: Option<&mut [f32]>,
+    scratch: &mut BidirScratch,
+) {
+    let n4 = scratch.a_pad.len();
+    let len = out_fwd.len();
+
+    // Pass A (shared): exp + input projection for the whole row, once.
+    let abar_mut = scratch.abar.as_mut_ptr();
+    let bbar_mut = scratch.bbar.as_mut_ptr();
+    let mut start = 0;
+    while start < len {
+        let tlen = CHUNK.min(len - start);
+        discretize_chunk(ch, start, tlen, &mut scratch.dt, &mut scratch.dtu);
+        for t in 0..tlen {
+            let vdt = vdupq_n_f32(scratch.dt[t]);
+            let vdtu = vdupq_n_f32(scratch.dtu[t]);
+            let b = bt.as_ptr().add((start + t) * n4);
+            let base = (start + t) * n4;
+            for i in (0..n4).step_by(4) {
+                let a_v = vld1q_f32(scratch.a_pad.as_ptr().add(i));
+                vst1q_f32(
+                    abar_mut.add(base + i),
+                    exp::vexpq_f32_nonpos_fast(vmulq_f32(vdt, a_v)),
+                );
+                vst1q_f32(bbar_mut.add(base + i), vmulq_f32(vld1q_f32(b.add(i)), vdtu));
+            }
+        }
+        start += tlen;
+    }
+
+    // Pass B, both directions.
+    let abar = scratch.abar.as_ptr();
+    let bbar = scratch.bbar.as_ptr();
+    for (reverse, out_row, last) in [(false, out_fwd, last_fwd), (true, out_bwd, last_bwd)] {
+        for v in scratch.h_buf.iter_mut() {
+            *v = 0.0;
+        }
+        let h = scratch.h_buf.as_mut_ptr();
+        for i in 0..len {
+            let t = if reverse { len - 1 - i } else { i };
+            let base = t * n4;
+            let c = ct.as_ptr().add(base);
+            let mut acc = vdupq_n_f32(0.0);
+            for j in (0..n4).step_by(4) {
+                let h_v = vld1q_f32(h.add(j));
+                let h_new = vfmaq_f32(
+                    vld1q_f32(bbar.add(base + j)),
+                    vld1q_f32(abar.add(base + j)),
+                    h_v,
+                );
+                vst1q_f32(h.add(j), h_new);
+                acc = vfmaq_f32(acc, vld1q_f32(c.add(j)), h_new);
+            }
+            *out_row.get_unchecked_mut(t) = vaddvq_f32(acc);
+        }
+        if let Some(ls) = last {
+            ls.copy_from_slice(&scratch.h_buf[..ls.len()]);
+        }
     }
 }

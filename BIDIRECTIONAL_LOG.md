@@ -824,9 +824,10 @@ the graph stops fitting, which is a sharper number than "≥ 8192 on 16 GB."
 
 ---
 
-## Step 7 — fused two-direction kernel: share the exp (Stage 1, scalar)
+## Step 7 — fused two-direction kernel: share the exp
 
-**Status:** scalar path + bit-identity gate written, awaiting CI. NEON is Stage 2.
+**Status:** Stage 1 (scalar) ✅ green on all platforms (commit `4805aa7`). Stage 2
+(NEON) written, awaiting CI. Stage 3 (FFI + Python + benchmark) is next.
 
 Motivated by the roofline in
 [`BIDIRECTIONAL_SPEEDUP_IDEAS.md`](./BIDIRECTIONAL_SPEEDUP_IDEAS.md) §5: we are
@@ -870,12 +871,36 @@ two-output parallel driver untested.
 
 Same discipline as the original kernel (Phase 1 scalar, Phase 2 NEON) and forced
 by the no-local-Rust constraint: prove the *structure* — the API, the parallel
-driver, the bit-identity — on the low-risk scalar path first. The **speed** win
-lands in Stage 2 (NEON: materialize `abar`/`bbar` full-row via the existing Pass
-A2 exp, run Pass B forward then reversed over the shared scratch), and the
-**measurement** in Stage 3 (FFI entry point → `bidirectional_scan` uses it →
-`bench_bidirectional.py`). Stage 1 changes no numerics and touches no FFI, so the
-existing bidirectional path is unaffected until Stage 3 rewires it.
+driver, the bit-identity — on the low-risk scalar path first, then add the fast
+path on a validated foundation. Stage 1 changed no numerics and touched no FFI, so
+the existing bidirectional path was unaffected until Stage 3 rewires it.
+
+### Stage 2 (NEON) — what landed
+
+The fast path where the exp-sharing actually pays off:
+
+| Change | Detail |
+|---|---|
+| `discretize_chunk` refactor | now takes `dt`/`dtu` **slices** instead of `&mut Scratch`, so the single and fused paths share it with different scratch layouts (both existing callers updated) |
+| `neon::scan_bidirectional` | transpose B/C once (shared across channels *and* directions), then per channel: Pass A once → full-row `abar`/`bbar`, Pass B forward + backward |
+| `channel_n16_bidir` + `pass_b_n16` | N=16 fast path — Pass B factored into a helper run twice (forward, reversed), state in the register file exactly as `channel_n16` |
+| `channel_general_bidir` | any-N path; unlike single-direction `channel_general` (which keeps exp inline) it **materializes** `abar`/`bbar`, because sharing requires storing them |
+| `lib.rs` `try_neon_bidir` | the `T == f32` NEON dispatch, mirroring `try_neon`; Auto→NEON on aarch64, else scalar |
+| `tests/property.rs` | the gate now runs on **`Scalar` and `Auto`** — on aarch64 that checks NEON-fused vs NEON-two-scans bit-for-bit |
+
+Bit-identity holds on NEON for the same reason as scalar, one level down: `abar =
+vexpq_f32_nonpos_fast(dt·A)` and `bbar = B·dtu` are the identical vectors the
+standalone `channel_n16`/`channel_general` compute, and Pass B's `vfmaq(bbar,
+abar, h)` is the same fused multiply-add in the same lane order. Materializing them
+full-row instead of chunk-local changes storage, not values.
+
+### Stage 3 (next) — make it measurable
+
+FFI entry point (`arm_scan_selective_scan_bidirectional_f32`, ABI bump) →
+`_ffi`/`op.py` binding → `bidirectional.py` calls the fused op instead of two
+`selective_scan` calls → `bench_bidirectional.py` gets a `bidirectional_fused`
+series. Only then does the ~1.7× projection become a measured number — and only
+then is the L2-round-trip tradeoff (below) settled.
 
 ### Known tradeoff to watch
 
