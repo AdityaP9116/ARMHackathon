@@ -23,10 +23,12 @@ on:
         options: [sweep-len, sweep-dim, basic]
       long_l_compile_max:
         description: >-
-          Max L for the torch.compile baseline. Compile scales ~L^0.6 (59s@128,
-          134s@512), so 2048 costs ~8 min of compiling and 8192 ~20 min — and at
-          8192 inductor may OOM building the unrolled graph. Set 0 to skip
-          torch.compile entirely.
+          Max L for the torch.compile baseline. MEASURED: compile time is LINEAR
+          in L at ~0.26 s per timestep (59s@128, 130s@512, 245s@1024, 524s@2048;
+          reproduced across two runs). So 2048 costs ~9 min of compiling, 4096
+          ~18 min, and 8192 ~36 min — a full sweep to 8192 is ~75 min. At 8192
+          inductor may also OOM building the unrolled graph, which is itself the
+          finding. Set 0 to skip torch.compile entirely.
         default: "2048"
         type: string
   push:

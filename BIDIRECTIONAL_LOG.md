@@ -746,3 +746,54 @@ to quote is 3.63–4.67× vs `torch.compile`. Nothing else.
 2. Tighten the benchmark's ceiling guard to a **per-shape** check so an inversion
    like L=128's is a hard error, not a silent oddity.
 3. Then, and only then, put the vs-`torch.compile` row in `RESULTS.md`.
+
+---
+
+## Step 6 — `torch.compile` OOM-kills the runner at L=8192 (the hard wall)
+
+**The linear-compile-cost finding (Step 5) has an endpoint, and we hit it.**
+
+Dispatched the long-L job (`bench-baseline.yml`, run `29350634837`) with
+`long_l_compile_max=8192`. After ~96 minutes it died with:
+
+> *The hosted runner lost communication with the server. Anything in your
+> workflow that terminates the runner process, starves it for CPU/Memory, or
+> blocks its network access can cause this error.*
+
+That is an **OOM**, not a timeout (the job timeout is 150 min and was not
+reached; a timeout reports cleanly as one). `torch.compile` unrolls the L-step
+recurrence into a single graph, and at L=8192 the graph exhausts the 4-core
+arm64 runner's memory; the OOM reaper kills the VM. The ~96 min (vs a ~75 min
+estimate) is consistent with the machine thrashing on swap before the kill.
+
+**Where it died:** cumulative compile to L=4096 is ~34 min; L=8192 adds ~36 more.
+At 96 min it was well past 4096 and inside the 8192 compile. So 4096 *did*
+compile — but see below.
+
+**This is the strongest form of the moat argument.** Not "`torch.compile` is
+slower" — at the sequence lengths the headline applications use (genomics @131k,
+long audio, multi-hour ECG), `torch.compile` **cannot build the graph at all**.
+The kernel ran L=8192 in **89.7 ms** at 8.6e-6 error (Step 5), in constant
+memory, on the same box that could not compile the baseline.
+
+### Operational failure: we lost the data, and why
+
+**No artifact was produced.** The per-shape JSON flush (added precisely to
+survive a mid-sweep death) protects against a *process* kill — a `SIGKILL` of the
+python process, after which later steps still run. It does **nothing** against a
+*VM* death: when the machine itself is OOM-killed, there is no runner left to
+execute the `if: always()` artifact-upload step. Both the flushed JSON on the
+dead VM's disk and the upload step went down with it.
+
+So the 4096 compile row — which had almost certainly completed — was lost. The
+lesson: **`if: always()` is not a guarantee against OOM; it is a guarantee
+against a failed *step*.** Different failure modes need different safety nets, and
+"the whole machine dies" has essentially none within a single job.
+
+### The fix, and the plan
+
+To bank the L=4096 compile row cleanly, cap compile at **4096** (which fits the
+runner's memory) so the job completes and uploads. The L=8192 OOM is already
+established qualitatively by this run; it does not need re-running to be cited —
+though a dedicated host with more RAM would let us find the *exact* L at which
+the graph stops fitting, which is a sharper number than "≥ 8192 on 16 GB."
