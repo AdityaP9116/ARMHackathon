@@ -91,7 +91,7 @@ unsafe fn channel_profiled(
         // Pass A1: discretization across time. Pointwise, so direction-agnostic
         // (as are the two A2 loops below) — only Pass B walks time.
         let c0 = Instant::now();
-        super::discretize_chunk(ch, start, tlen, scratch);
+        super::discretize_chunk(ch, start, tlen, &mut scratch.dt, &mut scratch.dtu);
         t.discretize_ns += c0.elapsed().as_nanos();
 
         // Pass A2 (exp): ābar = exp(dt·A) for the chunk.

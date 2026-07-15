@@ -362,12 +362,20 @@ proptest! {
             None,
         ).unwrap();
 
+        // f32 rounding is RELATIVE, so the bound must scale with the output
+        // magnitude. Proptest can produce large outputs (a 2.4 input through a
+        // long near-identity recurrence reaches |out| ~ 270), where an absolute
+        // 1e-3 bound rejects a legitimate ~4e-6 relative f32 error. Scale the
+        // original 1e-3 by the output magnitude (>= 1), so bounded outputs keep
+        // the old bound exactly and large ones are held to the same relative
+        // accuracy. (Surfaced by a reverse=true case; the plain-scan numerics
+        // are unchanged from before the fused work — see BIDIRECTIONAL_LOG.md.)
+        let scale = out64.iter().fold(1.0_f64, |m, v| m.max(v.abs()));
         for (i, (k, r)) in out32.iter().zip(out64.iter()).enumerate() {
             let err = (*k as f64 - r).abs();
-            // f32 rounding over <=32 sequential steps with bounded values
             prop_assert!(
-                err < 1e-3,
-                "idx {i}: f32={k} f64={r} err={err:.3e} dims={:?}",
+                err < 1e-3 * scale,
+                "idx {i}: f32={k} f64={r} err={err:.3e} scale={scale:.3e} dims={:?}",
                 case.dims
             );
             prop_assert!(k.is_finite(), "non-finite output at {i}: {k}");

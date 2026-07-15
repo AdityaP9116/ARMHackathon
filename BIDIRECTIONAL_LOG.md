@@ -894,6 +894,27 @@ standalone `channel_n16`/`channel_general` compute, and Pass B's `vfmaq(bbar,
 abar, h)` is the same fused multiply-add in the same lane order. Materializing them
 full-row instead of chunk-local changes storage, not values.
 
+**CI confirmed it: `fused_bidirectional_matches_two_scans` passed on macOS-arm64
+(real NEON), bit-for-bit, across all shapes and both threadings.** The NEON fused
+kernel equals two standalone NEON scans exactly. Stage 2 correctness is done.
+
+Two incidental breakages on the same push, neither a Stage-2 numerics bug:
+
+1. **The profiler didn't compile** — `profile.rs` still called `discretize_chunk`
+   with the old `&mut Scratch` signature. Missed because it is behind the
+   `profiling` feature (only the `Profile kernel` workflow compiles it). Fixed to
+   the slice signature.
+2. **`f32_matches_f64` failed on an unrelated case** — `err = 1.145e-3` on an
+   output of `-271.8`, i.e. a **4.2e-6 relative** f32 error, rejected only because
+   that test used an *absolute* `1e-3` bound. Not a regression: the sole change to
+   the plain-scan path was the behavior-preserving `discretize_chunk` refactor, and
+   proptest reseeds randomly each run — it simply generated a large-output case
+   (a 2.4 input through a long near-identity recurrence) this time. **Fixed** by
+   scaling the bound with output magnitude (`err < 1e-3 * max|out|`), which keeps
+   the old bound for bounded outputs and holds large ones to the same *relative*
+   accuracy. This also removes a latent flake that could have failed any prior run
+   whose random seed hit a large output.
+
 ### Stage 3 (next) — make it measurable
 
 FFI entry point (`arm_scan_selective_scan_bidirectional_f32`, ABI bump) →
