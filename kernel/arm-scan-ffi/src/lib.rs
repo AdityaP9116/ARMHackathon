@@ -255,7 +255,8 @@ pub unsafe extern "C" fn arm_scan_selective_scan_bidirectional_f32(
     {
         return ARM_SCAN_ERR_NULL_POINTER;
     }
-    let (Some(backend), Some(threading)) = (backend_from(backend), threading_from(threading)) else {
+    let (Some(backend), Some(threading)) = (backend_from(backend), threading_from(threading))
+    else {
         return ARM_SCAN_ERR_BAD_ENUM;
     };
 
