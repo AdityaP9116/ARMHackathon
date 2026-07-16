@@ -113,6 +113,11 @@ jobs:
       - name: Install torch (CPU aarch64)
         working-directory: .
         run: python3 -m pip install --quiet numpy torch
+      # Fast consolidated sanity: both topologies run, are correct, and beat
+      # native torch — one clear pass/fail before the fuller benchmarks.
+      - name: Smoke check (unidirectional + bidirectional vs torch)
+        working-directory: .
+        run: python3 bench/smoke_topologies.py
       # Correctness gates speed (CLAUDE.md): the bidirectional wrapper is
       # checked against the vendored f64 reference through the real kernel
       # before anything here is benchmarked.

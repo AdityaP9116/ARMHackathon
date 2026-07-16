@@ -16,12 +16,15 @@ benchmarked, and no fusion work starts, until the correctness path is green.
 *fast* (fused in Rust, via a kernel `reverse` flag). The correct stage lands
 first so the fusion is justified by a measurement instead of an assumption.
 
-> ## ✅ Bottom line (all CI green; canonical sweep `883943f`, reps=10)
+> ## ✅ Bottom line (all CI green; fused sweep `c5deb72`)
 >
-> **A bidirectional selective scan on Arm runs 5.3–5.6× faster than
-> `torch.compile` (L ≥ 1024) and 16–28× faster than PyTorch eager**, holding
-> 4.3e-6 – 8.6e-6 max abs error vs the f64 reference (gate: 1e-4) all the way out
-> to **L = 8192**.
+> **A bidirectional selective scan on Arm runs 6.2–9.5× faster than
+> `torch.compile` and 28–43× faster than PyTorch eager**, holding 4.3e-6 – 8.6e-6
+> max abs error vs the f64 reference (gate: 1e-4) all the way out to **L = 8192**.
+> Those are the *fused* numbers — `bidirectional_scan` shares the exp between
+> directions (Step 7), which is where the ~1.7× jump over the earlier two-call
+> path came from. **A full bidirectional scan now costs ~1.15× a single
+> unidirectional one.**
 >
 > **And `torch.compile` cannot follow us to the lengths the applications need.**
 > Compile time is linear-through-2048 then **super-linear** (~0.26 s/timestep,
@@ -30,9 +33,9 @@ first so the fusion is justified by a measurement instead of an assumption.
 > runner outright** (Step 6). The 131k-token genomics context is unreachable — not
 > a slow baseline, an absent one.
 >
-> The `reverse` kernel flag exists as the **substrate for the 2D cross-scan**, not
-> as a bidirectional speedup — its own contribution is 1–7% with no stable pattern.
-> Quote the vs-`torch.compile` row, and nothing else.
+> The fused two-direction kernel (Step 7) is also the **SS2D substrate** — its
+> "compute Pass A once, run the recurrence in N directions" structure is exactly
+> what the 2D cross-scan's four directions need.
 
 ---
 
@@ -824,12 +827,52 @@ the graph stops fitting, which is a sharper number than "≥ 8192 on 16 GB."
 
 ---
 
-## Step 7 — fused two-direction kernel: share the exp
+## Step 7 — fused two-direction kernel: share the exp ✅ DONE
 
-**Status:** Stage 1 (scalar) ✅ and Stage 2 (NEON) ✅ green on all platforms —
-the fused kernel is bit-identical to two scans on real Arm. Stage 3 (FFI +
-Python + benchmark) written, awaiting CI — it produces the first *measured*
-exp-sharing number.
+**Status:** all three stages green and **measured**. The bet paid off — the
+exp-sharing speedup is **1.58–1.75× (projected ~1.7×)**, stable across every
+shape, bit-identical to two scans, on real Arm.
+
+> ### Result (canonical run `c5deb72`, linux-arm64, reps=5)
+>
+> | | L=128 | L=512 | L=1024 | L=2048 | L=4096 | L=8192 |
+> |---|---|---|---|---|---|---|
+> | **exp-sharing (fused vs two-call)** | 1.75× | 1.70× | 1.69× | 1.65× | 1.58× | 1.69× |
+> | bidirectional (fused) vs torch.compile | 6.15× | 7.70× | 8.77× | 9.54× | — | — |
+> | bidirectional (fused) vs eager | 27.7× | 40.4× | 41.0× | 42.6× | 41.3× | 42.6× |
+>
+> `fused == two-call` **bit-identical** (rel 0.0e+00) at every shape;
+> kernel-vs-f64 max abs 4.3e-6 – 8.6e-6, well inside the 1e-4 gate.
+>
+> **The striking one:** at L=512, `scan_fwd` = 2.85 ms and fused bidirectional =
+> 3.27 ms — **a full bidirectional scan for ~1.15× the cost of a single
+> unidirectional one.** Sharing the expensive Pass A makes the second direction
+> nearly free. That is the whole thesis of Step 7, measured.
+
+### The one open risk is settled — in our favor
+
+Every stage flagged the same worry: materializing `abar`/`bbar` full-row (to
+share them across directions) means they stream from L2 instead of L1, and the
+exp saving had to beat that extra round-trip. **It did, decisively.** The
+measured 1.65× geomean matches the profiler-projected ~1.7× almost exactly, so
+the L2 traffic cost essentially nothing next to eliminating a second exp sweep.
+No assumption — the benchmark's `exp_sharing_speedup` is the actual old path
+(two-call) against the actual new one (fused), and it reproduces the projection.
+
+### Why the headline moved too
+
+`bidirectional_scan` now routes the common case through the fused op, so the
+whole bidirectional-vs-baseline story improved by the ~1.7× factor: **6.15–9.54×
+vs torch.compile** (was ~5.5×), **27.7–42.6× vs eager** (was ~24×). Same honest
+baselines, same host; the kernel just got faster.
+
+---
+
+### Build record (how it was staged)
+
+**Status:** Stage 1 (scalar) ✅ and Stage 2 (NEON) ✅ green — bit-identical to
+two scans on real Arm. Stage 3 (FFI + Python + benchmark) ✅ — the measured
+result above.
 
 Motivated by the roofline in
 [`BIDIRECTIONAL_SPEEDUP_IDEAS.md`](./BIDIRECTIONAL_SPEEDUP_IDEAS.md) §5: we are
@@ -942,16 +985,11 @@ And the fused op omits `last_state` because bidirectional models are non-causal
 and ignore it; requesting one also falls back. Neither fallback is a compromise —
 each is the right computation for a case the fused kernel does not cover.
 
-### The number this finally produces
+### The number this produced
 
-`exp_sharing_speedup = twocall / fused` is the measured Stage-7 payoff, projected
-**~1.7×** from the profiler's phase split (exp+softplus ~85% of runtime,
-direction-independent). This run also **settles the one open risk**: whether
-sharing the exp beats the extra L2 traffic from materializing `abar`/`bbar`
-full-row. If `exp_sharing_speedup` lands near 1.7×, the bet paid off; if it is
-~1.0× or below, the L2 round-trip ate the saving and the fused path is not worth
-keeping for bidirectional (though the *structure* still feeds SS2D). Measured,
-not assumed — the number decides.
+`exp_sharing_speedup = twocall / fused` came in at **1.58–1.75× (geomean ~1.67×)**
+— see the result box at the top of this step. Matched the ~1.7× projection, and
+settled the L2-round-trip risk in our favor.
 
 ### Known tradeoff to watch
 
