@@ -99,6 +99,33 @@ pub struct ScanInput<'a, T> {
     /// discretization). HF's slow path pre-applies softplus, so the patch
     /// layer passes `false`; mamba-ssm call sites pass `true`.
     pub delta_softplus: bool,
+    /// Walk the sequence backward in time: the state starts at zero at the
+    /// END of the sequence and accumulates toward the start. Output for
+    /// timestep `t` is still written at index `t`, and the pointwise D-skip
+    /// and z-gate still apply at index `t` — only the recurrence's traversal
+    /// order changes, never the layout.
+    ///
+    /// Equivalent to reversing the time axis of u/delta/b/c/z, running a forward
+    /// scan, and reversing the output — but without materializing any of those
+    /// copies. That equivalence is the definition, enforced by
+    /// `reverse_matches_flip_forward_flip` in `tests/property.rs` (and,
+    /// independently, by `tests/check_bidirectional_math.py` in numpy).
+    ///
+    /// On the scalar backend the two are **bit-identical**. On NEON they agree to
+    /// ~1e-7, not bit-exactly: `discretize_chunk` and `epilogue_row` process 4
+    /// timesteps at a time with a scalar tail, and the vector and tail branches
+    /// evaluate softplus/SiLU by different means (NEON polynomial vs libm).
+    /// Which branch a timestep takes depends on its array POSITION, so flipping
+    /// the array moves timesteps across that boundary. That is a property of the
+    /// existing forward kernel, not of `reverse`.
+    ///
+    /// `last_state` under reverse is the state after consuming `t == 0` — the
+    /// state at the START of the sequence. It is not a resumable decode cache
+    /// the way the forward scan's `last_state` is.
+    ///
+    /// This is the 1D half of the bidirectional / 2D cross-scan topologies; see
+    /// TOPOLOGY_IMPLEMENTATION_PLAN.md.
+    pub reverse: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -313,6 +340,164 @@ pub fn selective_scan_with_state<T: Float>(
     }
 }
 
+/// Fused bidirectional scan: produce both the forward and backward outputs from
+/// one set of inputs, computing the shared, direction-independent Pass A
+/// (discretize + exp + input projection — ~85% of the work) **once** instead of
+/// twice. `out_fwd`/`out_bwd` are `(batch, dim, len)`; `last_fwd`/`last_bwd` are
+/// `(batch, dim, state)` and must both be `Some` or both `None`.
+///
+/// Semantically equal to calling [`selective_scan`] twice (once forward, once
+/// with `reverse: true`) and is checked bit-for-bit against exactly that. The
+/// backward output's `last_state` is the state after consuming `t == 0` (the
+/// start of the sequence). No `h0`: both directions seed from zero.
+/// `input.reverse` is ignored.
+///
+/// See `BIDIRECTIONAL_SPEEDUP_IDEAS.md §3.2` for why sharing Pass A is the win,
+/// and `TOPOLOGY_IMPLEMENTATION_PLAN.md §3.2` — this is the 1D form of the SS2D
+/// "read once, emit multiple directions" structure.
+pub fn selective_scan_bidirectional<T: Float>(
+    dims: &ScanDims,
+    input: &ScanInput<'_, T>,
+    out_fwd: &mut [T],
+    out_bwd: &mut [T],
+    #[cfg_attr(not(target_arch = "aarch64"), allow(unused_mut))] mut last_fwd: Option<&mut [T]>,
+    #[cfg_attr(not(target_arch = "aarch64"), allow(unused_mut))] mut last_bwd: Option<&mut [T]>,
+    opts: ScanOptions,
+) -> Result<(), ScanError> {
+    validate(dims, input, out_fwd, last_fwd.as_deref())?;
+    let bdl = dims.batch * dims.dim * dims.len;
+    if out_bwd.len() != bdl {
+        return Err(ScanError::BadLen {
+            tensor: "out_bwd",
+            expected: bdl,
+            got: out_bwd.len(),
+        });
+    }
+    let bdn = dims.batch * dims.dim * dims.state;
+    if let Some(lb) = last_bwd.as_deref() {
+        if lb.len() != bdn {
+            return Err(ScanError::BadLen {
+                tensor: "last_bwd",
+                expected: bdn,
+                got: lb.len(),
+            });
+        }
+    }
+    if last_fwd.is_some() != last_bwd.is_some() {
+        // The kernel requires both or neither; report it as a shape error
+        // rather than panicking in the parallel driver.
+        return Err(ScanError::BadLen {
+            tensor: "last_bwd",
+            expected: if last_fwd.is_some() { bdn } else { 0 },
+            got: if last_bwd.is_some() { bdn } else { 0 },
+        });
+    }
+
+    match opts.backend {
+        Backend::Scalar => {
+            scalar::scan_bidirectional(
+                dims,
+                input,
+                out_fwd,
+                out_bwd,
+                last_fwd,
+                last_bwd,
+                opts.threading,
+            );
+            Ok(())
+        }
+        Backend::Auto => {
+            #[cfg(target_arch = "aarch64")]
+            if try_neon_bidir(
+                dims,
+                input,
+                out_fwd,
+                out_bwd,
+                &mut last_fwd,
+                &mut last_bwd,
+                opts.threading,
+            ) {
+                return Ok(());
+            }
+            scalar::scan_bidirectional(
+                dims,
+                input,
+                out_fwd,
+                out_bwd,
+                last_fwd,
+                last_bwd,
+                opts.threading,
+            );
+            Ok(())
+        }
+        Backend::Neon => {
+            #[cfg(target_arch = "aarch64")]
+            if try_neon_bidir(
+                dims,
+                input,
+                out_fwd,
+                out_bwd,
+                &mut last_fwd,
+                &mut last_bwd,
+                opts.threading,
+            ) {
+                return Ok(());
+            }
+            Err(ScanError::BackendUnavailable(Backend::Neon))
+        }
+    }
+}
+
+/// NEON dispatch for the fused bidirectional scan — the `T == f32` analog of
+/// [`try_neon`], returning `false` for other element types so the caller falls
+/// back to scalar.
+#[cfg(target_arch = "aarch64")]
+#[allow(clippy::too_many_arguments)]
+fn try_neon_bidir<T: Float>(
+    dims: &ScanDims,
+    input: &ScanInput<'_, T>,
+    out_fwd: &mut [T],
+    out_bwd: &mut [T],
+    last_fwd: &mut Option<&mut [T]>,
+    last_bwd: &mut Option<&mut [T]>,
+    threading: Threading,
+) -> bool {
+    use core::any::TypeId;
+    if TypeId::of::<T>() != TypeId::of::<f32>() {
+        return false;
+    }
+    fn cast<T: 'static>(s: &[T]) -> &[f32] {
+        // SAFETY: caller verified T == f32; same pointer, same length.
+        unsafe { core::slice::from_raw_parts(s.as_ptr().cast::<f32>(), s.len()) }
+    }
+    fn cast_mut<T: 'static>(s: &mut [T]) -> &mut [f32] {
+        // SAFETY: as above.
+        unsafe { core::slice::from_raw_parts_mut(s.as_mut_ptr().cast::<f32>(), s.len()) }
+    }
+    let input_f32 = ScanInput {
+        u: cast(input.u),
+        delta: cast(input.delta),
+        a: cast(input.a),
+        b: cast(input.b),
+        c: cast(input.c),
+        d_skip: input.d_skip.map(cast),
+        z: input.z.map(cast),
+        delta_bias: input.delta_bias.map(cast),
+        delta_softplus: input.delta_softplus,
+        reverse: input.reverse,
+    };
+    neon::scan_bidirectional(
+        dims,
+        &input_f32,
+        cast_mut(out_fwd),
+        cast_mut(out_bwd),
+        last_fwd.as_deref_mut().map(cast_mut),
+        last_bwd.as_deref_mut().map(cast_mut),
+        threading,
+    );
+    true
+}
+
 /// Route to the NEON implementation when `T` is f32. The `TypeId` check
 /// proves `T == f32`, making the slice reinterpretations sound.
 #[cfg(target_arch = "aarch64")]
@@ -346,6 +531,7 @@ fn try_neon<T: Float>(
         z: input.z.map(cast),
         delta_bias: input.delta_bias.map(cast),
         delta_softplus: input.delta_softplus,
+        reverse: input.reverse,
     };
     neon::scan(
         dims,

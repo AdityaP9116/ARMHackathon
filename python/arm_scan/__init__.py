@@ -7,6 +7,7 @@ Quick start (PyTorch):
     arm_scan.stats()          # confirm the kernel actually ran
 
 Direct op:  arm_scan.selective_scan(u, delta, A, B, C, D=..., z=...)
+Bidirectional: arm_scan.bidirectional_scan(...)  (both time directions, merged)
 NumPy-only: arm_scan.selective_scan_numpy(...)  (no torch required)
 """
 
@@ -17,6 +18,7 @@ __all__ = [
     "selective_scan_numpy",
     "lib_path",
     "selective_scan",
+    "bidirectional_scan",
     "patch",
     "unpatch",
     "stats",
@@ -31,6 +33,9 @@ def __getattr__(name):
 
     if name == "selective_scan":
         return importlib.import_module(".op", __name__).selective_scan
+    if name == "bidirectional_scan":
+        return importlib.import_module(
+            ".bidirectional", __name__).bidirectional_scan
     if name in ("patch", "unpatch", "stats"):
         return getattr(importlib.import_module(".patch", __name__), name)
     raise AttributeError(f"module 'arm_scan' has no attribute '{name}'")

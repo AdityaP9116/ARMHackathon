@@ -75,6 +75,7 @@ fn main() {
             z: Some(&z),
             delta_bias: Some(&bias),
             delta_softplus: true,
+            reverse: false,
         };
         let mut out = vec![0.0_f32; bdl];
 

@@ -157,9 +157,11 @@ def main():
                     help="CI-sized subset (fewer shapes/reps)")
     ap.add_argument("--reps", type=int, default=None)
     ap.add_argument("--warmup", type=int, default=None)
-    ap.add_argument("--compile-max-len", type=int, default=512,
+    ap.add_argument("--compile-max-len", type=int, default=None,
                     help="skip the torch.compile baseline beyond this L "
-                         "(graph unrolling makes compile time explode)")
+                         "(graph unrolling makes compile time explode). "
+                         "Default 512, or 128 under --quick. An explicit value "
+                         "always wins, including under --quick.")
     ap.add_argument("--no-compile", action="store_true")
     ap.add_argument("--torch-threads", type=int, default=None,
                     help="pin torch intra-op threads (fairness control)")
@@ -179,8 +181,9 @@ def main():
         shapes = SUITES[args.suite]
     reps = args.reps or (5 if args.quick else 10)
     warmup = args.warmup if args.warmup is not None else (1 if args.quick else 3)
-    if args.quick:
-        args.compile_max_len = min(args.compile_max_len, 128)
+    if args.compile_max_len is None:
+        # --quick's lower cap bounds CI time only; an explicit flag must win.
+        args.compile_max_len = 128 if args.quick else 512
 
     env = env_report()
     env["tag"] = args.tag

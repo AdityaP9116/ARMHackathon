@@ -1,0 +1,22 @@
+# Full development tier: everything above, plus PyTorch and HF transformers.
+#
+#   pip install -r requirements-dev.txt
+#
+# Needed for the parts of the repo the torch-free tier cannot reach:
+#   torch         python/arm_scan/op.py (the torch.library custom op) and
+#                 patch.py; tests/check_bidirectional.py; tests/gen_golden.py;
+#                 bench/bench_op.py; bench/bench_bidirectional.py
+#   transformers  bench/bench_e2e.py and tests/check_hf_patch.py
+#                 (mamba-130m-hf; imported lazily, weights cached on first run)
+#
+# CPU-only torch is all this project ever uses. On Linux/Windows the default
+# PyPI wheel bundles CUDA; if you want to skip that download:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#
+# NOTE: none of this is required to develop the kernel or to check the
+# bidirectional/topology math — see requirements.txt. Install it when you need
+# to run the op-level or end-to-end benchmarks locally rather than in CI.
+-r requirements.txt
+
+torch>=2.4
+transformers>=4.44

@@ -1,0 +1,18 @@
+# Torch-free tier — what the current .venv has, and all CI's `test` job installs.
+#
+#   python -m venv .venv
+#   source .venv/Scripts/activate      # Windows;  .venv/bin/activate on Linux/macOS
+#   pip install -r requirements.txt
+#
+# Enough to run, with no Rust toolchain and no PyTorch:
+#   tests/check_bidirectional_math.py   the bidirectional definition/spec check
+#   tests/verify_golden.py              independent re-derivation of the goldens
+#
+# and, once the kernel cdylib is built (`cd kernel && cargo build --release -p arm-scan-ffi`):
+#   tests/check_ffi.py                  goldens through the real C ABI
+#   arm_scan.selective_scan_numpy(...)  the torch-free kernel API
+#
+# For the op/patch/benchmark tiers (PyTorch, HF transformers) see
+# requirements-dev.txt — kept separate deliberately, since torch is a multi-
+# hundred-MB dependency that the torch-free path never needs.
+numpy>=1.24

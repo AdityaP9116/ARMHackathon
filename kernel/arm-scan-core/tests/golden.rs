@@ -88,6 +88,7 @@ fn run_case(meta: &CaseMeta, backend: Backend) -> CaseResult {
         z: z.as_deref(),
         delta_bias: delta_bias.as_deref(),
         delta_softplus: meta.delta_softplus,
+        reverse: false,
     };
     let mut out = vec![0.0_f32; dims.batch * dims.dim * dims.len];
     let mut last = vec![0.0_f32; dims.batch * dims.dim * dims.state];

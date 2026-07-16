@@ -6,8 +6,9 @@
 use proptest::prelude::*;
 
 use arm_scan_core::{
-    selective_scan, selective_scan_with_backend, selective_scan_with_options,
-    selective_scan_with_state, Backend, ScanDims, ScanInput, ScanOptions, Threading,
+    selective_scan, selective_scan_bidirectional, selective_scan_with_backend,
+    selective_scan_with_options, selective_scan_with_state, Backend, ScanDims, ScanInput,
+    ScanOptions, Threading,
 };
 
 #[derive(Debug, Clone)]
@@ -22,6 +23,7 @@ struct Case {
     z: Option<Vec<f32>>,
     delta_bias: Option<Vec<f32>>,
     delta_softplus: bool,
+    reverse: bool,
 }
 
 fn vecf(n: usize, lo: f32, hi: f32) -> impl Strategy<Value = Vec<f32>> {
@@ -57,40 +59,264 @@ fn case_strategy() -> impl Strategy<Value = Case> {
                 prop::option::of(vecf(dim, -2.0, 2.0)), // d_skip
                 prop::option::of(vecf(bdl, -4.0, 4.0)), // z
                 prop::option::of(vecf(dim, -6.0, 1.0)), // delta_bias
-                prop::bool::ANY,                        // delta_softplus
+                // paired: proptest's tuple Strategy impl stops at 10 elements,
+                // and this tuple is already at 10.
+                (prop::bool::ANY, prop::bool::ANY), // (delta_softplus, reverse)
             )
         })
-        .prop_map(|(dims, u, delta, a, b, c, d_skip, z, delta_bias, sp)| {
-            let mut case = Case {
-                dims,
-                u,
-                delta,
-                a,
-                b,
-                c,
-                d_skip,
-                z,
-                delta_bias,
-                delta_softplus: sp,
-            };
-            if !case.delta_softplus {
-                // raw delta is the timestep: must be positive like a
-                // real post-softplus value
-                for v in &mut case.delta {
-                    *v = v.abs() * 0.01 + 1e-3;
+        .prop_map(
+            |(dims, u, delta, a, b, c, d_skip, z, delta_bias, (sp, reverse))| {
+                let mut case = Case {
+                    dims,
+                    u,
+                    delta,
+                    a,
+                    b,
+                    c,
+                    d_skip,
+                    z,
+                    delta_bias,
+                    delta_softplus: sp,
+                    reverse,
+                };
+                if !case.delta_softplus {
+                    // raw delta is the timestep: must be positive like a
+                    // real post-softplus value
+                    for v in &mut case.delta {
+                        *v = v.abs() * 0.01 + 1e-3;
+                    }
+                    case.delta_bias = None;
                 }
-                case.delta_bias = None;
-            }
-            case
-        })
+                case
+            },
+        )
 }
 
 fn widen(v: &[f32]) -> Vec<f64> {
     v.iter().map(|&x| x as f64).collect()
 }
 
+/// Reverse the time axis of a contiguous tensor whose LAST dim is `len`
+/// (u/delta/z: (B,D,L); b/c: (B,G,N,L); out: (B,D,L) — all are rows of `len`).
+fn flip_time(v: &[f32], len: usize) -> Vec<f32> {
+    v.chunks_exact(len)
+        .flat_map(|row| row.iter().rev().copied())
+        .collect()
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(256))]
+
+    /// `reverse: true` must equal flipping the time axis of every time-varying
+    /// input, scanning FORWARD, and flipping the output back — the definition
+    /// the fused traversal exists to implement without the copies.
+    ///
+    /// TWO STRENGTHS, and the difference is the interesting part:
+    ///
+    /// * **Scalar: BIT-for-bit.** The scalar path runs one uniform code path per
+    ///   timestep, so both routes apply identical arithmetic to identical values
+    ///   in identical order. Any difference at all is an indexing bug, not
+    ///   rounding — which is exactly what we want to pin down. Note the two
+    ///   routes also land on DIFFERENT chunk boundaries (forward-on-flipped
+    ///   splits the flipped axis; reverse splits the original), so passing
+    ///   bit-exactly additionally proves chunking never leaks into the math.
+    ///
+    /// * **NEON: tight tolerance, NOT bit-exact — and it cannot be.** Two of the
+    ///   NEON passes process 4 timesteps at a time with a **scalar tail**:
+    ///   `discretize_chunk` (softplus) and `epilogue_row` (SiLU). The vector and
+    ///   tail branches use different implementations of the same function — the
+    ///   NEON polynomial vs libm — which agree to ~1e-7 but not bit-for-bit.
+    ///   Which branch a timestep takes depends on its ARRAY POSITION, and
+    ///   flipping the array moves timesteps across that boundary. So at
+    ///   `len = 31`, timestep 29 is in the scalar tail when scanned in place and
+    ///   in the vector body when scanned flipped — same value, ~1 ulp apart.
+    ///   This is a property of the existing forward kernel, not of `reverse`;
+    ///   demanding bit-equality here would be asserting something false.
+    ///
+    /// Mirrors `tests/check_bidirectional_math.py`, which proves the same
+    /// identity in numpy against an independently-written backward recurrence.
+    #[test]
+    fn reverse_matches_flip_forward_flip(case in case_strategy()) {
+        let len = case.dims.len;
+        let n_out = case.dims.batch * case.dims.dim * len;
+        let n_last = case.dims.batch * case.dims.dim * case.dims.state;
+
+        // flipped copies: A / d_skip / delta_bias have no time axis.
+        let uf = flip_time(&case.u, len);
+        let deltaf = flip_time(&case.delta, len);
+        let bf = flip_time(&case.b, len);
+        let cf = flip_time(&case.c, len);
+        let zf = case.z.as_deref().map(|z| flip_time(z, len));
+
+        for backend in [Backend::Scalar, Backend::Auto] {
+            // (a) the fused backward traversal
+            let mut out_rev = vec![0.0_f32; n_out];
+            let mut last_rev = vec![0.0_f32; n_last];
+            selective_scan_with_backend(
+                &case.dims,
+                &ScanInput {
+                    u: &case.u, delta: &case.delta, a: &case.a, b: &case.b,
+                    c: &case.c,
+                    d_skip: case.d_skip.as_deref(),
+                    z: case.z.as_deref(),
+                    delta_bias: case.delta_bias.as_deref(),
+                    delta_softplus: case.delta_softplus,
+                    reverse: true,
+                },
+                &mut out_rev,
+                Some(&mut last_rev),
+                backend,
+            ).unwrap();
+
+            // (b) flip the inputs, scan forward, flip the output back
+            let mut out_fwd = vec![0.0_f32; n_out];
+            let mut last_fwd = vec![0.0_f32; n_last];
+            selective_scan_with_backend(
+                &case.dims,
+                &ScanInput {
+                    u: &uf, delta: &deltaf, a: &case.a, b: &bf, c: &cf,
+                    d_skip: case.d_skip.as_deref(),
+                    z: zf.as_deref(),
+                    delta_bias: case.delta_bias.as_deref(),
+                    delta_softplus: case.delta_softplus,
+                    reverse: false,
+                },
+                &mut out_fwd,
+                Some(&mut last_fwd),
+                backend,
+            ).unwrap();
+            let out_fwd = flip_time(&out_fwd, len);
+
+            if backend == Backend::Scalar {
+                prop_assert!(
+                    out_rev.iter().zip(&out_fwd)
+                        .all(|(a, b)| a.to_bits() == b.to_bits()),
+                    "scalar: reverse != flip-forward-flip (must be bit-exact), \
+                     dims={:?} softplus={}",
+                    case.dims, case.delta_softplus
+                );
+                prop_assert!(
+                    last_rev.iter().zip(&last_fwd)
+                        .all(|(a, b)| a.to_bits() == b.to_bits()),
+                    "scalar: last_state differs (must be bit-exact), dims={:?}",
+                    case.dims
+                );
+            } else {
+                // Scale-relative, matching `auto_backend_matches_scalar`'s bar:
+                // the gap is one SIMD-vs-libm transcendental, ~1e-7.
+                let scale = out_rev.iter().fold(1.0_f32, |m, v| m.max(v.abs()));
+                for (i, (r, f)) in out_rev.iter().zip(&out_fwd).enumerate() {
+                    let rel = (r - f).abs() / scale;
+                    prop_assert!(
+                        rel < 1e-5,
+                        "neon: out[{i}] reverse={r} flip={f} rel={rel:.3e} \
+                         dims={:?}", case.dims
+                    );
+                }
+                let ls = last_rev.iter().fold(1.0_f32, |m, v| m.max(v.abs()));
+                for (i, (r, f)) in last_rev.iter().zip(&last_fwd).enumerate() {
+                    let rel = (r - f).abs() / ls;
+                    prop_assert!(
+                        rel < 1e-5,
+                        "neon: last_state[{i}] reverse={r} flip={f} \
+                         rel={rel:.3e} dims={:?}", case.dims
+                    );
+                }
+            }
+        }
+    }
+
+    /// The fused bidirectional scan must be **bit-identical** to running the
+    /// scan twice — once forward, once reversed. That is the definition it
+    /// shares Pass A under: the shared exp/discretize/projection products hold
+    /// exactly the values each standalone direction computes inline, consumed in
+    /// the same order, so the result is not merely close but bit-for-bit equal.
+    ///
+    /// Checked on the SAME backend on both sides, so any difference is a fusion
+    /// bug, not a SIMD-vs-libm gap. Runs on `Scalar` AND `Auto` — on aarch64 the
+    /// latter exercises the NEON fused path against NEON two-scans; on x86 it is
+    /// the scalar path again (harmless). Both threadings, so the new two-output
+    /// parallel driver is covered (small proptest shapes keep Auto sequential).
+    #[test]
+    fn fused_bidirectional_matches_two_scans(case in case_strategy()) {
+        let n_out = case.dims.batch * case.dims.dim * case.dims.len;
+        let n_last = case.dims.batch * case.dims.dim * case.dims.state;
+        let mk = |reverse| ScanInput {
+            u: &case.u, delta: &case.delta, a: &case.a, b: &case.b, c: &case.c,
+            d_skip: case.d_skip.as_deref(),
+            z: case.z.as_deref(),
+            delta_bias: case.delta_bias.as_deref(),
+            delta_softplus: case.delta_softplus,
+            reverse,
+        };
+        let bits_eq = |a: &[f32], b: &[f32]| a.iter().zip(b).all(|(x, y)| x.to_bits() == y.to_bits());
+
+        for backend in [Backend::Scalar, Backend::Auto] {
+            // reference: two standalone scans on this backend
+            let mut ref_fwd = vec![0.0_f32; n_out];
+            let mut ref_fwd_last = vec![0.0_f32; n_last];
+            selective_scan_with_backend(
+                &case.dims, &mk(false), &mut ref_fwd, Some(&mut ref_fwd_last), backend,
+            ).unwrap();
+            let mut ref_bwd = vec![0.0_f32; n_out];
+            let mut ref_bwd_last = vec![0.0_f32; n_last];
+            selective_scan_with_backend(
+                &case.dims, &mk(true), &mut ref_bwd, Some(&mut ref_bwd_last), backend,
+            ).unwrap();
+
+            for threading in [Threading::Sequential, Threading::Rayon] {
+                let mut f_fwd = vec![0.0_f32; n_out];
+                let mut f_bwd = vec![0.0_f32; n_out];
+                let mut f_fwd_last = vec![0.0_f32; n_last];
+                let mut f_bwd_last = vec![0.0_f32; n_last];
+                selective_scan_bidirectional(
+                    &case.dims, &mk(false), &mut f_fwd, &mut f_bwd,
+                    Some(&mut f_fwd_last), Some(&mut f_bwd_last),
+                    ScanOptions { backend, threading },
+                ).unwrap();
+
+                prop_assert!(bits_eq(&f_fwd, &ref_fwd), "fwd differs ({backend:?}/{threading:?}) dims={:?}", case.dims);
+                prop_assert!(bits_eq(&f_bwd, &ref_bwd), "bwd differs ({backend:?}/{threading:?}) dims={:?}", case.dims);
+                prop_assert!(bits_eq(&f_fwd_last, &ref_fwd_last), "fwd last_state differs ({backend:?}/{threading:?}) dims={:?}", case.dims);
+                prop_assert!(bits_eq(&f_bwd_last, &ref_bwd_last), "bwd last_state differs ({backend:?}/{threading:?}) dims={:?}", case.dims);
+            }
+        }
+    }
+
+    /// Guard against a vacuous pass: if `reverse` were silently ignored, the
+    /// equivalence test above would still hold (both sides would be forward
+    /// scans of... no — but the FFI/plumbing could still drop the flag). A
+    /// reversed scan must actually differ from a forward one on the same input.
+    #[test]
+    fn reverse_actually_reverses(case in case_strategy()) {
+        // L=1 is symmetric under reversal, and a constant sequence can be too.
+        prop_assume!(case.dims.len >= 4);
+
+        let n_out = case.dims.batch * case.dims.dim * case.dims.len;
+        let mk = |reverse| ScanInput {
+            u: &case.u, delta: &case.delta, a: &case.a, b: &case.b, c: &case.c,
+            d_skip: case.d_skip.as_deref(),
+            z: case.z.as_deref(),
+            delta_bias: case.delta_bias.as_deref(),
+            delta_softplus: case.delta_softplus,
+            reverse,
+        };
+
+        let mut out_f = vec![0.0_f32; n_out];
+        selective_scan(&case.dims, &mk(false), &mut out_f, None).unwrap();
+        let mut out_r = vec![0.0_f32; n_out];
+        selective_scan(&case.dims, &mk(true), &mut out_r, None).unwrap();
+
+        let scale = out_f.iter().fold(1e-6_f32, |m, v| m.max(v.abs()));
+        let max_rel = out_f.iter().zip(&out_r)
+            .map(|(a, b)| (a - b).abs() / scale)
+            .fold(0.0_f32, f32::max);
+        prop_assert!(
+            max_rel > 1e-4,
+            "reverse produced ~the forward answer (max_rel={max_rel:.3e}) — \
+             is the flag being dropped? dims={:?}", case.dims
+        );
+    }
 
     #[test]
     fn f32_matches_f64(case in case_strategy()) {
@@ -108,6 +334,7 @@ proptest! {
                 z: case.z.as_deref(),
                 delta_bias: case.delta_bias.as_deref(),
                 delta_softplus: case.delta_softplus,
+                reverse: case.reverse,
             },
             &mut out32,
             Some(&mut last32),
@@ -129,17 +356,26 @@ proptest! {
                 z: z.as_deref(),
                 delta_bias: delta_bias.as_deref(),
                 delta_softplus: case.delta_softplus,
+                reverse: case.reverse,
             },
             &mut out64,
             None,
         ).unwrap();
 
+        // f32 rounding is RELATIVE, so the bound must scale with the output
+        // magnitude. Proptest can produce large outputs (a 2.4 input through a
+        // long near-identity recurrence reaches |out| ~ 270), where an absolute
+        // 1e-3 bound rejects a legitimate ~4e-6 relative f32 error. Scale the
+        // original 1e-3 by the output magnitude (>= 1), so bounded outputs keep
+        // the old bound exactly and large ones are held to the same relative
+        // accuracy. (Surfaced by a reverse=true case; the plain-scan numerics
+        // are unchanged from before the fused work — see BIDIRECTIONAL_LOG.md.)
+        let scale = out64.iter().fold(1.0_f64, |m, v| m.max(v.abs()));
         for (i, (k, r)) in out32.iter().zip(out64.iter()).enumerate() {
             let err = (*k as f64 - r).abs();
-            // f32 rounding over <=32 sequential steps with bounded values
             prop_assert!(
-                err < 1e-3,
-                "idx {i}: f32={k} f64={r} err={err:.3e} dims={:?}",
+                err < 1e-3 * scale,
+                "idx {i}: f32={k} f64={r} err={err:.3e} scale={scale:.3e} dims={:?}",
                 case.dims
             );
             prop_assert!(k.is_finite(), "non-finite output at {i}: {k}");
@@ -160,6 +396,7 @@ proptest! {
             z: case.z.as_deref(),
             delta_bias: case.delta_bias.as_deref(),
             delta_softplus: case.delta_softplus,
+            reverse: case.reverse,
         };
 
         let mut out_scalar = vec![0.0_f32; n_out];
@@ -210,6 +447,7 @@ proptest! {
             z: case.z.as_deref(),
             delta_bias: case.delta_bias.as_deref(),
             delta_softplus: case.delta_softplus,
+            reverse: case.reverse,
         };
 
         for backend in [Backend::Auto, Backend::Scalar] {
@@ -304,6 +542,7 @@ fn streaming_matches_oneshot() {
             z: Some(&z),
             delta_bias: Some(&bias),
             delta_softplus: true,
+            reverse: false,
         };
 
         for backend in [Backend::Scalar, Backend::Auto] {
@@ -334,6 +573,7 @@ fn streaming_matches_oneshot() {
                 z: Some(&z1),
                 delta_bias: Some(&bias),
                 delta_softplus: true,
+                reverse: false,
             };
             let mut out1 = vec![0.0_f32; dim * split];
             let mut mid = vec![0.0_f32; dim * state];
@@ -359,6 +599,7 @@ fn streaming_matches_oneshot() {
                 z: Some(&z2),
                 delta_bias: Some(&bias),
                 delta_softplus: true,
+                reverse: false,
             };
             let mut out2 = vec![0.0_f32; dim * rem];
             selective_scan_with_state(&dims2, &in2, &mut out2, None, Some(&mid), opts).unwrap();
@@ -408,6 +649,7 @@ fn neon_backend_availability() {
         z: None,
         delta_bias: None,
         delta_softplus: false,
+        reverse: false,
     };
     let mut out = [0.0_f32];
     let res = selective_scan_with_backend(&dims, &input, &mut out, None, Backend::Neon);
@@ -445,6 +687,7 @@ fn validation_rejects_bad_shapes() {
         z: None,
         delta_bias: None,
         delta_softplus: false,
+        reverse: false,
     };
     assert!(selective_scan(&dims, &input, &mut out, None).is_err());
 
@@ -469,6 +712,7 @@ fn validation_rejects_bad_shapes() {
         z: None,
         delta_bias: None,
         delta_softplus: false,
+        reverse: false,
     };
     assert!(selective_scan(&dims_bad, &input, &mut out3, None).is_err());
 }

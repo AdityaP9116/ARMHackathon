@@ -32,6 +32,7 @@ def _selective_scan_op(
     delta_bias: Optional[torch.Tensor],
     h0: Optional[torch.Tensor],
     delta_softplus: bool,
+    reverse: bool,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     batch, dim, length = u.shape
     state = a.shape[1]
@@ -45,21 +46,23 @@ def _selective_scan_op(
         dims, u.data_ptr(), delta.data_ptr(), a.data_ptr(), b.data_ptr(),
         c.data_ptr(), ptr(d_skip), ptr(z), ptr(delta_bias),
         delta_softplus, "auto", "auto", out.data_ptr(),
-        last_state.data_ptr(), ptr_h0=ptr(h0),
+        last_state.data_ptr(), ptr_h0=ptr(h0), reverse=reverse,
     )
     _CALLS["n"] += 1
     return out, last_state
 
 
 @_selective_scan_op.register_fake
-def _(u, delta, a, b, c, d_skip, z, delta_bias, h0, delta_softplus):
+def _(u, delta, a, b, c, d_skip, z, delta_bias, h0, delta_softplus, reverse):
+    # Neither `h0` nor `reverse` changes the output shapes: h0 seeds the state,
+    # reverse changes traversal order. Must mirror the op signature exactly.
     return torch.empty_like(u), u.new_empty(
         (u.shape[0], u.shape[1], a.shape[1]))
 
 
 def selective_scan(u, delta, A, B, C, D=None, z=None, delta_bias=None,
                    delta_softplus=False, return_last_state=False,
-                   initial_state=None):
+                   initial_state=None, reverse=False):
     """Selective scan on CPU float32 torch tensors.
 
     u, delta, z: (batch, dim, len); A: (dim, state);
@@ -71,6 +74,13 @@ def selective_scan(u, delta, A, B, C, D=None, z=None, delta_bias=None,
 
     Tensors are made contiguous/f32 here, so callers can pass transposed
     views directly.
+
+    reverse: walk the sequence backward in time. The output layout is
+    unchanged — timestep t still lands at index t — so this is NOT the same as
+    reversing the output; it is exactly equivalent to flipping the time axis of
+    u/delta/B/C/z, scanning forward, and flipping the result back, minus the
+    copies. Under reverse, `last_state` is the state after consuming t=0 (the
+    START of the sequence), so it is not a resumable decode cache.
     """
     batch, dim, length = u.shape
     state = A.shape[1]
@@ -85,8 +95,69 @@ def selective_scan(u, delta, A, B, C, D=None, z=None, delta_bias=None,
         None if delta_bias is None else _c(delta_bias),
         None if initial_state is None else _c(initial_state),
         delta_softplus,
+        reverse,
     )
     return (out, last_state) if return_last_state else out
+
+
+@torch.library.custom_op("arm_scan::selective_scan_bidirectional", mutates_args=())
+def _selective_scan_bidir_op(
+    u: torch.Tensor,
+    delta: torch.Tensor,
+    a: torch.Tensor,
+    b: torch.Tensor,
+    c: torch.Tensor,
+    d_skip: Optional[torch.Tensor],
+    z: Optional[torch.Tensor],
+    delta_bias: Optional[torch.Tensor],
+    delta_softplus: bool,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    batch, dim, length = u.shape
+    state = a.shape[1]
+
+    out_fwd = torch.empty_like(u)
+    out_bwd = torch.empty_like(u)
+    dims = _ffi.ArmScanDims(batch, dim, length, state,
+                            b.shape[1] if b.dim() == 4 else 1)
+    ptr = lambda t: 0 if t is None else t.data_ptr()
+    _ffi.scan_bidir_raw(
+        dims, u.data_ptr(), delta.data_ptr(), a.data_ptr(), b.data_ptr(),
+        c.data_ptr(), ptr(d_skip), ptr(z), ptr(delta_bias),
+        delta_softplus, "auto", "auto",
+        out_fwd.data_ptr(), out_bwd.data_ptr(),
+    )
+    _CALLS["n"] += 1
+    return out_fwd, out_bwd
+
+
+@_selective_scan_bidir_op.register_fake
+def _(u, delta, a, b, c, d_skip, z, delta_bias, delta_softplus):
+    return torch.empty_like(u), torch.empty_like(u)
+
+
+def selective_scan_bidirectional(u, delta, A, B, C, D=None, z=None,
+                                 delta_bias=None, delta_softplus=False):
+    """Fused bidirectional scan on CPU float32 torch tensors.
+
+    Same tensor layouts as `selective_scan`; returns (out_fwd, out_bwd) — the
+    forward and backward scans — computed in one call sharing the direction-
+    independent Pass A (exp). Equal to `selective_scan` forward + `reverse=True`,
+    but ~1.7x cheaper by not recomputing the exp. Merging the two directions is
+    the caller's job (see `arm_scan.bidirectional_scan`).
+    """
+    batch, dim, length = u.shape
+    state = A.shape[1]
+    if B.dim() == 3:
+        B = B.reshape(batch, 1, state, length)
+    if C.dim() == 3:
+        C = C.reshape(batch, 1, state, length)
+    return _selective_scan_bidir_op(
+        _c(u), _c(delta), _c(A), _c(B), _c(C),
+        None if D is None else _c(D),
+        None if z is None else _c(z),
+        None if delta_bias is None else _c(delta_bias),
+        delta_softplus,
+    )
 
 
 def kernel_calls() -> int:

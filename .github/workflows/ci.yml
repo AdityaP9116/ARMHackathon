@@ -50,6 +50,13 @@ jobs:
           python3 -m pip install --quiet numpy \
             || python3 -m pip install --quiet --break-system-packages numpy
           python3 tests/check_ffi.py
+      # Definition check for the bidirectional scan: flip-forward-flip must
+      # equal a backward-in-time recurrence. numpy-only (no torch, no kernel),
+      # so it runs on every platform. Also the executable spec for the future
+      # Rust `reverse` flag — see TOPOLOGY_IMPLEMENTATION_PLAN.md §2.
+      - name: Bidirectional definition check (numpy)
+        working-directory: .
+        run: python3 tests/check_bidirectional_math.py
       - name: Bench ladder (scalar vs NEON)
         if: matrix.name == 'linux-arm64'
         run: |
@@ -89,7 +96,9 @@ jobs:
     name: bench-op (linux-arm64)
     needs: test
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
+    # 45, not 30: the bidirectional sweep now compiles the torch.compile baseline
+    # up to L=2048 (~12 min of inductor), on top of the torch install and build.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -104,6 +113,57 @@ jobs:
       - name: Install torch (CPU aarch64)
         working-directory: .
         run: python3 -m pip install --quiet numpy torch
+      # Fast consolidated sanity: both topologies run, are correct, and beat
+      # native torch — one clear pass/fail before the fuller benchmarks.
+      - name: Smoke check (unidirectional + bidirectional vs torch)
+        working-directory: .
+        run: python3 bench/smoke_topologies.py
+      # Correctness gates speed (CLAUDE.md): the bidirectional wrapper is
+      # checked against the vendored f64 reference through the real kernel
+      # before anything here is benchmarked.
+      - name: Bidirectional correctness through the kernel
+        working-directory: .
+        run: python3 tests/check_bidirectional.py
+      # Bidirectional scan vs stock PyTorch (eager + torch.compile), plus the
+      # internal fused-vs-flip diagnostic. Provisional (shared runner); headline
+      # numbers need a dedicated Arm host per bench/README.md.
+      # Full sweep-len (L = 128 .. 8192) rather than --quick's 128/512, because
+      # the interesting behaviour is at long L: torch.compile scales linearly in
+      # L while the kernel scales sub-linearly, so the gap WIDENS (3.63x at
+      # L=128 -> 4.67x at L=512). Two short shapes could not show that.
+      #
+      # Compilation is the entire cost (~L^0.6: 59s@128, 134s@512), so it is
+      # capped at 2048 — roughly 12 min. L=4096/8192 still get measured against
+      # eager and against the kernel, just without a torch.compile row. Raising
+      # the cap risks inductor OOMing on the unrolled graph; that experiment
+      # belongs in the dispatchable bench-baseline workflow, not on every push.
+      - name: Bidirectional benchmark (vs eager / torch.compile)
+        working-directory: .
+        timeout-minutes: 25
+        run: |
+          set -o pipefail
+          python3 bench/bench_bidirectional.py --suite sweep-len \
+            --compile-max-len 2048 --reps 5 --warmup 1 \
+            --json bench-bidi.json 2>&1 | tee bench-bidi.log
+      - name: Publish bidirectional result
+        if: always()
+        working-directory: .
+        run: |
+          {
+            echo "## Bidirectional scan (linux-arm64 CI runner)"
+            echo "vs-baseline rows are the result. The internal fusion win is small and is NOT a headline — see BIDIRECTIONAL_LOG.md."
+            echo '```'
+            grep -E "^===|fused ==|^  (ref_|scan_fwd|bidirectional)|^  =>|exp-sharing|^bidirectional \(fused\)|torch.compile COST|^  +[0-9]+ +[0-9.]+s|^  +L|^  L=" bench-bidi.log 2>/dev/null || echo "(bench did not run)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      # The bench flushes JSON after every shape, so this survives even if a
+      # long-L shape is killed mid-sweep.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bidirectional-bench-arm64
+          path: bench-bidi.json
+          if-no-files-found: warn
       - name: Op-level benchmark (kernel vs eager vs torch.compile)
         working-directory: .
         run: |
