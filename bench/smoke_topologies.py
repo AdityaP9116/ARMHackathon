@@ -11,6 +11,14 @@ and the median speedup over native PyTorch eager. Exits non-zero if any case is
 wrong — so it doubles as a CI gate that "both topologies work and beat torch
 across L".
 
+The baseline is `selective_scan_ref`, vendored from the official
+`state-spaces/mamba` repo (it matches HF transformers' `slow_forward` bit-for-
+bit), so this times our kernel against **the original Mamba scan** in native
+PyTorch — the genuine CPU baseline, since mamba-ssm's CUDA kernel is GPU-only.
+Bidirectional is that scan run twice (forward + flipped), the standard Vim/
+Caduceus construction. These are OP-LEVEL numbers (the scan itself); a full Mamba
+model has other ops this kernel does not touch, so end-to-end is more modest.
+
 No torch.compile here (that is what the full bench/bench_*.py are for, and it is
 what OOM'd the runner at L=8192 by unrolling the recurrence into a graph — the
 eager reference used here builds no graph, but the default cap stays conservative

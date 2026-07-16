@@ -37,6 +37,30 @@ first so the fusion is justified by a measurement instead of an assumption.
 > "compute Pass A once, run the recurrence in N directions" structure is exactly
 > what the 2D cross-scan's four directions need.
 
+### What the baseline is (so the numbers are not misread)
+
+The reference these speedups are measured against is `selective_scan_ref`,
+**vendored verbatim from the official `state-spaces/mamba` repo** (Tri Dao /
+Albert Gu, Apache-2.0) — it matches HF transformers' `MambaMixer.slow_forward`
+bit-for-bit. So this is our kernel vs **the original Mamba selective scan**, in
+native PyTorch. That reference is a pure Python-loop implementation, which is
+exactly what runs on CPU: mamba-ssm's CUDA kernel is GPU-only and does not run on
+CPU at all. It is the genuine CPU baseline, not a strawman — and `torch.compile`
+of the same reference (the stronger baseline) is measured alongside it.
+
+PyTorch has **no native bidirectional Mamba op**. Bidirectional Mamba (Vim,
+Caduceus, VMamba) is always built by running the scan twice — forward and on the
+flipped sequence — and summing; that is the standard construction, and it is what
+the bidirectional baseline here does. So "bidirectional" is not something invented
+for this project; only the *fused kernel* that computes both directions sharing
+one exp is ours.
+
+**These are op-level numbers** — the selective scan, the part this kernel
+replaces. A full Mamba *model* also has GEMMs and a conv the kernel does not
+touch, so end-to-end `generate()` is more modest (~1.2–3×, `bench_e2e.py`). The
+28–43× / 6–9.5× figures are for the scan op; never quote them as a whole-model
+speedup.
+
 ---
 
 ## Step 1 — correctness path (plan §2.1)
@@ -859,6 +883,13 @@ the L2 traffic cost essentially nothing next to eliminating a second exp sweep.
 No assumption — the benchmark's `exp_sharing_speedup` is the actual old path
 (two-call) against the actual new one (fused), and it reproduces the projection.
 
+**Reproduced across four independent CI runs** (`c5deb72`, `605b056`-era reruns,
+`8ab3b72`, `d7c23fa`): the per-shape exp-sharing numbers land in **1.58–1.75×**
+every time, geomean ~1.67×. Unlike the earlier fused-`reverse` "win" that turned
+out to be shared-runner noise (Step 5), this one is a real, stable effect —
+because it is a large one (~1.7×) sitting well above the ±10–20% runner variance,
+and because the projection predicted it before it was measured.
+
 ### Why the headline moved too
 
 `bidirectional_scan` now routes the common case through the fused op, so the
@@ -1019,24 +1050,38 @@ limitation: torch is the thing that can't keep up. The cap is kept at 4096 (not
 hit in Step 6 — the eager reference builds no graph, but the conservative cap
 costs nothing. (`--lengths` overrides the sweep for manual runs.)
 
-### The measured result (L=512, linux-arm64 CI)
+### The measured result — sweep (linux-arm64 CI, run `d7c23fa`, reps=3)
 
 ```
-  unidirectional   PASS  max_abs=4.08e-06   kernel= 2.76ms  eager= 63.97ms  => 23.2x
-  bidirectional    PASS  max_abs=6.68e-06   kernel= 3.30ms  eager=125.08ms  => 37.9x
+       L  topology        gate  max_abs   kernel(ms)   eager(ms)  speedup
+     512  unidirectional  PASS  4.1e-06       2.76       60.14    21.8x
+     512  bidirectional   PASS  6.7e-06       3.49      119.68    34.3x
+    2048  unidirectional  PASS  4.3e-06      10.31      259.34    25.2x
+    2048  bidirectional   PASS  5.5e-06      12.53      513.20    41.0x
+    4096  unidirectional  PASS  5.4e-06      20.59      527.22    25.6x
+    4096  bidirectional   PASS  7.0e-06      27.10     1055.70    39.0x
 ```
+
+**vs native torch eager: unidirectional 21.8–25.6×, bidirectional 34.3–41.0×**,
+all PASS. Unidirectional climbs with L (21.8 → 25.6) as fixed per-call overhead
+amortizes; bidirectional runs ~34–41× (the higher L=2048 vs L=4096 is baseline
+noise, not a trend). These sit slightly under the full `bench_bidirectional.py`
+figures for the same run (e.g. L=512 34.3× here vs 38.6× there) purely because
+the smoke check uses fewer reps and a noisier eager baseline — same kernel.
 
 ### The exp-sharing win is visible in two numbers here
 
+At L=512:
+
 |  | unidirectional | bidirectional | ratio |
 |---|---|---|---|
-| **eager** (native torch) | 63.97 ms | 125.08 ms | **1.96×** |
-| **kernel** (ours, fused) | 2.76 ms | 3.30 ms | **1.20×** |
+| **eager** (native torch) | 60.14 ms | 119.68 ms | **1.99×** |
+| **kernel** (ours, fused) | 2.76 ms | 3.49 ms | **1.26×** |
 
 Native torch pays ~2× for the second direction (it runs two scans). Our fused
-kernel pays only ~1.2×, because Pass A (the exp, ~85% of the work) is computed
+kernel pays only ~1.26×, because Pass A (the exp, ~85% of the work) is computed
 once and shared. **That is the whole Step-7 result in a 2×2 table** — and it is
-why bidirectional gets a *bigger* speedup than unidirectional (37.9× vs 23.2×):
+why bidirectional gets a *bigger* speedup than unidirectional (34.3× vs 21.8×):
 torch's cost doubles, ours barely moves, so the gap widens.
 
 ### Reconciling with the benchmark table (they are NOT different numbers)

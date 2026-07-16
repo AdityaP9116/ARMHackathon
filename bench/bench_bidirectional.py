@@ -29,9 +29,26 @@ THE NUMBERS
   exp_sharing_speedup = twocall / fused   <- the Stage-3 win, projected ~1.7x
                                              (exp is ~85% and direction-independent).
 
-Both baselines are built on the SAME vendored reference (tests/reference/) that
-the rest of the project measures against, so these rows are directly comparable
-to bench_op.py's.
+WHAT THE BASELINE ACTUALLY IS (so the speedup is not misread)
+
+The reference is `selective_scan_ref`, vendored verbatim from the official
+`state-spaces/mamba` repo (Tri Dao / Albert Gu, Apache-2.0) — it matches HF
+transformers' `MambaMixer.slow_forward` bit-for-bit. So this measures our kernel
+against **the original Mamba selective scan**, in native PyTorch. It is a pure
+Python-loop implementation, which is exactly what runs on CPU: the official
+mamba-ssm CUDA kernel is GPU-only and does not run on CPU at all, so this is the
+genuine CPU baseline, not a strawman. `torch.compile` of that same reference is
+the stronger baseline and is measured too.
+
+PyTorch has no native *bidirectional* Mamba op; bidirectional Mamba (Vim,
+Caduceus, VMamba) is always built by running the scan twice — forward and on the
+flipped sequence — and summing. `ref_eager_bidi` does exactly that, so it is the
+standard bidirectional construction, not something invented here.
+
+These are **op-level** numbers — the selective scan, which is the part this
+kernel replaces. A full Mamba *model* also has GEMMs and a conv this kernel does
+not touch, so end-to-end `generate()` speedups are more modest (~1.2–3x, see
+bench_e2e.py). Do not quote an op-level figure as a whole-model speedup.
 
 Two correctness gates run before any timing: the fused op must equal the two-call
 path (bit-identical — sharing the exp reuses identical values), AND the kernel
