@@ -18,6 +18,14 @@ grep -m1 -E "model name|Model" /proc/cpuinfo || true
 echo "== system packages =="
 sudo apt-get update -qq
 sudo apt-get install -y -qq build-essential python3-venv python3-pip git curl
+# perf for the profiling tier (PROFILING.md / bench/profile/perf_ampere.sh).
+# Oracle images run the -oracle kernel flavor, which linux-tools-generic
+# does not cover — try the exact kernel package first, best-effort.
+sudo apt-get install -y -qq linux-tools-common \
+    "linux-tools-$(uname -r)" 2>/dev/null \
+    || sudo apt-get install -y -qq linux-tools-common linux-tools-generic \
+    || echo "WARN: perf not installed; profiling tier will be unavailable"
+command -v perf >/dev/null && perf --version || true
 
 echo "== rust toolchain =="
 if ! command -v cargo >/dev/null; then
