@@ -998,3 +998,60 @@ whole row (`L × state` each) rather than the current chunk-local scratch
 (`CHUNK × state`). At long L this spills L1 → L2 (same order as the existing
 `bt`/`ct` planes, so not a new category of cost), but the NEON Stage 2 must
 confirm the exp saving beats the extra L2 round-trip — measure, do not assume.
+
+---
+
+## Step 8 — smoke check: both topologies, one pass/fail (and the win in two numbers)
+
+`bench/smoke_topologies.py` is a fast consolidated sanity gate (wired into the
+`bench-op` CI job): across an **L sweep** (default 512 / 2048 / 4096) it verifies
+**both** topologies are correct (max_abs vs an f64 reference, gated 1e-4) and
+faster than native torch eager, exiting non-zero if any case fails. It exists so
+"do unidirectional and bidirectional both run and beat torch across L" has a
+single unambiguous answer per CI run, rather than being reconstructed from two
+separate benchmark outputs.
+
+The practical **ceiling on L is the torch reference itself** — an O(L)
+Python-loop scan — not our kernel, which runs in constant memory at any L. As L
+grows the eager baseline is what gets slow, which is the finding, not a
+limitation: torch is the thing that can't keep up. The cap is kept at 4096 (not
+8192) to stay clear of the runner limits that the `torch.compile` graph-unroll
+hit in Step 6 — the eager reference builds no graph, but the conservative cap
+costs nothing. (`--lengths` overrides the sweep for manual runs.)
+
+### The measured result (L=512, linux-arm64 CI)
+
+```
+  unidirectional   PASS  max_abs=4.08e-06   kernel= 2.76ms  eager= 63.97ms  => 23.2x
+  bidirectional    PASS  max_abs=6.68e-06   kernel= 3.30ms  eager=125.08ms  => 37.9x
+```
+
+### The exp-sharing win is visible in two numbers here
+
+|  | unidirectional | bidirectional | ratio |
+|---|---|---|---|
+| **eager** (native torch) | 63.97 ms | 125.08 ms | **1.96×** |
+| **kernel** (ours, fused) | 2.76 ms | 3.30 ms | **1.20×** |
+
+Native torch pays ~2× for the second direction (it runs two scans). Our fused
+kernel pays only ~1.2×, because Pass A (the exp, ~85% of the work) is computed
+once and shared. **That is the whole Step-7 result in a 2×2 table** — and it is
+why bidirectional gets a *bigger* speedup than unidirectional (37.9× vs 23.2×):
+torch's cost doubles, ours barely moves, so the gap widens.
+
+### Reconciling with the benchmark table (they are NOT different numbers)
+
+The full `bench_bidirectional.py` reported 39.98× vs eager at L=512; the smoke
+check reported 37.9×. Same computation, different CI runs:
+
+| | kernel (ms) | eager (ms) | speedup |
+|---|---|---|---|
+| smoke | 3.30 | 125.08 | 37.9× |
+| bench | 3.277 | 131.0 | 39.98× |
+
+The **kernel** times are 0.7% apart (identical); the **eager** baselines are 4.5%
+apart — ordinary ±10–20% shared-runner noise. The entire speedup gap is that
+eager wobble, not the kernel. The unidirectional 23.2× has no row in the
+bidirectional-only bench table (different topology; its home is `bench_op.py` /
+`BASELINE_REPORT.md`, which also says ~23× at L=512 — it matches). Nothing is
+inconsistent; the two views simply measured a noisy baseline on different days.

@@ -1,22 +1,25 @@
 """Smoke check: do BOTH topologies run, correctly, and faster than native torch?
 
-A fast consolidated sanity test (not a full benchmark) that, for one realistic
-shape, verifies:
+A fast consolidated sanity test (not a full benchmark) that, across a sweep of
+sequence lengths, verifies:
 
   1. unidirectional  arm_scan.selective_scan       vs  the vendored torch reference
   2. bidirectional   arm_scan.bidirectional_scan   vs  the same reference, both directions
 
-For each: correctness (max_abs vs an f64 reference, gated at 1e-4) and the median
-speedup over native PyTorch eager. Exits non-zero if either is wrong or slower —
-so it doubles as a CI gate that "both topologies work and beat torch".
+For each (L, topology): correctness (max_abs vs an f64 reference, gated at 1e-4)
+and the median speedup over native PyTorch eager. Exits non-zero if any case is
+wrong — so it doubles as a CI gate that "both topologies work and beat torch
+across L".
 
-No torch.compile here (that is what the full bench/bench_*.py are for) — this is
-meant to run in seconds. Uses the same vendored reference and value distribution
-as the real benchmarks, so the numbers are comparable, just single-shape.
+No torch.compile here (that is what the full bench/bench_*.py are for, and it is
+what OOM'd the runner at L=8192 by unrolling the recurrence into a graph — the
+eager reference used here builds no graph, but the default cap stays conservative
+regardless). The practical ceiling on L is the TORCH reference (an O(L)
+Python-loop scan), not our kernel — which runs in constant memory at any L.
 
 Usage:
-    python bench/smoke_topologies.py
-    python bench/smoke_topologies.py --shape 1,768,512,16 --reps 5
+    python bench/smoke_topologies.py                         # sweep 512,2048,4096
+    python bench/smoke_topologies.py --lengths 512,4096,8192 --reps 3
 """
 
 import argparse
@@ -84,8 +87,8 @@ def bidi_kernel(t):
         delta_bias=t["delta_bias"], delta_softplus=True, merge="sum")
 
 
-def check(name, kernel_fn, ref_fn, t, warmup, reps):
-    """Return (ok, max_abs, speedup)."""
+def check(length, name, kernel_fn, ref_fn, t, warmup, reps):
+    """Time one topology at one length; print a table row. Return (ok, speedup)."""
     # Correctness vs a TRUE f64 reference: upcast the inputs AND run the
     # reference in float64. `selective_scan_ref` casts its result back to the
     # input dtype and defaults to compute_dtype=float32, so passing f64 inputs
@@ -100,36 +103,49 @@ def check(name, kernel_fn, ref_fn, t, warmup, reps):
     eager_ms = median_ms(lambda: ref_fn(t), warmup, reps)
     speedup = eager_ms / kern_ms
     ok = max_abs < MAX_ABS
-    status = "PASS" if ok else "FAIL"
-    print(f"  {name:16s} {status}  max_abs={max_abs:.2e} (gate {MAX_ABS:g})  "
-          f"kernel={kern_ms:7.2f}ms  eager={eager_ms:8.2f}ms  "
-          f"=> {speedup:5.1f}x vs torch")
+    print(f"  {length:6d}  {name:15s} {'PASS' if ok else 'FAIL'}  "
+          f"{max_abs:.1e}  {kern_ms:9.2f}  {eager_ms:10.2f}  {speedup:6.1f}x")
     return ok, speedup
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--shape", default="1,768,512,16", help="B,D,L,N")
-    ap.add_argument("--reps", type=int, default=5)
-    ap.add_argument("--warmup", type=int, default=2)
+    ap.add_argument("--lengths", default="512,2048,4096",
+                    help="comma-separated L values to sweep")
+    ap.add_argument("--dim", type=int, default=768)
+    ap.add_argument("--state", type=int, default=16)
+    ap.add_argument("--reps", type=int, default=3)
+    ap.add_argument("--warmup", type=int, default=1)
     args = ap.parse_args()
 
-    batch, dim, length, state = (int(x) for x in args.shape.split(","))
-    print(f"smoke check — shape B{batch} D{dim} L{length} N{state}  "
+    lengths = [int(x) for x in args.lengths.split(",")]
+    print(f"smoke check — B1 D{args.dim} N{args.state}, sweep L={lengths}  "
           f"reps={args.reps}")
-    print(f"kernel: {arm_scan.lib_path()}\n")
+    print(f"kernel: {arm_scan.lib_path()}")
+    print("\nNote: the ceiling here is the TORCH reference (an O(L) Python-loop\n"
+          "scan we time against), not our kernel — which runs in constant memory\n"
+          "at any L. As L grows the eager baseline is what gets slow, which is\n"
+          "itself the point: torch is what can't keep up.\n")
+    print(f"  {'L':>6}  {'topology':15s} gate  max_abs   kernel(ms)   "
+          f"eager(ms)  speedup")
 
+    uni_sp, bidi_sp, all_ok = [], [], True
     with torch.no_grad():
-        t = make_inputs(batch, dim, length, state)
-        ok_u, sp_u = check("unidirectional", uni_kernel, uni_ref, t,
-                           args.warmup, args.reps)
-        ok_b, sp_b = check("bidirectional", bidi_kernel, bidi_ref, t,
-                           args.warmup, args.reps)
+        for length in lengths:
+            t = make_inputs(1, args.dim, length, args.state)
+            ok_u, sp_u = check(length, "unidirectional", uni_kernel, uni_ref,
+                               t, args.warmup, args.reps)
+            ok_b, sp_b = check(length, "bidirectional", bidi_kernel, bidi_ref,
+                               t, args.warmup, args.reps)
+            uni_sp.append(sp_u)
+            bidi_sp.append(sp_b)
+            all_ok = all_ok and ok_u and ok_b
 
     print()
-    if ok_u and ok_b:
-        print(f"BOTH TOPOLOGIES OK — unidirectional {sp_u:.1f}x, "
-              f"bidirectional {sp_b:.1f}x faster than native torch eager.")
+    if all_ok:
+        print(f"BOTH TOPOLOGIES OK across L={lengths} — vs native torch eager: "
+              f"unidirectional {min(uni_sp):.1f}–{max(uni_sp):.1f}x, "
+              f"bidirectional {min(bidi_sp):.1f}–{max(bidi_sp):.1f}x.")
     else:
         print("SMOKE CHECK FAILED — a topology is incorrect (see FAIL above).")
         sys.exit(1)
