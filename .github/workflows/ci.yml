@@ -57,6 +57,9 @@ jobs:
       - name: Bidirectional definition check (numpy)
         working-directory: .
         run: python3 tests/check_bidirectional_math.py
+      - name: Makefile parity (make test = the README's validate core)
+        working-directory: .
+        run: make test PY=python3
       - name: Bench ladder (scalar vs NEON)
         if: matrix.name == 'linux-arm64'
         run: |

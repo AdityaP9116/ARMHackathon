@@ -61,39 +61,18 @@ CI (free, arm64): build + unit + property tests on every push; a nightly job add
 
 ## 4. Week-by-week plan
 
-**Week 1 (Jul 2–8) — De-risk everything. Gate week.**
-- Spin up Oracle Ampere A1; set up Rust + PyTorch-CPU toolchain; script the environment (reused later for Graviton).
-- **Trap check #1:** does `mamba-ssm` pip-install without CUDA on arm64? (Historically no — it builds CUDA extensions.) Determine integration shape: patch vs. standalone module.
-- **Trap check #2:** which recon checkpoint (MambaRecon / DH-Mamba) downloads and runs on CPU, however slowly, and what is its exact scan structure (directions, d_state, d_model)? Verify U-Mamba fallback in parallel.
-- Register for fastMRI access (approval can take days — do this day 1).
-- Extract `selective_scan_ref` into the test harness; measure the real CPU-vs-GPU-folklore gap ourselves.
-- **Gate:** model + integration shape locked by Jul 8.
+*(Rewritten Jul 17, 2026 for the SS2D/diffusion reframe — sequencing source:
+`SS2D_REPOSITIONING_PLAN.md` §7. Weeks before Jul 20 are history; see git log.)*
 
-**Weeks 2–3 (Jul 9–22) — MVP kernel.**
-- Scalar Rust kernel + full correctness suite green (Layer 1, tests 1–3).
-- Fused discretization → NEON → chunked scan → rayon, each landed behind green tests.
-- C-ABI shim + PyTorch custom op; first end-to-end reconstruction on CPU with our op.
-- arm64 CI live.
-- **Gate:** end-to-end recon at quality parity, measurably faster than fallback, by Jul 22.
+| Week | Kernel | App / results |
+|---|---|---|
+| Jul 20 | P0-1 batched 4-direction SS2D call; P0-2 `bench_ss2d.py` at real shapes; P1-3 workspace reuse | **Route A/B decision + GPU budget**; start distillation/training; `make validate` in CI |
+| Jul 27 | P1-4 `reverse` flag; P1-5 cache-block over L; P1-6 tile transpose | Prior trained/distilled; Phase C/D parity on arm64 CI; 2D goldens |
+| Aug 3 | P1-7 fused `selective_scan_2d` **only if P0-2 measurement justifies** | **Graviton session 1** (`c8g`, scripted, terminate after): headline ladder, per-NFE, $/recon, core-scaling |
+| Aug 10 | freeze; SVE2 FEXPA only if green | **Graviton session 2**: demo video; `RESULTS.md` final; Devpost writeup; **submit Aug 12–13** |
 
-**Week 4 (Jul 23–29) — 2D variant + benchmarks.**
-- Bidirectional/2D scan variant matching the model's blocks.
-- Full benchmark harness: seq-length sweep, core-scaling curve, `torch.compile` baseline, peak memory.
-- First Graviton `c8g` session: real numbers + Performix profiles (this is when the ~$5–20 spend starts).
-- Synthetic-phantom demo path; quality-gate script finalized on real fastMRI slices.
-
-**Week 5 (Jul 30–Aug 5) — Stretch + WOW, only if MVP is green.**
-- PyPI wheels (`maturin`) → mamba-130m tokens/sec table → Gradio side-by-side demo → BF16 experiment → SVE2 (in that order; stop wherever time runs out).
-- Second Graviton session for any re-benchmarks + demo rehearsal.
-
-**Week 6 (Aug 6–13) — Freeze + package.**
-- **Code freeze Aug 8.** From here: docs, video, writeup only.
-- Dry-run the README setup on a *fresh* instance from scratch — judges test exactly this.
-- Record the <3-min video on the Graviton instance (side-by-side demo centerpiece; no copyrighted music).
-- Devpost writeup; MIT license visible in the GitHub About sidebar; RESULTS.md final.
-- **Submit Aug 12–13, not 3:50 PM on the 14th.**
-
----
+Fallback: if distillation slips past Jul 31 → MambaRecon (decision-log fallback row);
+the kernel work is identical either way.
 
 ## 5. Standing risk register
 
