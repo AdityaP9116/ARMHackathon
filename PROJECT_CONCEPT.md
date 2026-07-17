@@ -11,9 +11,9 @@
 
 ## The decision in one paragraph
 
-We ship the **first Arm-optimized `selective_scan` for the PyTorch/`mamba-ssm` ecosystem, written in Rust** (chunked/associative scan + NEON + multi-core threading), packaged as a **reusable, pip-installable kernel** that accelerates *any* Mamba model on Arm CPU, and we prove it on **MRI reconstruction**. The efficient selective-scan is CUDA-only; on CPU it falls back to an unoptimized sequential loop, and the multi-directional 2D scans used by vision-Mamba models have no fast CPU path anywhere. That absence is the contribution.
+**(Amended Jul 17, 2026 — see "Prior-art verification" and the amended rows below.)** We ship the **first Arm-optimized `selective_scan` for the PyTorch ecosystem, written in Rust** (chunked/associative scan + NEON + multi-core threading), packaged as a **reusable, pip-installable kernel** — and we double down on the **SS2D multi-directional cross-scan**, the one variant with no fast CPU implementation anywhere, proven on **diffusion-based MRI reconstruction** (EDM prior + SS2D-Mamba denoiser, per `MRI_DIFFUSION_IMPLEMENTATION_PLAN.md`). 1D language Mamba on CPU is contested space (llama.cpp, BitMamba, Rust engines); the PyTorch drop-in and SS2D are not. Diffusion recon invokes the scan hundreds of times per image, which is the regime where kernel wins compound — and it directly attacks "diffusion recon must be GPU-bound."
 
-Why this scores: it's a hand-written Arm kernel for an op with *zero* existing CPU optimization (Tech, 40), a reusable artifact that benefits the whole ecosystem (Impact, 20), "cheap medical image reconstruction on CPU" (WOW, 25), with reproducible free-tier validation and CI (DX, 15).
+Why this scores: a hand-written Arm kernel for an op with *zero* existing CPU implementation (Tech, 40), a reusable artifact that benefits the whole PyTorch Mamba ecosystem (Impact, 20), "diffusion-prior medical image reconstruction on a CPU" (WOW, 25), with reproducible free-tier validation and CI (DX, 15).
 
 ---
 
@@ -25,12 +25,22 @@ Why this scores: it's a hand-written Arm kernel for an op with *zero* existing C
 | Target op | `selective_scan` (1D core) + VMamba-style 2D cross-scan (SS2D) | The hot path; CUDA-only today; the 2D variant is what the MRI model actually calls |
 | Language | Rust — stable `core::arch::aarch64` NEON | Memory-safe, differentiating; same instructions as C, zero perf penalty |
 | Integration | Rust `cdylib` (C-ABI) → `pybind11` glue → PyTorch custom op + Python shim | Swaps the op without touching checkpoint or model source |
-| **Primary model** | **MambaRecon** (WACV 2025) | **Has published pretrained checkpoints** — see verification below |
-| Fallback model | U-Mamba (segmentation) | Only if the recon checkpoint path fails; kernel work is unchanged |
+| **Primary application** | **SS2D-Mamba diffusion MRI recon** (EDM + `ambient-diffusion-mri` scaffolding) — *amended Jul 17, 2026; Phase A gate passed (GO), see `apps/mri_diffusion/PHASE_A_FINDINGS.md`* | Diffusion's 18–256 denoiser calls/image maximize kernel leverage; strictly bigger WOW; exercises the same SS2D surface |
+| Fallback model | MambaRecon (WACV 2025, published checkpoints) | Superseded as primary by the diffusion plan; remains the fallback if the prior-training route slips (verification below still valid) |
 | Correctness gate | Diff vs. the model's own reference scan (`*_ref`) | Makes correctness mechanical, not judgment |
 | Baselines | Stock CPU fallback **and** `torch.compile` | Pre-empts the "you beat a strawman" critique |
 | SVE2 | Stretch only, on nightly Rust | SVE2 intrinsics are nightly/perma-unstable; NEON MVP stays on stable |
-| Training | None | Use a published checkpoint; training is out of scope |
+| Training | ~~None~~ → **Reopened (Jul 17, 2026):** bounded distillation/small-scale training for the diffusion prior (Route A recommended: distill Tamir's U-Net EDM checkpoint into the SS2D-Mamba; Route B small-scale fallback) | No public Mamba-backbone EDM MRI checkpoint exists; `MRI_DIFFUSION_IMPLEMENTATION_PLAN.md` §8 scopes the routes and the explicit GPU budget decision |
+
+---
+
+## Prior-art verification (checked Jul 17, 2026) — what we may and may not claim
+
+A thorough novelty check (web + issue trackers) found real prior art for **1D language Mamba on CPU/Arm**: llama.cpp/ggml has a CPU `ssm_scan` (Mamba and Mamba-2, GGUF runtime, partially vectorized — RISC-V vector landed 2026); BitMamba-2 runs 1.58-bit Mamba-2 on ARM NEON in a custom C++ engine; mamba.rs / Candle / flawedmatrix are standalone Rust engines; mamba.py/mamba-mini are pure-PyTorch parallel scans. **Therefore: never claim "first Mamba on Arm CPU" or "first Mamba in Rust."**
+
+What survives, verified: **no NEON/SIMD-optimized `selective_scan` exposed to PyTorch exists** (drop-in, no model conversion — nothing comparable found); **no fast CPU SS2D cross-scan exists anywhere** (VMamba ships CUDA-only; edge efforts are FPGA accelerators or distill-to-ONNX workarounds); **no diffusion-Mamba model has a CPU deployment path** (DiM/ZigMa/DiffuSSM are GPU-only in practice). These three are the claims, stated with "to the best of our knowledge," with the prior-art table published in the README so judges see we did the search.
+
+**Consequences for positioning:** SS2D + the diffusion application are the moat and get the engineering focus; 1D language rows (mamba-130m) are kept as *generality* evidence, not the headline.
 
 ---
 
