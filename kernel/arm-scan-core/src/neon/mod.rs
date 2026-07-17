@@ -64,9 +64,34 @@ pub(crate) fn scan(
     let n4 = state.div_ceil(4) * 4;
 
     // Transpose every (batch, group) B/C plane to (len, n4), zero-padded.
+    //
+    // P1-3 workspace reuse (SS2D_REPOSITIONING_PLAN §5): the diffusion
+    // workload calls this ~1,650x per reconstruction with identical
+    // layouts, so the two planes (2 x ~7.9 MB at L=123k) are cached
+    // thread-locally, keyed by layout. On a key hit the padding columns
+    // (n >= state) still hold the zeros the previous call left — the
+    // transpose below only ever writes n < state — so no re-zeroing is
+    // needed; a key change reallocates zeroed buffers.
+    use core::cell::RefCell;
+    type PlaneCache = ((usize, usize, usize, usize), Vec<f32>, Vec<f32>);
+    thread_local! {
+        static PLANES: RefCell<PlaneCache> =
+            const { RefCell::new(((0, 0, 0, 0), Vec::new(), Vec::new())) };
+    }
     let planes = batch * groups;
-    let mut bt = vec![0.0_f32; planes * len * n4];
-    let mut ct = vec![0.0_f32; planes * len * n4];
+    let key = (planes, len, n4, state);
+    let (mut bt, mut ct) = PLANES.with(|c| {
+        let mut cached = c.borrow_mut();
+        if cached.0 == key {
+            (
+                core::mem::take(&mut cached.1),
+                core::mem::take(&mut cached.2),
+            )
+        } else {
+            let n = planes * len * n4;
+            (vec![0.0_f32; n], vec![0.0_f32; n])
+        }
+    });
     for p in 0..planes {
         let src_base = p * state * len;
         let dst_base = p * len * n4;
@@ -79,45 +104,48 @@ pub(crate) fn scan(
             }
         }
     }
-    let (bt, ct) = (&bt[..], &ct[..]);
+    {
+        let (bt, ct) = (&bt[..], &ct[..]);
 
-    crate::parallel::for_each_channel(
-        len,
-        state,
-        out,
-        last_state,
-        threading,
-        || Scratch::new(n4),
-        |scratch, ch_idx, out_row, last| {
-            let (bi, d) = (ch_idx / dim, ch_idx % dim);
-            let plane = (bi * groups + d / group_size) * len * n4;
-            let row = ch_idx * len;
-            let ch = Channel {
-                u: &input.u[row..row + len],
-                delta: &input.delta[row..row + len],
-                z: input.z.map(|z| &z[row..row + len]),
-                bias: input.delta_bias.map_or(0.0, |v| v[d]),
-                d_skip: input.d_skip.map(|v| v[d]),
-                softplus: input.delta_softplus,
-                reverse: input.reverse,
-            };
-            let a_row = &input.a[d * state..(d + 1) * state];
-            let bt_plane = &bt[plane..plane + len * n4];
-            let ct_plane = &ct[plane..plane + len * n4];
-            let init = h0.map(|s| &s[ch_idx * state..(ch_idx + 1) * state]);
+        crate::parallel::for_each_channel(
+            len,
+            state,
+            out,
+            last_state,
+            threading,
+            || Scratch::new(n4),
+            |scratch, ch_idx, out_row, last| {
+                let (bi, d) = (ch_idx / dim, ch_idx % dim);
+                let plane = (bi * groups + d / group_size) * len * n4;
+                let row = ch_idx * len;
+                let ch = Channel {
+                    u: &input.u[row..row + len],
+                    delta: &input.delta[row..row + len],
+                    z: input.z.map(|z| &z[row..row + len]),
+                    bias: input.delta_bias.map_or(0.0, |v| v[d]),
+                    d_skip: input.d_skip.map(|v| v[d]),
+                    softplus: input.delta_softplus,
+                    reverse: input.reverse,
+                };
+                let a_row = &input.a[d * state..(d + 1) * state];
+                let bt_plane = &bt[plane..plane + len * n4];
+                let ct_plane = &ct[plane..plane + len * n4];
+                let init = h0.map(|s| &s[ch_idx * state..(ch_idx + 1) * state]);
 
-            // SAFETY: NEON is always available on aarch64.
-            unsafe {
-                if state == 16 {
-                    channel_n16(a_row, bt_plane, ct_plane, &ch, init, out_row, last, scratch);
-                } else {
-                    scratch.a_pad[..state].copy_from_slice(a_row);
-                    channel_general(bt_plane, ct_plane, &ch, init, out_row, last, scratch);
+                // SAFETY: NEON is always available on aarch64.
+                unsafe {
+                    if state == 16 {
+                        channel_n16(a_row, bt_plane, ct_plane, &ch, init, out_row, last, scratch);
+                    } else {
+                        scratch.a_pad[..state].copy_from_slice(a_row);
+                        channel_general(bt_plane, ct_plane, &ch, init, out_row, last, scratch);
+                    }
+                    epilogue_row(&ch, out_row);
                 }
-                epilogue_row(&ch, out_row);
-            }
-        },
-    );
+            },
+        );
+    }
+    PLANES.with(|c| *c.borrow_mut() = (key, bt, ct));
 }
 
 /// Per-thread working buffers (allocated once per rayon worker).
