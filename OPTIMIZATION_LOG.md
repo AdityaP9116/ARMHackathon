@@ -178,3 +178,23 @@ floor_bound (e.g. `small` auto 3.15e-6 vs 4.8e-5; `extreme_delta` 1.83e-5 vs
 are short sequences where exp accuracy hardly matters, while the exp-sensitive
 cases all have generous floors. Proptest `f32_matches_f64` and parity (<1e-5)
 green. kernel-vs-ref in bench_op 4–5e-6, ~20× under the 1e-4 gate.
+
+
+---
+
+## Step 4 — P0 batched 4-direction SS2D call (app-side; Jul 17)
+
+All 4 cross-scan directions in ONE kernel call (`SS2DBlock.forward`) —
+shared projections make it exact. Kernel calls/denoiser-forward 12→3;
+per-NFE 542→23 ms (x86 scalar+rayon, 32×32 toy). Phase-C parity re-gated:
+PASS (sampling parity 0.0). `bench_ss2d.py` at the real diffusion shapes:
+flip/permute/projection overhead 21–25% → fused `selective_scan_2d`
+justified per the 15% rule.
+
+## Step 5 — P1-3 thread-local B/C plane cache (Jul 17, `3177ded`)
+
+The transposed-plane workspace (2 × ~7.9 MB at L=123k) was
+reallocated+zeroed each of the ~1,650 calls/reconstruction. Now cached
+thread-locally keyed by (planes,len,n4,state); padding-zero invariant
+holds on key hits (transpose never writes n ≥ state). No numerics change;
+aarch64 clippy clean; arm gates via CI.

@@ -75,7 +75,13 @@ Everything obeys the standing gates: golden `< 1e-4` near the recorded floor, NE
 rayon bit-identity at `RAYON_NUM_THREADS ∈ {1,2,8}`, C-ABI replay. New 2D goldens per topology
 plan §3.3 (including non-square and non-multiple-of-4 grids) land **before** the Rust they gate.
 
-### P0 — this week, Python only, no new Rust
+### P0 — this week, Python only, no new Rust  ✅ DONE (Jul 17)
+
+> **Measured:** P0-1 batched 4-direction call landed (kernel calls/forward
+> 12→3; per-NFE 542→23 ms on x86; Phase-C parity re-gated PASS). P0-2
+> `bench_ss2d.py` at real shapes: overhead 21–25% on every real shape →
+> **fused `selective_scan_2d` (P1-7) JUSTIFIED** by the 15% rule
+> (`bench/results/ss2d_windows-i9.json`).
 
 1. **Stack the 4 directions into one batched scan call** (`SS2DBlock.forward` + `ss2d.py`).
    Topology plan §3.1 already prescribes it; the backbone currently makes 4 separate
@@ -89,6 +95,10 @@ plan §3.3 (including non-square and non-multiple-of-4 grids) land **before** th
    per-NFE number the honest-framing rules require.
 
 ### P1 — Rust, in dependency order
+
+> **Status (Jul 17):** P1-3 ✅ (thread-local B/C plane cache, `3177ded`);
+> P1-4 ✅ (reverse flag landed via bidirectional PR#8, ABI v5 — `ss2d.py`
+> still to adopt it to delete the per-block flips). Next: P1-5, P1-6.
 
 3. **Workspace reuse** (IMPROVEMENT_IDEAS §4.1): thread-local scratch arena, keyed by size,
    no per-call alloc/zero. Was a "nice-to-have" at 1 call per forward; at 1,650 calls per

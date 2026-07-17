@@ -22,8 +22,9 @@ Not done — the half that wins or loses the competition:
 
 1. **Route A/B prior decision + GPU budget** (`MRI_DIFFUSION_IMPLEMENTATION_PLAN.md` §14) —
    the only open decision that can starve everything downstream.
-2. **SS2D kernel work ordered in `SS2D_REPOSITIONING_PLAN.md` §5** (P0 batched directions +
-   `bench_ss2d.py` measurement first; fused 2D only if measurement justifies).
+2. **SS2D kernel work** (`SS2D_REPOSITIONING_PLAN.md` §5): P0 done (batched directions;
+   measurement says fused 2D **is** justified — overhead 21–25%); P1-3/P1-4 done;
+   next P1-5 cache-block over L, P1-6 tile transpose, then P1-7 fused kernel.
 3. **No dedicated-hardware numbers** (Ampere/Graviton) and no `make validate` Makefile yet.
 4. **No demo, no <3-min video, no Devpost writeup.** Submit Aug 12–13.
 
