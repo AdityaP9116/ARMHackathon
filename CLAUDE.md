@@ -25,7 +25,7 @@ Not done — the half that wins or loses the competition:
 2. **SS2D kernel work** (`SS2D_REPOSITIONING_PLAN.md` §5): P0 done (batched directions;
    measurement says fused 2D **is** justified — overhead 21–25%); P1-3/P1-4 done;
    next P1-5 cache-block over L, P1-6 tile transpose, then P1-7 fused kernel.
-3. **No dedicated-hardware numbers** (Ampere/Graviton) and no `make validate` Makefile yet.
+3. **No dedicated-hardware numbers** (Ampere/Graviton). `make validate` exists and `make test` runs in CI.
 4. **No demo, no <3-min video, no Devpost writeup.** Submit Aug 12–13.
 
 ## Rules of engagement
