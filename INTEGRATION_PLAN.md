@@ -1,5 +1,8 @@
 # Integration Plan — Arm-Optimized Selective Scan Kernel (Rust + NEON)
 
+> **Phase 7 resolved (Jul 17, 2026):** the application question this plan left open (audio/ECG/RF vs MRI) is decided — SS2D-Mamba diffusion MRI per `MRI_DIFFUSION_IMPLEMENTATION_PLAN.md` and `SS2D_REPOSITIONING_PLAN.md`.
+
+
 **Goal:** a drop-in, pip-installable replacement for the slow CPU selective-scan path in the
 PyTorch/Mamba ecosystem, hand-optimized for Arm CPUs. One kernel; every Mamba model that
 routes through it gets faster on Arm.

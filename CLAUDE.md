@@ -8,22 +8,32 @@ The contribution: the **first Arm-optimized `selective_scan` for the PyTorch/Mam
 
 ## Where things stand (as of Jul 13, 2026)
 
-The kernel is built. `INTEGRATION_PLAN.md` Phases 0–6 are landed:
+*(Updated Jul 17, 2026 — the SS2D/diffusion reframe; see `SS2D_REPOSITIONING_PLAN.md`.)*
 
-- Golden-vector ground truth vs. the vendored upstream reference + an independent numpy verifier.
-- `arm-scan-core` (scalar + NEON chunked two-pass) and `arm-scan-ffi` (C ABI, the only crate with raw pointers).
-- `torch.library` custom op + `arm_scan.patch()` for HF `transformers` Mamba.
-- Platform-tagged wheels, arm64/macOS/x86 CI, op-level and end-to-end benchmark harnesses.
+The kernel is built and measured. `INTEGRATION_PLAN.md` Phases 0–6 landed (goldens,
+scalar+NEON chunked kernel, rayon, C ABI, torch custom op + `arm_scan.patch()`, wheels,
+arm64/macOS/x86 CI, benchmark harnesses, `BASELINE_REPORT.md` with CI-provisional Arm
+numbers). 1D bidirectional + resumable-state (h0) kernels exist. **The application is
+DECIDED:** SS2D-Mamba **diffusion MRI reconstruction** (EDM + CSI-lab scaffolding;
+MambaRecon is the fallback) — see `MRI_DIFFUSION_IMPLEMENTATION_PLAN.md`. App phases
+A (GO), B, C are gated green in `apps/mri_diffusion/`; D's gate test exists.
 
-Not done — and this is the half that wins or loses the competition:
+Not done — the half that wins or loses the competition:
 
-1. **The application is undecided.** `PROJECT_CONCEPT.md` locks MambaRecon (MRI); `INTEGRATION_PLAN.md` Phase 7 floats an audio/ECG/RF pivot. **Resolve this first — it blocks the 2D scan, the demo, and the video.**
-2. **No 2D/bidirectional (SS2D) cross-scan** — required if the application stays vision-Mamba/MRI.
-3. **No measured numbers.** No `RESULTS.md`; the README results table is empty; nothing has run on Graviton.
-4. **README promises that don't exist** — `make validate` (no Makefile).
-5. **No demo, no <3-min video, no Devpost writeup.**
+1. **Route A/B prior decision + GPU budget** (`MRI_DIFFUSION_IMPLEMENTATION_PLAN.md` §14) —
+   the only open decision that can starve everything downstream.
+2. **SS2D kernel work ordered in `SS2D_REPOSITIONING_PLAN.md` §5** (P0 batched directions +
+   `bench_ss2d.py` measurement first; fused 2D only if measurement justifies).
+3. **No dedicated-hardware numbers** (Ampere/Graviton) and no `make validate` Makefile yet.
+4. **No demo, no <3-min video, no Devpost writeup.** Submit Aug 12–13.
 
 ## Rules of engagement
+
+**Claims policy (never over-claim).** Real prior art exists for 1D Mamba on CPU/Arm
+(llama.cpp `ssm_scan`, BitMamba-2, mamba.rs, Candle). Never claim "first Mamba on Arm."
+The three defensible to-our-knowledge claims: (1) first SIMD `selective_scan` callable
+from PyTorch as a drop-in; (2) first fast CPU SS2D cross-scan; (3) first diffusion-prior
+MRI reconstruction on CPU. Cite the prior-art table in `README.md`.
 
 **Correctness gates speed. Always.** Every optimization layer must reproduce the previous layer's output within tolerance before anyone benchmarks it. The acceptance criterion is fixed: for every `tests/golden/*.npz`, `max_abs(out_kernel - out_f64) < 1e-4`, and a correct f32 kernel lands within a small factor of that case's recorded `f32_max_abs_err` floor — not orders of magnitude above it. Never loosen a tolerance to make a test pass; find the bug.
 

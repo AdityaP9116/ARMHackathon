@@ -1,5 +1,8 @@
 # APPLICATIONS — Brainstorm (nothing locked yet)
 
+> **DECIDED (Jul 17, 2026):** the SS2D slot went to **Mamba-diffusion MRI reconstruction** (`MRI_DIFFUSION_IMPLEMENTATION_PLAN.md`); MambaRecon is the fallback. This file is the honest pre-decision brainstorm, kept as history. Decision log: `PROJECT_CONCEPT.md`.
+
+
 **Status: open brainstorm, not a decision.** Written Jul 13, 2026.
 
 The goal is to pick **three applications** that showcase the Arm selective-scan kernel across clearly different fields.

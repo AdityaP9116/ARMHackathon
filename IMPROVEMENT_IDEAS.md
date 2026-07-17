@@ -1,5 +1,8 @@
 # IMPROVEMENT_IDEAS — Kernel & Integration Optimization Backlog
 
+> **Priority note (Jul 17, 2026):** the §10 shortlist is ordered for the 1D language workload. The operative ordering is now `SS2D_REPOSITIONING_PLAN.md` §5 (SS2D/diffusion workload); this file remains the *how* reference for each item.
+
+
 **Status:** ideas backlog. The **profiling tooling is built and merged**
 (`scan_profiled` + the `Profile kernel` workflow); the **measured phase split
 is in §1.0** and now drives priorities. No *optimization* here is implemented
