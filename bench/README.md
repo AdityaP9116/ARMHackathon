@@ -41,3 +41,5 @@ results directory back (or commit it deliberately) when done.
 The same script is the reusable harness for any future host: pass a
 different tag (`graviton-c7g`, `ci-arm64`, …) and re-run
 `render_results.py` — results group by tag automatically.
+
+SS2D: `bench_ss2d.py` measures the unfused 2D path at the real diffusion shapes and prints the fused-kernel go/no-go (overhead % vs the 15% rule); results land beside the other tagged JSONs.

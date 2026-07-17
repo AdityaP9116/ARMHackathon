@@ -1,0 +1,42 @@
+{
+  "kind": "ss2d",
+  "tag": "windows-i9",
+  "host": "Windows-10-10.0.26200-SP0",
+  "machine": "AMD64",
+  "torch": "2.11.0.dev20260208+cu128",
+  "reps": 3,
+  "cases": [
+    {
+      "case": "L1_384x320_in96_b1",
+      "arm_total_s": 0.6462624999985565,
+      "arm_scan_s": 0.5017235000013898,
+      "overhead_pct": 22.36537010850692
+    },
+    {
+      "case": "L1_384x320_in96_b4",
+      "arm_total_s": 2.6362461000026087,
+      "arm_scan_s": 2.0718964000006963,
+      "overhead_pct": 21.40732232856993
+    },
+    {
+      "case": "L2_192x160_in192_b1",
+      "arm_total_s": 0.30523879999964265,
+      "arm_scan_s": 0.23282599999947706,
+      "overhead_pct": 23.723327440761256
+    },
+    {
+      "case": "L2_192x160_in192_b4",
+      "arm_total_s": 1.1736796000004688,
+      "arm_scan_s": 0.8838093000013032,
+      "overhead_pct": 24.697566524888888
+    },
+    {
+      "case": "mini_96x80_in96_b1",
+      "arm_total_s": 0.043786700000055134,
+      "arm_scan_s": 0.029111400002875598,
+      "overhead_pct": 33.515428194317124,
+      "ref_total_s": 1.4661481000002823
+    }
+  ],
+  "fused_kernel_justified": true
+}

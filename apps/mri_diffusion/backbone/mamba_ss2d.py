@@ -104,12 +104,16 @@ class SS2DBlock(nn.Module):
         s, z = xz.chunk(2, dim=1)
         s = F.silu(self.local(s))
 
+        # P0-1 (SS2D_REPOSITIONING_PLAN §5): all 4 directions in ONE scan
+        # call — 4x the rayon rows, 1/4 the FFI crossings. x_proj/dt_proj
+        # are shared across directions, so batching them is exact.
         rows = s.flatten(2)                                   # row-major
         cols = s.transpose(2, 3).flatten(2)                   # col-major
-        out = self._scan_dir(rows)
-        out = out + self._scan_dir(rows.flip(-1)).flip(-1)
-        oc = self._scan_dir(cols)
-        oc = oc + self._scan_dir(cols.flip(-1)).flip(-1)
+        seqs = torch.cat(
+            [rows, rows.flip(-1), cols, cols.flip(-1)], dim=0)
+        o1, o2, o3, o4 = self._scan_dir(seqs).chunk(4, dim=0)
+        out = o1 + o2.flip(-1)
+        oc = o3 + o4.flip(-1)
         merged = (out.view(b, self.inner, h, w)
                   + oc.view(b, self.inner, w, h).transpose(2, 3))
 
