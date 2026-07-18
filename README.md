@@ -17,6 +17,7 @@ We checked, so the "first" claims don't rest on faith:
 | [mamba.rs](https://github.com/LaurentMazare/mamba.rs), [Candle](https://github.com/huggingface/candle), [flawedmatrix/mamba-ssm](https://github.com/flawedmatrix/mamba-ssm) | Standalone Rust Mamba inference engines | Full-model runtimes, not a scan kernel; no PyTorch interop; 1D only |
 | [mamba.py](https://github.com/alxndrTL/mamba.py), [mamba-mini](https://github.com/MzeroMiko/mamba-mini) | Pure-PyTorch parallel-scan implementations | No SIMD, no Arm tuning; memory-hungry parallel form; no SS2D kernel |
 | [VMamba](https://github.com/MzeroMiko/VMamba) | The SS2D reference — as a **CUDA-only** extension | No CPU kernel at all; CPU falls back to the slow pure-PyTorch reference |
+| [2DMamba](https://arxiv.org/abs/2412.00678) (CVPR 2025) | Hardware-aware 2D selective scan with SRAM tiling — the GPU-side precedent for tiled 2D scanning | **GPU-only** (CUDA); intrinsic-2D semantics, not the VMamba cross-scan existing checkpoints use; no CPU or PyTorch-CPU path |
 
 **What this project claims — precisely.** Not "first Mamba on Arm" (see above). To the best of our knowledge it is: (1) the **first Arm-optimized `selective_scan` exposed as a PyTorch custom op** — a drop-in for existing PyTorch checkpoints, no model conversion; (2) the **first fast CPU implementation of the SS2D multi-directional cross-scan** on any architecture; (3) the **first diffusion-prior MRI reconstruction demonstrated on Arm CPU**.
 

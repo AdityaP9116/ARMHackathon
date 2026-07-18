@@ -94,6 +94,14 @@ plan §3.3 (including non-square and non-multiple-of-4 grids) land **before** th
    with the workload's own numbers, and decides how much of P1 is justified. Also gives the
    per-NFE number the honest-framing rules require.
 
+> **External-research triage (Jul 18):** a literature sweep (VSSD, 2DMamba, EfficientViM,
+> COREY, FairyFuse — verified) converged on this same ordering; see
+> [`RESEARCH_TRIAGE_MAMBA2_2D.md`](RESEARCH_TRIAGE_MAMBA2_2D.md). Deltas folded in: P1-5 gains a
+> static `CHUNK` sweep at SS2D shapes + a preceding roofline run; P1-6 uses a `vld4q_f32`
+> de-interleave 4×4 transpose (fewer shuffles than vtrn/vzip); P1-7 cites 2DMamba's SRAM tiling
+> as GPU-side precedent. VSSD and SSD-on-CPU are rejected-with-reasons there (they'd dissolve
+> the sequential-recurrence moat) — writeup material, not work items.
+
 ### P1 — Rust, in dependency order
 
 > **Status (Jul 17):** P1-3 ✅ (thread-local B/C plane cache, `3177ded`);
