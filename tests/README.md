@@ -12,6 +12,9 @@ Everything the Rust kernel will be validated against lives here. See
 | `golden/*.npz` | The golden vectors: f32 inputs, f64-computed ground-truth outputs (`out_f64`, `last_state_f64`), plus the upstream-identical f32 outputs (`out_f32`) that establish each case's tolerance floor. |
 | `golden/manifest.json` | One metadata entry per case (shapes, flags, seed, observed f32 floor). |
 | `verify_golden.py` | Independent verifier: recomputes every case with a pure-numpy, loop-based f64 implementation that shares no code with the generator; also checks determinism. |
+| `gen_golden_2d.py` | 2D cross-scan (SS2D) golden generator, `TOPOLOGY_IMPLEMENTATION_PLAN.md` §3.3. Six grid cases — square, non-square, H/W not multiples of 4, degenerate height, and a `state=13` NEON-tail case. Stores the **four direction planes separately, before any merge**, so a kernel bug and a merge-strategy bug can't be confused. Writes to `golden/2d/`, kept apart from the 1D set because the schemas differ and `verify_golden.py` globs `golden/*.npz`. |
+| `golden/2d/manifest.json` | Metadata + recorded f32 floor per 2D case. |
+| `verify_golden_2d.py` | Independent numpy re-derivation of the 2D planes, **and** a replay of each case through `arm_scan.ss2d.ss2d_scan` on the real C ABI, reported as a multiple of that case's f32 floor (`--no-kernel` skips the replay). |
 | `check_hf_slow_path.py` | Proves HF `transformers` Mamba routes through `MambaMixer.slow_forward` on CPU (the Phase-4 patch target), shows the vendored reference reproduces the real mixer bit-exactly, and captures `golden/hf_mixer_layer0.npz` from a genuine mamba-130m forward pass. |
 
 ## Verified results (2026-07-10, torch 2.11, transformers 5.1)
