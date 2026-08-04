@@ -77,19 +77,24 @@ Three things to find in that output, in order of importance:
 ## 3. The full baseline (~90 min, one command, unattended)
 
 ```bash
-THREADS_LIST="1 2 4 8 16 32 64" bash bench/run_baseline.sh graviton-c8g 2>&1 | tee session.log
+USD_PER_HOUR=2.90 INSTANCE_TYPE=c8g.16xlarge THREADS_LIST="1 2 4 8 16 32 64" bash bench/run_baseline.sh graviton-c8g 2>&1 | tee session.log
 ```
 
-That single command runs all six stages. What it covers and roughly how long:
+Set `USD_PER_HOUR` to what you are **actually paying** (check the console — spot differs from
+on-demand); it drives the $/reconstruction table. Add `PRIOR_CKPT=path.pt` if a trained prior
+exists, to get the quality rows too.
+
+That single command runs all seven stages. What it covers and roughly how long:
 
 | Stage | What | ~Time |
 |---|---|---|
-| [1/6] | correctness gate + **2D goldens** + SS2D pair parity at 1/2/8 threads | 10 min |
-| [2/6] | criterion ladder: `scalar_seq → neon_seq → neon_par` | 15 min |
-| [3/6] | op-level vs eager **and `torch.compile`** (the baseline judges trust) | 20 min |
-| [4/6] | **core-scaling sweep 1→64 threads** — the Cloud-track chart | 15 min |
-| [5/6] | end-to-end mamba-130m generate (downloads ~300 MB once) | 15 min |
-| [6/6] | **SS2D at production grids** + bidirectional | 15 min |
+| [1/7] | correctness gate + **2D goldens** + SS2D pair parity at 1/2/8 threads | 10 min |
+| [2/7] | criterion ladder: `scalar_seq → neon_seq → neon_par` | 15 min |
+| [3/7] | op-level vs eager **and `torch.compile`** (the baseline judges trust) | 20 min |
+| [4/7] | **core-scaling sweep 1→64 threads** — the Cloud-track chart | 15 min |
+| [5/7] | end-to-end mamba-130m generate (downloads ~300 MB once) | 15 min |
+| [6/7] | **SS2D at production grids** + bidirectional | 15 min |
+| [7/7] | **diffusion app**: per-NFE latency + $/reconstruction | 10 min |
 
 Set `SKIP_E2E=1` if you fall behind — it is the slowest stage and the least
 differentiating. Everything else is load-bearing.

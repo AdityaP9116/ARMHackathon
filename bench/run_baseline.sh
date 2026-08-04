@@ -15,6 +15,10 @@
 #   SKIP_SCALING=1       skip the RAYON_NUM_THREADS scaling loop
 #   SKIP_E2E=1           skip HF end-to-end (downloads mamba-130m once)
 #   SKIP_SS2D=1          skip the 2D cross-scan + bidirectional topologies
+#   SKIP_DIFFUSION=1     skip the diffusion app (per-NFE latency, $/recon)
+#   USD_PER_HOUR=2.90    instance price -> enables the cost-per-recon table
+#   INSTANCE_TYPE=c8g.16xlarge   labels that cost table
+#   PRIOR_CKPT=path.pt   trained prior -> adds PSNR/SSIM/NMSE quality rows
 #   THREADS_LIST="1 2 4" thread counts for the scaling loop
 #                        (default: powers of 2 up to nproc)
 #   PY=path              python to use (default: .venv/bin/python if
@@ -40,11 +44,11 @@ echo "=== baseline run: tag=$TAG  python=$PY  $(date -u +%FT%TZ) ==="
 run uname -a
 run nproc
 
-echo "=== [0/6] build FFI cdylib (required by every python stage) ==="
+echo "=== [0/7] build FFI cdylib (required by every python stage) ==="
 (cd kernel && run cargo build --release -p arm-scan-ffi)
 
 if [ "${SKIP_CORRECTNESS:-0}" != 1 ]; then
-    echo "=== [1/6] correctness gate ==="
+    echo "=== [1/7] correctness gate ==="
     (cd kernel && run cargo test --release)
     run "$PY" tests/check_ffi.py
     # 2D cross-scan: independent numpy re-derivation + the goldens replayed
@@ -64,7 +68,7 @@ if [ "${SKIP_CORRECTNESS:-0}" != 1 ]; then
 fi
 
 if [ "${SKIP_CRITERION:-0}" != 1 ]; then
-    echo "=== [2/6] criterion ladder (scalar_seq / neon_seq / neon_par) ==="
+    echo "=== [2/7] criterion ladder (scalar_seq / neon_seq / neon_par) ==="
     if [ "${DRY_RUN:-0}" != 1 ]; then
         (cd kernel && cargo bench) | tee "$RES/criterion_${TAG}.txt"
     else
@@ -73,7 +77,7 @@ if [ "${SKIP_CRITERION:-0}" != 1 ]; then
 fi
 
 if [ "${SKIP_OP:-0}" != 1 ]; then
-    echo "=== [3/6] op-level suites ==="
+    echo "=== [3/7] op-level suites ==="
     run "$PY" bench/bench_op.py --suite basic --tag "$TAG" \
         --json "$RES/op_basic_${TAG}.json"
     run "$PY" bench/bench_op.py --suite sweep-len --tag "$TAG" \
@@ -86,7 +90,7 @@ if [ "${SKIP_OP:-0}" != 1 ]; then
 fi
 
 if [ "${SKIP_SCALING:-0}" != 1 ]; then
-    echo "=== [4/6] thread-scaling loop (one process per count) ==="
+    echo "=== [4/7] thread-scaling loop (one process per count) ==="
     if [ -z "${THREADS_LIST:-}" ]; then
         THREADS_LIST=""
         n=1
@@ -109,7 +113,7 @@ if [ "${SKIP_SCALING:-0}" != 1 ]; then
 fi
 
 if [ "${SKIP_E2E:-0}" != 1 ]; then
-    echo "=== [5/6] end-to-end HF generate() sweeps ==="
+    echo "=== [5/7] end-to-end HF generate() sweeps ==="
     for p in 128 512 2048; do
         run "$PY" bench/bench_e2e.py --prompt-tokens "$p" \
             --new-tokens 32 --reps 5 --tag "$TAG" \
@@ -118,7 +122,7 @@ if [ "${SKIP_E2E:-0}" != 1 ]; then
 fi
 
 if [ "${SKIP_SS2D:-0}" != 1 ]; then
-    echo "=== [6/6] topologies: 2D cross-scan + bidirectional ==="
+    echo "=== [6/7] topologies: 2D cross-scan + bidirectional ==="
     # SS2D at the diffusion workload's real grids. Reports the traversal-pair
     # path vs the legacy four-forward-scans formulation (same kernel both
     # sides, so the ratio is the restructuring alone) and the scan-vs-overhead
@@ -133,6 +137,32 @@ if [ "${SKIP_SS2D:-0}" != 1 ]; then
     run "$PY" bench/bench_bidirectional.py --suite sweep-len \
         --compile-max-len "${COMPILE_MAX_LEN:-512}" --reps 5 --warmup 1 \
         --tag "$TAG" --json "$RES/bidi_${TAG}.json"
+fi
+
+if [ "${SKIP_DIFFUSION:-0}" != 1 ]; then
+    echo "=== [7/7] diffusion application: per-NFE latency + \$/reconstruction ==="
+    # The workload the whole pitch is about. Latency is prior-independent (an
+    # untrained net of the same shape costs the same to evaluate), so this
+    # produces the headline app rows even before a prior exists. Set
+    # USD_PER_HOUR to the instance's on-demand price for the cost table, and
+    # PRIOR_CKPT to add the PSNR/SSIM/NMSE quality rows.
+    # Explicit ifs rather than `[ -n x ] && y`: under `set -e` that idiom is
+    # a foot-gun the moment it becomes the last statement in a block, and this
+    # script runs on metered hardware.
+    diff_args=""
+    if [ -n "${USD_PER_HOUR:-}" ]; then
+        diff_args="$diff_args --usd-per-hour $USD_PER_HOUR"
+    fi
+    if [ -n "${INSTANCE_TYPE:-}" ]; then
+        diff_args="$diff_args --instance $INSTANCE_TYPE"
+    fi
+    if [ -n "${PRIOR_CKPT:-}" ]; then
+        diff_args="$diff_args --checkpoint $PRIOR_CKPT"
+    fi
+    # shellcheck disable=SC2086
+    run "$PY" bench/bench_diffusion.py --reps "${DIFFUSION_REPS:-3}" \
+        --grids "${DIFFUSION_GRIDS:-384x320,192x160,128x128,64x64}" \
+        --tag "$TAG" $diff_args --json "$RES/diffusion_${TAG}.json"
 fi
 
 echo "=== render ==="

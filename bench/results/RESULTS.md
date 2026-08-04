@@ -1,8 +1,49 @@
 # Benchmark results
 
-Generated 2026-07-13 15:13 UTC by `bench/render_results.py` — do not edit numbers by hand.
+Generated 2026-08-04 17:02 UTC by `bench/render_results.py` — do not edit numbers by hand.
 
 Surface tags per BASELINE_TEST_PLAN.md: dedicated Arm hardware is headline-grade; shared CI runners are provisional; x86 hosts exercise the scalar backend only.
+
+## host tag: `Aditya-Patra`
+
+### diffusion app — `diffusion_windows-dev.json`
+
+- host: Windows-11-10.0.26200-SP0 (AMD64), torch 2.13.0+cpu (16 threads), reps=1
+- prior: `untrained (timing only)`
+
+| grid | params | per-NFE s | peak RSS MB | NFE=18 | NFE=69 | NFE=256 |
+|---|---|---|---|---|---|---|
+| 48x32 | 0.8 M | **0.087** | — | 1.6 s | 6.0 s | 22 s |
+| 384x320 | 0.8 M | **26.786** | — | 482.1 s | 1848.2 s | 6857 s |
+
+**Cost per reconstruction** at $2.9000/h (`c8g.16xlarge`):
+
+| grid | NFE=18 | NFE=69 | NFE=256 |
+|---|---|---|---|
+| 48x32 | $0.0013 | $0.0048 | $0.0179 |
+| 384x320 | $0.3884 | $1.4889 | $5.5239 |
+
+_Quality rows need a trained prior (`--checkpoint`); timing above is prior-independent._
+
+## host tag: `windows-dev-clean`
+
+### ss2d (2D cross-scan) — `ss2d_windows-dev.json`
+
+- host: Windows-11-10.0.26200-SP0 (AMD64), torch 2.13.0+cpu (16 threads), reps=3
+
+Traversal-pair path vs the legacy four-forward-scans formulation. **Same kernel on both sides**, so the ratio is attributable to the restructuring, not the backend.
+
+| case | pair ms | legacy ms | pair× | scan× | non-scan % | eager ms | compile ms |
+|---|---|---|---|---|---|---|---|
+| `L1_384x320_in96_b1` | 984.0 | 1739.5 | **1.77×** | 1.81× | 7.2% | — | — |
+| `L1_384x320_in96_b4` | 3971.0 | 7218.1 | **1.82×** | 1.90× | 13.8% | — | — |
+| `L2_192x160_in192_b1` | 468.8 | 850.7 | **1.81×** | 1.87× | 7.2% | — | — |
+| `L2_192x160_in192_b4` | 1863.5 | 3386.8 | **1.82×** | 1.88× | 9.4% | — | — |
+| `mini_96x80_in96_b1` | 63.4 | 118.6 | **1.87×** | 2.02× | 12.6% | 637.3 | — |
+| `tiny_32x32_in96_b1` | 10.2 | 17.8 | **1.74×** | 1.81× | 11.6% | 87.3 | — |
+
+- traversal-pair rewrite: **1.80× geomean** on the production shapes (block total)
+- fully fused `selective_scan_2d` (P1-7): **not justified** by the 15% non-scan-overhead rule
 
 ## host tag: `windows-i9`
 
@@ -89,6 +130,21 @@ Surface tags per BASELINE_TEST_PLAN.md: dedicated Arm hardware is headline-grade
 | 1,768,2048,16 | 647.47 | — | 9.96 | 65.02× | — | 1.91e-06 |
 | 1,768,4096,16 | 1315.36 | — | 20.71 | 63.51× | — | 2.86e-06 |
 | 1,768,8192,16 | 2721.49 | — | 37.65 | 72.29× | — | 2.86e-06 |
+
+### ss2d (2D cross-scan) — `ss2d_windows-i9.json`
+
+- host: Windows-10-10.0.26200-SP0 (AMD64), torch 2.11.0.dev20260208+cu128 (? threads), reps=3
+
+Traversal-pair path vs the legacy four-forward-scans formulation. **Same kernel on both sides**, so the ratio is attributable to the restructuring, not the backend.
+
+| case | pair ms | legacy ms | pair× | scan× | non-scan % | eager ms | compile ms |
+|---|---|---|---|---|---|---|---|
+| `L1_384x320_in96_b1` | 646.3 | — | — | — | 22.4% | — | — |
+| `L1_384x320_in96_b4` | 2636.2 | — | — | — | 21.4% | — | — |
+| `L2_192x160_in192_b1` | 305.2 | — | — | — | 23.7% | — | — |
+| `L2_192x160_in192_b4` | 1173.7 | — | — | — | 24.7% | — | — |
+| `mini_96x80_in96_b1` | 43.8 | — | — | — | 33.5% | 1466.1 | — |
+- fully fused `selective_scan_2d` (P1-7): **JUSTIFIED** by the 15% non-scan-overhead rule
 
 ## host tag: `windows-i9-t1`
 
