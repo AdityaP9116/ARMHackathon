@@ -88,6 +88,25 @@ Works on AWS Graviton, Oracle Ampere, Raspberry Pi 5, and Apple Silicon Macs. Co
 
 NEON `exp` polynomials and FMA reassociation mean results match the f64 reference to fp32 tolerance, not bit-exactly. Every golden case records its f32 error floor and every kernel change is gated against it; end-to-end, patched HF mamba-130m produces token-identical greedy output, and the MRI app carries a PSNR/SSIM/NMSE parity gate at identical output quality.
 
+## Data
+
+The phantom track is synthetic and credential-free — `make demo` needs no download.
+
+Real-data results use **fastMRI knee single-coil** (NYU Langone). That data is *not*
+redistributed here and cannot be: its Data Sharing Agreement forbids redistributing the
+dataset or the download links, and limits use to internal research and education. Request
+access at <https://fastmri.med.nyu.edu/>, then see `tools/prepare_fastmri.py`.
+
+> Knoll et al., *fastMRI: A Publicly Available Raw k-Space and DICOM Dataset of Knee Images
+> for Accelerated MR Image Reconstruction Using Machine Learning*, Radiology: Artificial
+> Intelligence, 2020; and Zbontar et al., *fastMRI: An Open Dataset and Benchmarks for
+> Accelerated MRI*, arXiv:1811.08839.
+>
+> Data used in the preparation of this work were obtained from the NYU fastMRI Initiative
+> database. NYU fastMRI investigators provided data but did not participate in analysis or
+> writing of this work. A listing of NYU fastMRI investigators, subject to updates, can be
+> found at fastmri.med.nyu.edu.
+
 ## Status
 
 Kernel + 1D PyTorch integration landed and measured. SS2D runs on the fused bidirectional

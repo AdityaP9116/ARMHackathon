@@ -108,13 +108,32 @@ def montage(panels, gap=6):
     return np.concatenate(strip, axis=1)
 
 
-def train_prior(net, res, steps, rng, lr=3e-3, log_every=100):
+def train_prior(net, res, steps, rng, lr=3e-3, log_every=100, cache=None):
+    """Train the prior on synthetic phantoms, or on a fastMRI cache.
+
+    `cache` is a file built by `tools/prepare_fastmri.py`. Real k-space beats
+    phantoms as a demonstration, but it is optional by design: the phantom path
+    needs no download, no credentials and no data agreement, so `make demo`
+    keeps working for anyone.
+    """
+    sampler = None
+    if cache:
+        from apps.mri_diffusion.fastmri_data import batcher, load_cache
+        imgs = load_cache(cache)
+        if imgs.shape[-1] != res:
+            raise SystemExit(
+                f"cache is {imgs.shape[-1]}px but --res is {res}; rebuild the "
+                f"cache with --res {res} or pass --res {imgs.shape[-1]}")
+        print(f"   training data: {cache} ({imgs.shape[0]} slices, "
+              f"fastMRI knee single-coil)")
+        sampler = batcher(imgs, 8)
+
     loss_fn = EDMLoss()
     opt = torch.optim.Adam(net.parameters(), lr=lr)
     net.train()
     t0 = time.time()
     for step in range(steps):
-        imgs = phantom_batch(8, res, rng)
+        imgs = next(sampler) if sampler else phantom_batch(8, res, rng)
         loss = loss_fn(net=net, images=_edm.pad_for_loss(imgs),
                        labels=None).mean()
         opt.zero_grad()
@@ -177,6 +196,10 @@ def main():
     ap.add_argument("--require-gain", type=float, default=None,
                     help="exit non-zero unless the reconstruction beats "
                          "zero-filled by this many dB (use in gates)")
+    ap.add_argument("--data-cache", default=None,
+                    help="fastMRI cache from tools/prepare_fastmri.py; "
+                         "trains and evaluates on real knee data instead of "
+                         "synthetic phantoms")
     ap.add_argument("--out", default="demo_out/reconstruction.png")
     ap.add_argument("--compare-reference", action="store_true",
                     help="also reconstruct on the torch reference scan")
@@ -206,14 +229,21 @@ def main():
               f"({args.train_steps} steps on synthetic phantoms). This is a "
               f"SMOKE-quality prior — it proves the pipeline, not the science.")
         train_prior(net, args.res, args.train_steps, rng,
-                    log_every=args.log_every)
+                    log_every=args.log_every, cache=args.data_cache)
         if args.save_prior:
             Path(args.save_prior).parent.mkdir(parents=True, exist_ok=True)
             torch.save(net.state_dict(), args.save_prior)
             print(f"   saved prior -> {args.save_prior} "
                   f"(reuse with --checkpoint)")
 
-    truth = phantom_batch(1, args.res, np.random.default_rng(args.seed + 99))
+    if args.data_cache:
+        # Held-out volumes: never seen in training (fastmri_data splits by
+        # volume, not by slice, so adjacent slices cannot leak).
+        from apps.mri_diffusion.fastmri_data import load_cache
+        truth = load_cache(args.data_cache, "eval")[args.seed:args.seed + 1]
+    else:
+        truth = phantom_batch(1, args.res,
+                              np.random.default_rng(args.seed + 99))
     mask = cartesian_mask(args.res, args.res, args.R, acs=8, seed=args.seed)
     y = measure(truth, mask)
     zf = zero_filled(y, mask)

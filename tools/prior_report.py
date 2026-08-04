@@ -40,20 +40,29 @@ EDMPrecond, EDMLoss, construct, EDM_SOURCE = _edm.load()
 # The measured requirement, expressed RELATIVE to the data's own RMS so it
 # transfers across resolutions and image families.
 #
-# An oracle-denoiser sweep (no training needed — inject controlled error into a
-# perfect denoiser and reconstruct) crosses the ">1 dB better than zero-filled"
-# bar at **NRMSE ~= 0.95** — measured at 0.96, 0.96, 0.95, 0.93 across
-# phantom 32px/64px x R=4/8, and 1.00 on the old smooth-bump setup. The
-# earlier absolute figure of 0.28 was that same threshold for one dataset
-# (bumps, RMS 0.262 -> 0.28/0.262 ~= 1.07); it does not transfer, which is why
-# it is stated relatively now.
+# Derived by oracle sweep (no training: inject controlled error into a perfect
+# denoiser and reconstruct). Reconstruction PSNR falls as a clean -20*log10
+# line in the denoiser's relative error, offset by how good zero-filling
+# already is on this data:
 #
-# Clearing 0.95 only buys the MINIMUM passing reconstruction. The sweep is a
-# clean -20*log10 line, so the denoiser's error predicts the gain:
-#     expected PSNR gain over zero-filled ~= -20 * log10(NRMSE)
-# i.e. NRMSE 0.5 -> ~+6 dB, 0.25 -> ~+12 dB, 0.125 -> ~+18 dB.
-NRMSE_BAR = 0.95     # minimum to clear the >1 dB reconstruction bar
-NRMSE_TARGET = 0.50  # a prior worth showing: ~+6 dB or better
+#     gain over zero-filled (dB) ~= -20 * log10(NRMSE) - OFFSET
+#
+# Measured on phantoms with the CENTRED FFT and true-R masks: OFFSET = 3.1 dB
+# (consistent to +-0.1 across NRMSE 0.13 .. 1.05), so the >1 dB bar sits at
+# NRMSE ~= 0.62 — measured at 0.62, 0.62, 0.63, 0.63 across 32/64px x R=4/8.
+#
+# !! RE-DERIVE THESE FOR A NEW DATASET. Both numbers encode how much energy the
+# mask discards on THIS data, so they move when the data moves. On the smooth
+# bump set the same sweep gives a bar of 0.10, because zero-filling already
+# reaches 38.6 dB there and almost nothing is left to recover. Run
+# `tools/calibrate_prior_bar.py` after switching to fastMRI.
+#
+# (Earlier revisions of this file quoted 0.28 absolute, then 0.95 relative.
+# The first did not transfer across datasets; the second was measured before
+# the FFT centring fix, when the mask was sampling Nyquist instead of DC.)
+NRMSE_BAR = 0.62     # minimum to clear the >1 dB reconstruction bar
+NRMSE_TARGET = 0.35  # a prior worth showing: ~+6 dB or better
+GAIN_OFFSET_DB = 3.1
 
 
 def sigma_ladder(num_steps, sigma_max, sigma_min=0.002, rho=7.0):
@@ -77,6 +86,11 @@ def main():
     ap.add_argument("--d-state", type=int, default=16)
     ap.add_argument("--bar", type=float, default=NRMSE_BAR,
                     help="NRMSE (RMSE / data RMS) that must not be exceeded")
+    ap.add_argument("--cache", default=None,
+                    help="fastMRI cache to evaluate against instead of "
+                         "phantoms; use the SAME data the prior was trained "
+                         "for, and re-derive --bar with "
+                         "tools/calibrate_prior_bar.py")
     ap.add_argument("--json", default=None)
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
@@ -93,16 +107,23 @@ def main():
 
     smax = args.sigma_max or float(getattr(net, "sigma_max_trained", 80.0))
     ladder = sigma_ladder(args.steps, smax)
-    clean = phantom_batch(args.batch, args.res,
-                          np.random.default_rng(args.seed))
+    if args.cache:
+        from apps.mri_diffusion.fastmri_data import load_cache
+        pool = load_cache(args.cache, "eval")
+        clean = pool[:args.batch]
+        source = f"fastMRI eval split ({args.cache})"
+    else:
+        clean = phantom_batch(args.batch, args.res,
+                              np.random.default_rng(args.seed))
+        source = "synthetic phantoms"
     rms = float((clean ** 2).mean().sqrt())
 
     print(f"prior      : {args.checkpoint}")
     print(f"params     : {sum(p.numel() for p in net.parameters())/1e3:.0f}K")
     print(f"ladder     : {args.steps} steps, sigma_max={smax:.2f} "
           f"({'declared by the prior' if not args.sigma_max else 'overridden'})")
-    print(f"data       : {args.batch} phantoms at {args.res}px, "
-          f"RMS = {rms:.4f}")
+    print(f"data       : {clean.shape[0]} images from {source}, "
+          f"{clean.shape[-1]}px, RMS = {rms:.4f}")
     print(f"bar        : NRMSE < {args.bar} at EVERY sigma; target "
           f"< {NRMSE_TARGET} (PHASE_D_DIAGNOSIS.md §4)\n")
     print(f"{'sigma':>10} {'RMSE':>9} {'NRMSE':>8} {'pred. gain':>11}   status")
@@ -117,9 +138,9 @@ def main():
             ok = nrmse < args.bar
             failed += 0 if ok else 1
             weak += 1 if ok and nrmse >= NRMSE_TARGET else 0
-            # -20*log10(NRMSE) predicts the reconstruction's dB gain over
-            # zero-filled; below the bar it is a deficit, so show it signed.
-            gain = -20 * np.log10(max(nrmse, 1e-9))
+            # Predicts the reconstruction's dB gain over zero-filled; below
+            # the bar it is a deficit, so show it signed.
+            gain = -20 * np.log10(max(nrmse, 1e-9)) - GAIN_OFFSET_DB
             rows.append({"sigma": float(s), "rmse": rmse, "nrmse": nrmse,
                          "predicted_gain_db": gain, "pass": ok})
             status = ("ok" if nrmse < NRMSE_TARGET

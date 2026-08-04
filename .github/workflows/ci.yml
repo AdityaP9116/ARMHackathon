@@ -237,6 +237,14 @@ jobs:
       - name: Phase D pipeline gate (no trained prior required)
         working-directory: .
         run: python3 apps/mri_diffusion/tests/test_phase_d_pipeline.py
+      # The fastMRI loader on synthetic files shaped like the real ones. The
+      # dataset cannot be committed (Data Sharing Agreement), so this is the
+      # only way to keep that path from rotting.
+      - name: fastMRI loader self-test (synthetic, no dataset)
+        working-directory: .
+        run: |
+          python3 -m pip install --quiet h5py
+          python3 tools/prepare_fastmri.py --self-test
       # Credential-free end-to-end: synthesises its own phantom, trains a small
       # prior in-process, reconstructs, and emits the demo image. Small sizes
       # here — this is a gate, not the video run.

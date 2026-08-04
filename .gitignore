@@ -36,6 +36,15 @@ tests/golden/large_*.npz
 # Demo run outputs (images, metrics, locally trained priors)
 demo_out/
 
+# fastMRI: the Data Sharing Agreement forbids redistributing the data OR the
+# signed download links. Nothing derived from it goes in the repo — not raw
+# .h5, not extracted archives, not the preprocessed cache.
+/data/
+*.h5
+*.tar.xz
+knee_singlecoil_*
+brain_multicoil_*
+
 # Benchmark outputs
 *.csv
 *.log
