@@ -189,6 +189,79 @@ jobs:
           gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" \
             -f body="$(cat bench-comment.md)" --silent || true
 
+  # The SS2D + diffusion surface the submission is actually pitched on. Until
+  # this job existed, CI gated the 1D kernel only and every app-level "gate"
+  # was a manual run on one developer's laptop.
+  mri-app:
+    name: mri-app (linux-arm64)
+    needs: test
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: kernel
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build FFI cdylib
+        run: cargo build --release -p arm-scan-ffi
+      - name: Install torch (CPU aarch64)
+        working-directory: .
+        run: python3 -m pip install --quiet numpy torch
+      # 2D goldens: independent numpy re-derivation, then replayed through the
+      # real C ABI and checked against each case's recorded f32 floor.
+      - name: 2D cross-scan goldens
+        working-directory: .
+        run: python3 tests/verify_golden_2d.py
+      # The K1 gate: the traversal-pair cross-scan must equal the legacy
+      # four-direction formulation, on both backends, at every thread count
+      # (rayon output is required to be bit-identical to sequential).
+      - name: SS2D traversal-pair parity vs legacy oracle
+        working-directory: .
+        run: |
+          set -o pipefail
+          for t in 1 2 8; do
+            echo "== RAYON_NUM_THREADS=$t =="
+            RAYON_NUM_THREADS=$t python3 \
+              apps/mri_diffusion/tests/test_ss2d_pair_parity.py
+          done
+      - name: Phase C — full sampling on CPU through the kernel
+        working-directory: .
+        run: python3 apps/mri_diffusion/tests/test_phase_c_parity.py
+      # Credential-free end-to-end: synthesises its own phantom, trains a small
+      # prior in-process, reconstructs, and emits the demo image. Small sizes
+      # here — this is a gate, not the video run.
+      # Sizes are deliberately tiny: prior training runs on the REFERENCE scan
+      # (no autograd in the kernel), a Python loop over L at ~13 s/step for
+      # res=32 on 16 x86 cores. This gate proves the pipeline end-to-end; the
+      # video's run uses a saved prior via --checkpoint.
+      - name: Demo end-to-end (phantom track)
+        working-directory: .
+        run: |
+          set -o pipefail
+          python3 apps/mri_diffusion/demo.py --res 32 --steps 4 \
+            --train-steps 15 --log-every 5 2>&1 | tee demo.log
+      - name: Publish demo result
+        if: always()
+        working-directory: .
+        run: |
+          {
+            echo "## MRI demo (linux-arm64 CI runner, phantom track)"
+            echo '```'
+            tail -25 demo.log 2>/dev/null || echo "(demo did not run)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mri-demo-arm64
+          path: |
+            demo_out/
+          if-no-files-found: warn
+
   wheels:
     name: wheel (${{ matrix.name }})
     needs: test
