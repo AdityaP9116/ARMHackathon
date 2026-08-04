@@ -1,6 +1,6 @@
 # PHASE_D_DIAGNOSIS — why the reconstruction gate fails, and the plan to fix it
 
-**Written Aug 3, 2026.** Companion to [`SUBMISSION_ENDGAME_PLAN.md`](SUBMISSION_ENDGAME_PLAN.md).
+**Written Aug 4, 2026.** Companion to [`SUBMISSION_ENDGAME_PLAN.md`](SUBMISSION_ENDGAME_PLAN.md).
 Phase D (`apps/mri_diffusion/tests/test_phase_d_partial.py`) asserts the R=4 reconstruction
 beats zero-filled by >1 dB. It does not — it is **2.75 dB worse** — and it has never passed.
 This document is the diagnosis, measured rather than argued, and the plan that follows from it.

@@ -61,7 +61,7 @@ CI (free, arm64): build + unit + property tests on every push; a nightly job add
 
 ## 4. Week-by-week plan
 
-> **Superseded (Aug 3, 2026).** The schedule below assumed the Jul 20 and Jul 27 weeks
+> **Superseded (Aug 4, 2026).** The schedule below assumed the Jul 20 and Jul 27 weeks
 > happened; they did not (last commit before the endgame pass: Jul 18). The live,
 > day-by-day plan for the remaining time — including what is now explicitly **cut** —
 > is [`SUBMISSION_ENDGAME_PLAN.md`](SUBMISSION_ENDGAME_PLAN.md). Sections 1–3 and 5 of

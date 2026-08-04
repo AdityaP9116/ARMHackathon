@@ -6,7 +6,7 @@ Win the **[Arm Create: AI Optimization Challenge](https://arm-ai-optimization-ch
 
 The contribution: the **first Arm-optimized `selective_scan` for the PyTorch/Mamba ecosystem, written in Rust** (NEON + chunked scan + rayon), shipped as a pip-installable drop-in that makes *any* Mamba model faster on Arm CPU — and proven on a real application running on Graviton.
 
-## Where things stand (as of Aug 3, 2026 — 11 days out)
+## Where things stand (as of Aug 4, 2026 — 10 days out)
 
 **Sequencing lives in one place now: [`SUBMISSION_ENDGAME_PLAN.md`](SUBMISSION_ENDGAME_PLAN.md).**
 It supersedes the week tables in `ROADMAP.md` §4 and `SS2D_REPOSITIONING_PLAN.md` §7,
@@ -19,7 +19,7 @@ numbers). 1D bidirectional + resumable-state (h0) kernels exist. **The applicati
 DECIDED:** SS2D-Mamba **diffusion MRI reconstruction** (EDM + CSI-lab scaffolding;
 MambaRecon is the fallback) — see `MRI_DIFFUSION_IMPLEMENTATION_PLAN.md`.
 
-Landed Aug 3 (the SS2D/app hole-closing pass):
+Landed Aug 4 (the SS2D/app hole-closing pass):
 
 - **SS2D runs as two traversal PAIRS, not four forward scans** — `arm_scan.ss2d.ss2d_scan`
   now drives the already-shipped fused bidirectional kernel, so Pass A (discretize + exp,

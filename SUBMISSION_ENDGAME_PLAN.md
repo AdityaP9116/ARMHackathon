@@ -1,6 +1,6 @@
-# SUBMISSION_ENDGAME_PLAN — the last 11 days (Aug 3 → Aug 14, 2026)
+# SUBMISSION_ENDGAME_PLAN — the last 10 days (Aug 4 → Aug 14, 2026)
 
-**Written Aug 3, 2026.** Supersedes the week tables in [`ROADMAP.md`](ROADMAP.md) §4 and
+**Written Aug 4, 2026.** Supersedes the week tables in [`ROADMAP.md`](ROADMAP.md) §4 and
 [`SS2D_REPOSITIONING_PLAN.md`](SS2D_REPOSITIONING_PLAN.md) §7, both of which assumed the Jul 20 and
 Jul 27 weeks happened. They did not — the last commit is `eb707f6`, **Jul 18**. This doc is the
 single source of truth for what ships, what gets cut, and in what order. Where it disagrees with an
@@ -8,11 +8,11 @@ older plan doc, this one wins.
 
 **The situation in one line:** the 1D kernel half is finished and excellent; the SS2D + diffusion
 half that the project repositioned around on Jul 17 is ~⅓ built; there are **zero numbers from Arm
-hardware anywhere in the repo**; and there are 11 days left, of which the last 2 are buffer.
+hardware anywhere in the repo**; and there are 10 days left, of which the last 2 are buffer.
 
 ---
 
-## STATUS — updated Aug 3, 2026 (end of the hole-closing pass)
+## STATUS — updated Aug 4, 2026 (end of the hole-closing pass)
 
 **Closed in code today.** All verified locally on x86 against the real cdylib through the C
 ABI — so the *scalar* backend is proven and the **NEON path still needs re-verification on
@@ -168,7 +168,7 @@ runs on an already-verified kernel path. See K1 below.
 
 Route A (distill CSI's 65.5M-param U-Net into `MambaSS2DNet` at 384×320) is days of GPU work plus
 tuning, and a half-converged prior produces a *visibly bad* reconstruction — the WOW criterion
-backfires. With 11 days and H1/H2 outstanding, **Route A is not affordable.** See A1.
+backfires. With 10 days and H1/H2 outstanding, **Route A is not affordable.** See A1.
 
 ### H4 — The app is not reproducible by anyone but you, and may have a license problem. *(High — this is the DX score, 15 points.)*
 
@@ -224,7 +224,7 @@ hardware, so it must exist *before* the Graviton session — not during it.
 
 ---
 
-## Part 2 — Strategy: the three calls that make 11 days feasible
+## Part 2 — Strategy: the three calls that make 10 days feasible
 
 **Call 1 — Cut Route A distillation. Train small instead.**
 Target a **128×128** (or 160×160) single-coil SS2D-Mamba EDM prior on synthetic/phantom + IXI-style
@@ -256,19 +256,22 @@ Two hard gates. Everything else is droppable in priority order.
 
 | Day | Track | Deliverable |
 |---|---|---|
-| **Mon Aug 3** | Truth + unblock | T1 doc truth-pass; T2 de-hardcode app tests; **G1: prior route decided** |
-| **Tue Aug 4** | Kernel | **K1** SS2D → fused bidirectional; K2 parity gate; measure on x86 |
-| **Wed Aug 5** | Correctness + demo | K3 2D goldens; T3 app tests into CI; **D1 `demo.py`** (the video's visual) |
-| **Thu Aug 6** | **GRAVITON SESSION 1** | Full `ARM_BASELINE.md` runbook + SS2D + per-NFE. ~3h, terminate after |
+| **Tue Aug 4** ✅ | Truth + kernel + correctness + demo | **DONE — three days' worth.** T1 doc truth-pass; T2 de-hardcode + `edm_min`; **K1** SS2D → fused bidirectional pairs; K2 parity gate; K3 2D goldens; T3 CI + Makefile; **D1 `demo.py`**; Phase D diagnosed; CI unbroken (red since Jul 17); 8 commits pushed |
+| **Wed Aug 5** | Unblock CI + Phase D | Open the PR so `mri-app` runs (**first NEON verification**); Phase D **D-1…D-5.1** (gate split, mask fix, phantom eval data, σ_max, `prior_report.py`) — all no-GPU; **G1: prior route decided** |
+| **Thu Aug 6** | **GRAVITON SESSION 1** | Full `ARM_BASELINE.md` runbook + `bench_ss2d.py` + per-NFE. ~3 h, terminate after |
 | **Fri Aug 7** | Results | R1 `RESULTS.md` from real JSON; R2 README truth-alignment; **G2: fused-2D go/no-go** |
-| **Sat Aug 8** | App | A1 train the small prior (GPU, bounded); A2 recon quality table |
-| **Sun Aug 9** | App / slack | A3 phantom end-to-end into `make validate`; absorb slippage |
-| **Mon Aug 10** | **CODE FREEZE** + **GRAVITON SESSION 2** | Final numbers, demo capture, video footage. ~2h |
+| **Sat Aug 8** | App | **D-5** train the prior (GPU, bounded, stop when `prior_report` clears) |
+| **Sun Aug 9** | App / slack | **D-6** re-run the quality gate; quality table; absorb slippage |
+| **Mon Aug 10** | **CODE FREEZE** + **GRAVITON SESSION 2** | Final numbers, demo capture, video footage. ~2 h |
 | **Tue Aug 11** | Submission | V1 video cut (<3 min); W1 Devpost writeup |
 | **Wed Aug 12** | **SUBMIT** | Repo tagged, About sidebar license checked, links verified |
 | Thu–Fri Aug 13–14 | Buffer | Untouched unless something broke |
 
-**G1 (today, Aug 3):** prior route. Recommendation: small-scale per Call 1. *If training has not
+**Position as of Aug 4:** ~2 days ahead on the code track, 0 days of progress on the two
+items that actually decide the outcome (Arm numbers, trained prior). The slack exists
+precisely to spend on those — do not spend it on more code.
+
+**G1 (Aug 5):** prior route. Recommendation: small-scale per Call 1. *If training has not
 started by end of Aug 6, drop to phantom-only and reframe — do not let this eat the Graviton or
 video days.*
 

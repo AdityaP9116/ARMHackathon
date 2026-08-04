@@ -153,7 +153,7 @@ L-dimension Blelloch scan (§4.3 — the chunked two-pass already recovers most 
 
 ## 7. Sequencing to Aug 14 (submit Aug 12–13)
 
-> **Superseded (Aug 3, 2026)** by [`SUBMISSION_ENDGAME_PLAN.md`](SUBMISSION_ENDGAME_PLAN.md),
+> **Superseded (Aug 4, 2026)** by [`SUBMISSION_ENDGAME_PLAN.md`](SUBMISSION_ENDGAME_PLAN.md),
 > which is the single live schedule. The table that stood here assumed the Jul 20 / Jul 27
 > weeks were executed; they were not.
 >
@@ -161,7 +161,7 @@ L-dimension Blelloch scan (§4.3 — the chunked two-pass already recovers most 
 > The four cross-scan directions are two traversal-order *pairs*, and the repo already had
 > a fused bidirectional kernel that computes each pair's shared Pass A once
 > (`selective_scan_bidirectional`, ABI v5, measured 1.58–1.75× exp-sharing in
-> `BIDIRECTIONAL_LOG.md`). SS2D was not using it. Routing `ss2d.py` through it (Aug 3) was
+> `BIDIRECTIONAL_LOG.md`). SS2D was not using it. Routing `ss2d.py` through it (Aug 4) was
 > pure Python on an already-gated kernel path and measured **1.77–1.82× (geomean 1.80×)** on
 > block total at the production shapes — 1.81–1.90× on scan time alone — while dropping
 > non-scan overhead from **21–25% to 7.2–13.8%**.
