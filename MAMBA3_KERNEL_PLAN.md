@@ -1,5 +1,11 @@
 # MAMBA3_KERNEL_PLAN — the full Mamba-3 Arm/NEON kernel in Rust (1D + 2D)
 
+> ⚠️ **POST-SUBMISSION. Not part of the Aug 14, 2026 contest entry.**
+> Runs on `feature/mamba3`, additively, behind the §0 scope guard (submission frozen or
+> verified slack + a fresh prior-art pass). Nothing here is on the critical path; see
+> [`SUBMISSION_ENDGAME_PLAN.md`](SUBMISSION_ENDGAME_PLAN.md) for what is. Good writeup
+> material as "where this goes next" — one paragraph, not a headline.
+
 **Written Jul 18, 2026** (supersedes `MAMBA2_SSD_PLAN.md`, which now redirects here; history
 preserved in git). All external facts verified Jul 18; sources inline. Companion to
 `SS2D_REPOSITIONING_PLAN.md` (the Aug-14 submission plan — **unchanged by this doc**) and

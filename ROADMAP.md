@@ -61,18 +61,16 @@ CI (free, arm64): build + unit + property tests on every push; a nightly job add
 
 ## 4. Week-by-week plan
 
-*(Rewritten Jul 17, 2026 for the SS2D/diffusion reframe — sequencing source:
-`SS2D_REPOSITIONING_PLAN.md` §7. Weeks before Jul 20 are history; see git log.)*
+> **Superseded (Aug 3, 2026).** The schedule below assumed the Jul 20 and Jul 27 weeks
+> happened; they did not (last commit before the endgame pass: Jul 18). The live,
+> day-by-day plan for the remaining time — including what is now explicitly **cut** —
+> is [`SUBMISSION_ENDGAME_PLAN.md`](SUBMISSION_ENDGAME_PLAN.md). Sections 1–3 and 5 of
+> this document (compute strategy, build architecture, test strategy, risk register)
+> remain current; only this table is stale, and it is kept for history.
 
-| Week | Kernel | App / results |
-|---|---|---|
-| Jul 20 | P0-1 batched 4-direction SS2D call; P0-2 `bench_ss2d.py` at real shapes; P1-3 workspace reuse | **Route A/B decision + GPU budget**; start distillation/training; `make validate` in CI |
-| Jul 27 | P1-4 `reverse` flag; P1-5 cache-block over L; P1-6 tile transpose | Prior trained/distilled; Phase C/D parity on arm64 CI; 2D goldens |
-| Aug 3 | P1-7 fused `selective_scan_2d` **only if P0-2 measurement justifies** | **Graviton session 1** (`c8g`, scripted, terminate after): headline ladder, per-NFE, $/recon, core-scaling |
-| Aug 10 | freeze; SVE2 FEXPA only if green | **Graviton session 2**: demo video; `RESULTS.md` final; Devpost writeup; **submit Aug 12–13** |
-
-Fallback: if distillation slips past Jul 31 → MambaRecon (decision-log fallback row);
-the kernel work is identical either way.
+Fallback (unchanged in spirit): the MVP — kernel + Graviton numbers + parity + docs —
+is a complete submission on its own; the trained prior and the fused 2D kernel are both
+droppable, in that order.
 
 ## 5. Standing risk register
 

@@ -32,7 +32,7 @@ We checked, so the "first" claims don't rest on faith:
 | Component | Description |
 |---|---|
 | Rust `selective_scan` kernel | Chunked two-pass scan + fused discretization, NEON intrinsics (stable Rust), specialized non-positive `exp` paths, rayon threading over independent channels; scalar reference path is the in-crate oracle, the non-Arm fallback, and what keeps x86 CI meaningful |
-| SS2D path | `arm_scan.ss2d` routes VMamba-style 4-direction cross-scans through the kernel today (unfused); fused `selective_scan_2d` with a NEON tile-transpose is the active kernel work ([`TOPOLOGY_IMPLEMENTATION_PLAN.md`](./TOPOLOGY_IMPLEMENTATION_PLAN.md) §3) |
+| SS2D path | `arm_scan.ss2d.ss2d_scan` takes a `(B, D, H, W)` token grid and runs VMamba's 4 directions as **two traversal-order pairs** on the fused bidirectional kernel, so the direction-independent Pass A (discretize + `exp`, ~85% of kernel time) is computed twice per block instead of four times, with no `torch.flip` copies. A single fused `selective_scan_2d` owning all four directions in Rust remains the identified next lever ([`TOPOLOGY_IMPLEMENTATION_PLAN.md`](./TOPOLOGY_IMPLEMENTATION_PLAN.md) §3.2) — currently **not** justified by its own >15% overhead rule, see below |
 | PyTorch custom-op bridge | `torch.library` op with registered fake kernel (composes with `torch.compile`), C-ABI FFI with panic containment, `arm_scan.patch()` for HF `transformers` Mamba |
 | MRI diffusion app | `apps/mri_diffusion`: SS2D-Mamba denoiser under NVIDIA EDM preconditioning, built on UT CSI Lab's [`ambient-diffusion-mri`](https://github.com/utcsilab/ambient-diffusion-mri) scaffolding; full (R=1) and undersampled (R=2–8) posterior reconstruction on CPU |
 | Correctness suite | Golden vectors vs. vendored upstream reference + an independent numpy re-derivation; NEON↔scalar parity; rayon output bit-identical to sequential at any thread count; goldens replayed through the real C ABI — **no dataset required**, runs on any arm64 machine, Apple Silicon included |
@@ -47,17 +47,40 @@ Measured on shared GitHub `ubuntu-24.04-arm` CI runners (4-core, torch 2.13); pr
 | Op-level, B1 D768 L128 | 24.1× | **3.7×** |
 | HF mamba-130m prefill, end-to-end (greedy tokens identical) | ~2× | — |
 
-Kernel error vs the f64 reference ≤ 5e-6 across all golden cases (gate: 1e-4).
+Kernel error vs the f64 reference ≤ 5e-6 across all golden cases (gate: 1e-4). The 2D
+cross-scan goldens land at ~1.0× each case's recorded f32 error floor — i.e. the kernel is
+as accurate as upstream's own float32 evaluation, not merely inside the gate.
 
-Still to land, format locked: SS2D at real grid sizes, diffusion end-to-end per-NFE latency and $/reconstruction on a named Graviton instance, PSNR/SSIM/NMSE parity at R=2–8, core-scaling curve, and mamba-130m generality rows. Unflattering rows get published too.
+**SS2D, structural (dev box, x86 scalar backend — directional only, not a speed claim):**
+running the four directions as two traversal pairs instead of four forward scans measures
+**1.77–1.82× (geomean 1.80×)** on block total across the four production shapes
+(384×320 @ 96ch and 192×160 @ 192ch, seed-batch 1 and 4), and **1.81–1.90×** on scan time
+alone. Both sides of that ratio use the same kernel, so it is attributable to the
+restructuring, not to the backend. Non-scan time (flips, permutes, projections) falls from
+**21–25% to 7.2–13.8%**. That worst case of 13.8% sits *just* under this repo's own >15%
+bar for justifying a fully fused `selective_scan_2d`, so that kernel is currently **not**
+justified — but only marginally, and the verdict gets re-taken on Arm where the cache
+behaviour differs.
+
+Still to land, format locked: **every number above re-measured on a named Graviton
+instance** (nothing in this repo has yet run on dedicated Arm hardware), diffusion
+end-to-end per-NFE latency and $/reconstruction, PSNR/SSIM/NMSE parity at R=2–8,
+core-scaling curve, and mamba-130m generality rows. Unflattering rows get published too.
 
 ## Quick validation (≈5 minutes, any arm64 machine, no data downloads)
 
 ```bash
 git clone https://github.com/AdityaP9116/ARMHackathon && cd ARMHackathon
-make validate   # builds the kernel, runs the golden + parity + FFI gates,
-                # then prints an op-level microbenchmark table for this machine
+make validate   # builds the kernel; runs the 1D + 2D golden, parity and FFI
+                # gates; checks the SS2D cross-scan against its oracle and
+                # samples a diffusion reconstruction through the kernel; then
+                # prints an op-level microbenchmark table for this machine
+make demo       # the side-by-side reconstruction image, phantom track
 ```
+
+Needs a Rust toolchain and `pip install -r requirements-dev.txt` (CPU torch). The
+kernel-only gates run on `requirements.txt` alone — numpy, no torch — and the SS2D and
+diffusion gates skip themselves with a message rather than failing if torch is absent.
 
 Works on AWS Graviton, Oracle Ampere, Raspberry Pi 5, and Apple Silicon Macs. Correctness validation never requires fastMRI credentials or an AWS account; the MRI demo keeps a synthetic Shepp–Logan phantom track for the same reason.
 
@@ -67,7 +90,21 @@ NEON `exp` polynomials and FMA reassociation mean results match the f64 referenc
 
 ## Status
 
-Kernel + 1D PyTorch integration landed and measured; SS2D unfused path and the diffusion backbone are up (Phase A feasibility: **GO** — [`apps/mri_diffusion/PHASE_A_FINDINGS.md`](./apps/mri_diffusion/PHASE_A_FINDINGS.md)); the fused SS2D kernel and Graviton headline numbers are the active work. Decision history: [`PROJECT_CONCEPT.md`](./PROJECT_CONCEPT.md). Engineering plans: [`TOPOLOGY_IMPLEMENTATION_PLAN.md`](./TOPOLOGY_IMPLEMENTATION_PLAN.md), [`MRI_DIFFUSION_IMPLEMENTATION_PLAN.md`](./MRI_DIFFUSION_IMPLEMENTATION_PLAN.md).
+Kernel + 1D PyTorch integration landed and measured. SS2D runs on the fused bidirectional
+kernel with per-direction 2D goldens and a parity gate against the four-separate-scans
+oracle; the diffusion app samples end-to-end on CPU through the kernel, credential-free
+(Phase A feasibility: **GO** — [`apps/mri_diffusion/PHASE_A_FINDINGS.md`](./apps/mri_diffusion/PHASE_A_FINDINGS.md)).
+
+Open, and stated plainly: **no number in this repo has been measured on dedicated Arm
+hardware yet** — everything is x86 or a shared 4-core CI runner, and is labelled as such.
+There is also no trained diffusion prior; the app currently reconstructs with a small
+prior trained in-process on synthetic phantoms, which demonstrates the pipeline rather
+than reconstruction quality. Both are the active work, sequenced in
+[`SUBMISSION_ENDGAME_PLAN.md`](./SUBMISSION_ENDGAME_PLAN.md).
+
+Decision history: [`PROJECT_CONCEPT.md`](./PROJECT_CONCEPT.md). Engineering plans:
+[`TOPOLOGY_IMPLEMENTATION_PLAN.md`](./TOPOLOGY_IMPLEMENTATION_PLAN.md),
+[`MRI_DIFFUSION_IMPLEMENTATION_PLAN.md`](./MRI_DIFFUSION_IMPLEMENTATION_PLAN.md).
 
 ## License
 

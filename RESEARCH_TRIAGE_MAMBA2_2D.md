@@ -1,5 +1,12 @@
 # RESEARCH_TRIAGE_MAMBA2_2D — external research review, verified & triaged
 
+> ⚠️ **Reference material, not a work plan.** Its adopt-list feeds
+> [`MAMBA3_KERNEL_PLAN.md`](MAMBA3_KERNEL_PLAN.md), which is **post-submission**. The P1-5 /
+> P1-6 / P1-7 deltas it recorded against `SS2D_REPOSITIONING_PLAN.md` §5 were overtaken on
+> Aug 3: routing SS2D through the fused bidirectional kernel captured most of that overhead,
+> and the fused `selective_scan_2d` no longer clears its own 15% bar. See
+> [`SUBMISSION_ENDGAME_PLAN.md`](SUBMISSION_ENDGAME_PLAN.md).
+
 **Written Jul 18, 2026.** A user-provided research survey ("Advanced ARM NEON Kernel
 Optimization for Mamba-2 Architectures in 2D Processing Domains via Rust") proposed a set of
 techniques. This document (1) verifies every substantive reference, (2) corrects where the

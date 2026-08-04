@@ -6,27 +6,58 @@ Win the **[Arm Create: AI Optimization Challenge](https://arm-ai-optimization-ch
 
 The contribution: the **first Arm-optimized `selective_scan` for the PyTorch/Mamba ecosystem, written in Rust** (NEON + chunked scan + rayon), shipped as a pip-installable drop-in that makes *any* Mamba model faster on Arm CPU — and proven on a real application running on Graviton.
 
-## Where things stand (as of Jul 13, 2026)
+## Where things stand (as of Aug 3, 2026 — 11 days out)
 
-*(Updated Jul 17, 2026 — the SS2D/diffusion reframe; see `SS2D_REPOSITIONING_PLAN.md`.)*
+**Sequencing lives in one place now: [`SUBMISSION_ENDGAME_PLAN.md`](SUBMISSION_ENDGAME_PLAN.md).**
+It supersedes the week tables in `ROADMAP.md` §4 and `SS2D_REPOSITIONING_PLAN.md` §7,
+which assumed the Jul 20 / Jul 27 weeks happened. They did not.
 
 The kernel is built and measured. `INTEGRATION_PLAN.md` Phases 0–6 landed (goldens,
 scalar+NEON chunked kernel, rayon, C ABI, torch custom op + `arm_scan.patch()`, wheels,
 arm64/macOS/x86 CI, benchmark harnesses, `BASELINE_REPORT.md` with CI-provisional Arm
 numbers). 1D bidirectional + resumable-state (h0) kernels exist. **The application is
 DECIDED:** SS2D-Mamba **diffusion MRI reconstruction** (EDM + CSI-lab scaffolding;
-MambaRecon is the fallback) — see `MRI_DIFFUSION_IMPLEMENTATION_PLAN.md`. App phases
-A (GO), B, C are gated green in `apps/mri_diffusion/`; D's gate test exists.
+MambaRecon is the fallback) — see `MRI_DIFFUSION_IMPLEMENTATION_PLAN.md`.
+
+Landed Aug 3 (the SS2D/app hole-closing pass):
+
+- **SS2D runs as two traversal PAIRS, not four forward scans** — `arm_scan.ss2d.ss2d_scan`
+  now drives the already-shipped fused bidirectional kernel, so Pass A (discretize + exp,
+  ~85% of kernel time) is computed twice per block instead of four times, and the four
+  `torch.flip` copies are gone. `SS2DBlock._cross_scan_legacy` is retained as the oracle.
+- **Measured** (x86 dev box, quiesced, reps=3): **1.77–1.82× (geomean 1.80×)** on block
+  total at the production shapes, 1.81–1.90× on scan time alone; non-scan overhead fell
+  **21–25% → 7.2–13.8%**. That flips the P1-7 verdict to *not justified* (15% rule), though
+  only marginally at the worst shape — re-take it on Arm.
+- **2D goldens exist** (`tests/gen_golden_2d.py` / `verify_golden_2d.py`): per-direction,
+  independently re-derived in numpy, replayed through the real C ABI, landing at ~1.0× each
+  case's recorded f32 floor.
+- **App tests are reproducible**: the hardcoded `C:\Users\Adity\...` reference path is gone,
+  and `apps/mri_diffusion/edm_min.py` re-derives EDM preconditioning/loss from the published
+  equations so the judge path needs no CC-BY-NC-SA clone. `ADM_REF` still selects the CSI
+  classes when working against their checkpoints.
+- **CI gates the app now** (`mri-app` job), and `make validate` exercises SS2D + diffusion,
+  not just the 1D kernel. `apps/mri_diffusion/demo.py` produces the video's artifact.
+- **Fixed a false-green gate:** Phase C's parity check compared an untrained net whose
+  zero-init `out_proj`/`head` made the output independent of the scan — it reported
+  max_abs 0.0 for that reason. It now activates those layers first.
 
 Not done — the half that wins or loses the competition:
 
-1. **Route A/B prior decision + GPU budget** (`MRI_DIFFUSION_IMPLEMENTATION_PLAN.md` §14) —
-   the only open decision that can starve everything downstream.
-2. **SS2D kernel work** (`SS2D_REPOSITIONING_PLAN.md` §5): P0 done (batched directions;
-   measurement says fused 2D **is** justified — overhead 21–25%); P1-3/P1-4 done;
-   next P1-5 cache-block over L, P1-6 tile transpose, then P1-7 fused kernel.
-3. **No dedicated-hardware numbers** (Ampere/Graviton). `make validate` exists and `make test` runs in CI.
-4. **No demo, no <3-min video, no Devpost writeup.** Submit Aug 12–13.
+1. **No dedicated-hardware numbers at all** (Ampere/Graviton). Every figure in the repo is
+   x86 or a shared 4-core runner. This is the existential gap; book the session.
+2. **No trained prior.** Route A/B + GPU budget still open
+   (`MRI_DIFFUSION_IMPLEMENTATION_PLAN.md` §14); the endgame plan recommends cutting Route-A
+   distillation for a small-scale prior.
+3. **Phase D's quality gate has never passed** — R=4 reconstruction is 2.75 dB *worse* than
+   zero-filled against a >1 dB-better bar. **Fully diagnosed in
+   [`PHASE_D_DIAGNOSIS.md`](PHASE_D_DIAGNOSIS.md); read it before touching the sampler.** An
+   oracle denoiser reconstructs to 151 dB, so the sampler/FFT/mask/DC are exact — the causes
+   are the evaluation data (smooth bumps, where zero-filled is already near-optimal), a mask
+   that delivers effective R=2.67 when labelled R=4, a sampler σ_max=80 far outside the
+   prior's trained support, and a gate that hides the kernel-parity check behind a
+   model-quality assertion. **Do not "fix" it by relaxing the assertion.**
+4. **No <3-min video, no Devpost writeup.** Submit Aug 12–13.
 
 ## Rules of engagement
 

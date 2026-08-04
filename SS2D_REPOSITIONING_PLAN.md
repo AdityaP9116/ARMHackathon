@@ -153,12 +153,27 @@ L-dimension Blelloch scan (§4.3 — the chunked two-pass already recovers most 
 
 ## 7. Sequencing to Aug 14 (submit Aug 12–13)
 
-| Week | Kernel | App / results |
-|---|---|---|
-| Jul 20 | P0-1, P0-2, P1-3 | Route A/B decision; start distillation/training; Makefile `validate` |
-| Jul 27 | P1-4, P1-5, P1-6 | Prior trained/distilled; Phase C/D parity on arm64 CI; 2D goldens |
-| Aug 3 | P1-7 (if measurement justifies) | **Graviton session 1** (`c8g`, scripted, terminated after): headline ladder, per-NFE, $/recon, core-scaling |
-| Aug 10 | freeze; P2-9 only if green | **Graviton session 2**: demo video; `RESULTS.md` final; Devpost writeup; **submit Aug 12–13** |
+> **Superseded (Aug 3, 2026)** by [`SUBMISSION_ENDGAME_PLAN.md`](SUBMISSION_ENDGAME_PLAN.md),
+> which is the single live schedule. The table that stood here assumed the Jul 20 / Jul 27
+> weeks were executed; they were not.
+>
+> **What changed in the plan above, and why — read this before picking up P1-5/6/7.**
+> The four cross-scan directions are two traversal-order *pairs*, and the repo already had
+> a fused bidirectional kernel that computes each pair's shared Pass A once
+> (`selective_scan_bidirectional`, ABI v5, measured 1.58–1.75× exp-sharing in
+> `BIDIRECTIONAL_LOG.md`). SS2D was not using it. Routing `ss2d.py` through it (Aug 3) was
+> pure Python on an already-gated kernel path and measured **1.77–1.82× (geomean 1.80×)** on
+> block total at the production shapes — 1.81–1.90× on scan time alone — while dropping
+> non-scan overhead from **21–25% to 7.2–13.8%**.
+>
+> Consequence for this section's ordering: **P1-7 (fused `selective_scan_2d`) no longer
+> clears its own 15% rule**, and P1-5/P1-6 lost most of their headroom with it. All three
+> are now "identified next levers" for the writeup rather than pre-submission work. The
+> margin is thin at the worst shape (13.8% vs the 15% bar), so re-run the measurement on
+> Arm before treating the cut as permanent.
+> The measurement that says so is `bench/bench_ss2d.py` (which now reports the pair-vs-legacy
+> ratio alongside the overhead split, and carries the `torch.compile` baseline row the
+> earlier version was missing).
 
 Standing risk: if distillation slips past Jul 31, fall back to MambaRecon (decision log's fallback
 row) — the kernel work above is identical either way, which is the point of having ordered it
