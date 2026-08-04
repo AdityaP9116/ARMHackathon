@@ -90,10 +90,64 @@ actually run; it will on the next profile.
 
 ---
 
+---
+
+## Addendum — the first fully green CI run (PR #9, run 30927738815)
+
+Same 4-core arm64 runner, so the same provisional caveat. `backend Auto resolves to NEON on
+this host` is confirmed in the log, so these exercise the NEON path.
+
+### vs the baseline that matters
+
+`bench_bidirectional.py`, sweep-len, on arm64:
+
+| L | vs eager | **vs `torch.compile`** | one-time compile |
+|---|---|---|---|
+| 256 | 26.94× | **6.39×** | 59.9 s |
+| 512 | 40.22× | **8.38×** | 137.5 s |
+| 1024 | 39.84× | **8.69×** | 254.3 s |
+| 2048 | 40.34× | **8.99×** | 532.8 s |
+| 4096, 8192 | 38.84×, 42.86× | *skipped* (> cap) | — |
+
+Unidirectional op-level: **16.02× vs eager, 3.71× vs `torch.compile`**.
+
+Note the compile-time column. `torch.compile` unrolls the recurrence into an L-step graph,
+so **its compile cost scales with sequence length** — 60 s at L=256 to 533 s at L=2048, and
+past that it was capped rather than measured. That is the moat argument as a measurement
+rather than an assertion: the kernel runs in constant memory at any L, and the thing it is
+compared against gets progressively harder to even build.
+
+### Exp-sharing reproduced on Arm
+
+From the smoke check, kernel cost of a bidirectional scan against a unidirectional one at
+the same shape: **1.18× (L=512), 1.23× (L=2048), 1.33× (L=4096)** — not 2×. Pass A really is
+being computed once and shared across directions on NEON, not just on x86.
+
+### SS2D on NEON — first verification
+
+`mri-app` green in 2m22s: 2D goldens, pair-parity at `RAYON_NUM_THREADS` ∈ {1,2,8}, Phase C
+sampling, and the demo end-to-end.
+
+| Check | x86 scalar | **arm64 NEON** |
+|---|---|---|
+| 2D goldens vs f32 floor | 1.0× | **2.9–8.3×** |
+| Phase C backbone parity | 8.3e-7 | **1.013e-06** |
+| Phase C sampling parity | 5.7e-5 | **3.433e-05** |
+| Phase C per-NFE (ref vs kernel) | 236 / 20 ms | **238 / 11 ms** |
+
+**The goldens sitting at 2.9–8.3× floor on NEON is expected, not a regression.** The 1D
+goldens on the same runner land at **0.88–4.5×** floor (`tiny` 4.0×, `no_z` 4.5×) because the
+NEON path uses a polynomial `exp` and FMA reassociation rather than libm — documented in
+`CLAUDE.md`'s numerics rule. SS2D sums **four** independent fp32 scans per output, so
+accumulating roughly 2–4× the single-scan error puts it exactly where it lands. Every case
+still clears the 1e-4 gate by two orders of magnitude.
+
+---
+
 ## What this does *not* tell us
 
-- Nothing about **SS2D on Arm** — this workflow is Rust-only and predates the pair path
-  meeting NEON. The `mri-app` CI job covers that.
-- Nothing **vs `torch.compile`** — this is the internal ablation ladder only.
+- Nothing about **SS2D throughput on Arm** — `mri-app` proves correctness, not speed.
+  `bench_ss2d.py` at the production grids is a Graviton-session item.
 - Nothing about **scaling past 4 cores**, which is the actual Cloud-track argument.
 - No hardware counters (IPC, stalls, cache misses) — `perf_ampere.sh` needs root.
+- These remain **shared-runner** numbers. The headline table needs a dedicated instance.

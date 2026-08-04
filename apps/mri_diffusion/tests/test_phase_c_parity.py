@@ -114,10 +114,16 @@ def main():
     assert sdiff < 10 * TOL * max(1.0, sscale), "sampling parity FAILED"
     assert torch.isfinite(s_kern).all()
 
+    import platform
+
     import numpy as np
+    # Report the host rather than asserting one. This line used to hardcode
+    # "x86 scalar backend", which printed verbatim on an aarch64 NEON CI
+    # runner — a wrong label in output that could end up quoted as a result.
     print(f"3. per-NFE: torch-ref {np.median(t_ref)*1e3:.0f} ms vs "
-          f"arm_scan {np.median(t_kern)*1e3:.0f} ms (x86 scalar backend; "
-          f"informational)")
+          f"arm_scan {np.median(t_kern)*1e3:.0f} ms "
+          f"({platform.machine()}, {torch.get_num_threads()} torch threads; "
+          f"informational — a parity run, not a benchmark)")
     print("\nPHASE C GATE: PASS — full sampling on CPU through arm_scan, "
           "parity verified")
 
