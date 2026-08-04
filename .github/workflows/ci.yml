@@ -231,6 +231,12 @@ jobs:
       - name: Phase C — full sampling on CPU through the kernel
         working-directory: .
         run: python3 apps/mri_diffusion/tests/test_phase_c_parity.py
+      # Prior-independent: FFT/mask/DC identities, mask acceleration, the
+      # oracle-denoiser exactness bound, and the kernel inside the real
+      # sampling loop. Protects the kernel claim without needing a model.
+      - name: Phase D pipeline gate (no trained prior required)
+        working-directory: .
+        run: python3 apps/mri_diffusion/tests/test_phase_d_pipeline.py
       # Credential-free end-to-end: synthesises its own phantom, trains a small
       # prior in-process, reconstructs, and emits the demo image. Small sizes
       # here — this is a gate, not the video run.

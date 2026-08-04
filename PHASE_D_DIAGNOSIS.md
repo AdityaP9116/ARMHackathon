@@ -136,11 +136,38 @@ the >1 dB bar measures the *model*. One failing should not mask the other.
 
 ## 4. The accuracy target, made concrete
 
-From §2.2 and §2.3, a prior is "good enough" iff its denoiser RMSE is **< 0.28 at every σ on
-the sampling ladder**. The current prior satisfies this at σ ≤ 0.47 and fails above. This
-becomes a first-class acceptance report (`tools/prior_report.py`, §5 D-5) so prior quality is
-a measured property with a pass/fail, not a vibe — and so training can be stopped as soon as
-it clears, rather than run blind.
+**Superseded and corrected (Aug 4).** §2.2's figure of 0.28 was an *absolute* RMSE measured
+on the smooth-bump data with the old, mislabelled mask. It does not transfer: a threshold in
+absolute units is meaningless across image families with different amplitudes.
+
+Re-derived on the corrected setup (phantom evaluation data, mask delivering true R), the
+oracle sweep crosses the ">1 dB better than zero-filled" bar at a **constant multiple of the
+data's own RMS**:
+
+| setup | crossing point |
+|---|---|
+| phantom 32px, R=4 | 0.96 × RMS |
+| phantom 32px, R=8 | 0.96 × RMS |
+| phantom 64px, R=4 | 0.95 × RMS |
+| phantom 64px, R=8 | 0.93 × RMS |
+| bumps 64px, R=4 (old setup) | 1.00 × RMS |
+
+So the target is scale-invariant: **NRMSE = RMSE / RMS(data) < 0.95 at every σ on the
+ladder.** The old 0.28 was that same threshold for one dataset (bump RMS 0.262 →
+0.28/0.262 ≈ 1.07).
+
+Better still, the sweep is a clean −20·log₁₀ line, so denoiser accuracy **predicts**
+reconstruction gain before any sampling is run:
+
+> expected PSNR gain over zero-filled ≈ **−20 · log₁₀(NRMSE)**
+
+NRMSE 0.5 → ~+6 dB, 0.25 → ~+12 dB, 0.125 → ~+18 dB. Clearing 0.95 buys only the *minimum*
+passing result, so `tools/prior_report.py` also flags rungs above a **0.5 target**.
+
+Validation: run on the failing 300-step prior, the tool reports a limiting NRMSE of 1.60 and
+predicts "no better than −4.1 dB". The measured Phase D result was **−2.75 dB** — the right
+magnitude and sign, obtained without sampling at all. That is what makes it usable as a
+training stop condition (§5 D-5) rather than a post-hoc explanation.
 
 ---
 

@@ -30,6 +30,7 @@ import torch
 APP = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(APP.parent.parent))  # repo root (apps package)
 
+from apps.mri_diffusion.data import toy_batch as _toy_batch  # noqa: E402
 from apps.mri_diffusion.tests import _edm  # noqa: E402
 
 EDMPrecond, EDMLoss, construct, EDM_SOURCE = _edm.load()
@@ -39,21 +40,10 @@ RES, CH, BATCH = 32, 2, 8
 
 
 def toy_batch(n, res=RES, device="cpu"):
-    """Random smooth 2-channel fields (superposed gaussian bumps)."""
-    yy, xx = torch.meshgrid(torch.linspace(-1, 1, res),
-                            torch.linspace(-1, 1, res), indexing="ij")
-    imgs = []
-    g = torch.Generator().manual_seed(int(torch.randint(0, 1 << 31, (1,))))
-    for _ in range(n):
-        img = torch.zeros(CH, res, res)
-        for _ in range(4):
-            cx, cy = torch.rand(2, generator=g) * 1.6 - 0.8
-            s = 0.15 + 0.25 * torch.rand(1, generator=g)
-            amp = torch.randn(CH, generator=g)
-            bump = torch.exp(-((xx - cx) ** 2 + (yy - cy) ** 2) / (2 * s * s))
-            img += amp[:, None, None] * bump
-        imgs.append(img)
-    return torch.stack(imgs).to(device)
+    """Smooth 2-channel fields. Fine here — this test only asks whether the
+    network learns to DENOISE. Reconstruction evaluation must not use these;
+    see apps/mri_diffusion/data.py for why."""
+    return _toy_batch(n, res=res, device=device)
 
 
 def main():

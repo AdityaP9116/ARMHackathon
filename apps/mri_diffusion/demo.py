@@ -36,54 +36,15 @@ import torch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from apps.mri_diffusion.data import phantom_batch, shepp_logan  # noqa: E402,F401
 from apps.mri_diffusion.sampling.posterior import (  # noqa: E402
-    cartesian_mask, data_consistency, measure, psnr, to_2ch, zero_filled)
+    cartesian_mask, data_consistency, effective_R, measure, psnr, to_2ch,
+    zero_filled)
 from apps.mri_diffusion.tests import _edm  # noqa: E402
 from arm_scan.op import kernel_calls  # noqa: E402
 from arm_scan.ss2d import use_arm_scan  # noqa: E402
 
 EDMPrecond, EDMLoss, construct, EDM_SOURCE = _edm.load()
-
-# Standard Shepp-Logan ellipses: (intensity, a, b, x0, y0, phi_degrees).
-_SL = [
-    (1.00, .69, .92, 0., 0., 0), (-.80, .6624, .8740, 0., -.0184, 0),
-    (-.20, .1100, .3100, .22, 0., -18), (-.20, .1600, .4100, -.22, 0., 18),
-    (0.10, .2100, .2500, 0., .35, 0), (0.10, .0460, .0460, 0., .1, 0),
-    (0.10, .0460, .0460, 0., -.1, 0), (0.10, .0460, .0230, -.08, -.605, 0),
-    (0.10, .0230, .0230, 0., -.606, 0), (0.10, .0230, .0460, .06, -.605, 0),
-]
-
-
-def shepp_logan(n, jitter=0.0, rng=None):
-    """Shepp-Logan phantom on an n x n grid; `jitter` perturbs the ellipses so
-    a family of related images can be drawn for prior training."""
-    yy, xx = np.mgrid[-1:1:complex(0, n), -1:1:complex(0, n)]
-    img = np.zeros((n, n), dtype=np.float64)
-    for inten, a, b, x0, y0, phi in _SL:
-        if jitter and rng is not None:
-            a, b = a * (1 + jitter * rng.normal()), b * (1 + jitter * rng.normal())
-            x0, y0 = x0 + jitter * rng.normal() * .1, y0 + jitter * rng.normal() * .1
-            phi = phi + jitter * rng.normal() * 20
-        t = np.deg2rad(phi)
-        xr = (xx - x0) * np.cos(t) + (yy - y0) * np.sin(t)
-        yr = -(xx - x0) * np.sin(t) + (yy - y0) * np.cos(t)
-        img[(xr / a) ** 2 + (yr / b) ** 2 <= 1] += inten
-    return img
-
-
-def phantom_batch(n_imgs, res, rng, phase=True):
-    """(b, 2, res, res) complex-as-2-channel phantoms with a smooth phase."""
-    out = []
-    yy, xx = np.mgrid[-1:1:complex(0, res), -1:1:complex(0, res)]
-    for _ in range(n_imgs):
-        mag = shepp_logan(res, jitter=0.06, rng=rng)
-        if phase:
-            ph = 0.6 * np.sin(2.1 * xx + 0.4) + 0.5 * np.cos(1.7 * yy - 0.2)
-        else:
-            ph = np.zeros_like(mag)
-        out.append(np.stack([mag * np.cos(ph), mag * np.sin(ph)]))
-    return torch.from_numpy(np.asarray(out, dtype=np.float32))
-
 
 def ssim(a, b, window=7, C1=1e-4, C2=9e-4):
     """Mean SSIM over a uniform window — no skimage dependency.
@@ -258,7 +219,8 @@ def main():
     zf = zero_filled(y, mask)
     sampled = float(mask.mean())
     print(f"\n2. measurement: R={args.R} Cartesian, "
-          f"{sampled*100:.0f}% of k-space lines kept")
+          f"{sampled*100:.0f}% of k-space lines kept "
+          f"(effective R={effective_R(mask):.2f})")
 
     n_blocks = use_arm_scan(net)
     calls0 = kernel_calls()

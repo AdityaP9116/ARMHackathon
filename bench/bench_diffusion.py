@@ -100,9 +100,11 @@ def nmse(a, b):
 
 def run_quality(net, res, ckpt, Rs, steps, seed=0):
     """PSNR/SSIM/NMSE vs zero-filled at each acceleration. Needs a prior."""
-    from apps.mri_diffusion.demo import magnitude, phantom_batch, ssim
+    from apps.mri_diffusion.data import phantom_batch
+    from apps.mri_diffusion.demo import magnitude, ssim
     from apps.mri_diffusion.sampling.posterior import (
-        cartesian_mask, heun_posterior, measure, psnr, zero_filled)
+        cartesian_mask, effective_R, heun_posterior, measure, psnr,
+        zero_filled)
 
     net.load_state_dict(torch.load(ckpt, map_location="cpu"))
     net.eval()
@@ -119,7 +121,7 @@ def run_quality(net, res, ckpt, Rs, steps, seed=0):
         mt, mz, mr = magnitude(truth), magnitude(zf), magnitude(rec)
         out.append({
             "R": R, "sampling_fraction": float(mask.mean()),
-            "effective_R": 1.0 / float(mask.mean()),
+            "effective_R": effective_R(mask),
             "zf_psnr": psnr(mz, mt), "psnr": psnr(mr, mt),
             "ssim": ssim(mr, mt), "nmse": nmse(mr, mt),
             "zf_nmse": nmse(mz, mt), "wall_s": wall, "heun_steps": steps,

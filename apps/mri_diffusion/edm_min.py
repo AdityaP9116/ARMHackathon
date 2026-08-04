@@ -37,6 +37,28 @@ import numpy as np
 import torch
 
 
+def trained_sigma_max(P_mean=-1.2, P_std=1.2, n_std=3.0):
+    """The largest sigma the loss actually trains on, to `n_std` deviations.
+
+    EDM draws `ln(sigma) ~ N(P_mean, P_std^2)`, so with the standard
+    (-1.2, 1.2) almost no training mass lands above `exp(-1.2 + 3*1.2)` ~ 11.
+    The sampler's textbook `sigma_max=80` is therefore **4.6 standard
+    deviations outside the prior's support** — measured, six of a ten-step
+    ladder run out there, where the denoiser's error is roughly the data's own
+    scale (PHASE_D_DIAGNOSIS.md §2.3). Dialling the sampler back to this value
+    was worth ~5 dB.
+
+    Two ways to make the sampler and the loss agree, and they are mutually
+    exclusive — pick one deliberately:
+      (a) lower the sampler to the prior's support (this function), or
+      (b) raise the training distribution to cover sigma_max=80
+          (P_mean=-0.4, P_std=1.6 puts 80 at ~2.9 std), which keeps EDM's
+          standard schedule and is preferable once GPU budget allows.
+    The bug is the mismatch, not either value.
+    """
+    return float(np.exp(P_mean + n_std * P_std))
+
+
 class EDMPrecond(torch.nn.Module):
     """sigma-dependent preconditioning wrapper: `D_theta` from `F_theta`.
 
@@ -59,6 +81,12 @@ class EDMPrecond(torch.nn.Module):
         self.sigma_min = sigma_min
         self.sigma_max = sigma_max
         self.sigma_data = sigma_data
+        # What the DEFAULT EDMLoss actually trains on. Samplers read this
+        # instead of hardcoding 80.0, so the sampler and the loss cannot drift
+        # apart silently. Override after construction if you train with a
+        # different (P_mean, P_std). A CSI/EDM checkpoint loaded via ADM_REF
+        # has no such attribute, and callers correctly fall back to 80.0.
+        self.sigma_max_trained = trained_sigma_max()
 
         if model is None:
             if model_type is None:
@@ -98,6 +126,9 @@ class EDMLoss:
 
     def __init__(self, P_mean=-1.2, P_std=1.2, sigma_data=0.5):
         self.P_mean, self.P_std, self.sigma_data = P_mean, P_std, sigma_data
+        # Published so a sampler can align its ladder with what was trained,
+        # instead of both sides hardcoding a constant and silently disagreeing.
+        self.sigma_max_trained = trained_sigma_max(P_mean, P_std)
 
     def __call__(self, net, images, labels=None, augment_pipe=None):
         rnd_normal = torch.randn([images.shape[0], 1, 1, 1],

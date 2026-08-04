@@ -23,11 +23,12 @@ test: build
 test-app: build
 	$(PY) apps/mri_diffusion/tests/test_ss2d_pair_parity.py
 	$(PY) apps/mri_diffusion/tests/test_phase_c_parity.py
+	$(PY) apps/mri_diffusion/tests/test_phase_d_pipeline.py
 
 # The minutes-long ones: in-process prior training. CI and pre-release only.
 test-app-slow: build
 	$(PY) apps/mri_diffusion/tests/test_backbone_bringup.py
-	$(PY) apps/mri_diffusion/tests/test_phase_d_partial.py
+	$(PY) apps/mri_diffusion/tests/test_phase_d_quality.py
 
 validate: test test-app
 	$(PY) bench/bench_op.py --quick --no-compile
