@@ -8,6 +8,7 @@ after warmup and print full host/environment info.
 | Kernel ladder | `cargo bench` (in `kernel/`) | scalar_seq → neon_seq → neon_par, pure Rust, criterion |
 | Op level | `python bench/bench_op.py` | kernel vs PyTorch eager vs **torch.compile** on the isolated scan, plan shapes |
 | End to end | `python bench/bench_e2e.py` | HF mamba-130m `generate()`: prefill latency, decode tok/s, total — patched vs unpatched, token-identical output asserted |
+| SS2D (2D cross-scan) | `python bench/bench_ss2d.py` | The diffusion workload's own shapes (384×320 @ 96ch, 192×160 @ 192ch): traversal-pair vs the legacy four-forward-scans formulation (same kernel both sides), the scan-vs-overhead split that gates a fully fused `selective_scan_2d`, and eager / `torch.compile` baselines at reference-comparable grids. `--only` filters cases for time-boxed runs. |
 
 The op-level `ref_compile` baseline is the fair fight: `torch.compile`
 unrolls the sequential recurrence into an L-step graph (it cannot
