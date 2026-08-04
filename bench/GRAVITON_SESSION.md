@@ -131,6 +131,44 @@ On shared cloud VMs the PMU is sometimes not exposed and counters read zero. If 
 `run_profile.sh`'s software sampling still shows *where* time goes — say so in the
 writeup rather than quoting empty counters.
 
+### Also run Arm's own profiler (~15 min, recommended)
+
+**Arm Streamline CLI Tools** (part of Arm Performance Studio, free of charge) runs natively
+on a Neoverse server and implements Arm's **top-down methodology** — it classifies cycles
+rather than leaving us to infer compute-vs-memory bound from IPC by eye, attributes metrics
+per function, and supports Rust. It is also *Arm's* tool on an *Arm* contest, which is worth
+something to the judges by itself.
+
+Install into a **separate venv** so its dependencies cannot perturb the benchmark
+environment:
+
+```bash
+wget https://artifacts.tools.arm.com/arm-performance-studio/Streamline_CLI_Tools/get-streamline-cli.py
+python3 -m venv sl-venv && source ./sl-venv/bin/activate
+python3 get-streamline-cli.py install
+python3 -m pip install -r ./streamline_cli_tools/bin/requirements.txt
+export PATH=$PATH:$PWD/streamline_cli_tools/bin
+```
+
+Then find out what this instance actually exposes before profiling anything:
+
+```bash
+sysreport
+```
+
+- [ ] Record the counter count and whether **SPE** is present. Zero counters → hot-spot
+      sampling only; **3** → top-down metrics at a reduced sample rate; **6+** → optimal.
+      Without SPE you lose load-data-source metrics and some branch-mispredict accuracy.
+      This degradation is why it is safe to run on a virtualized EC2 box at all.
+
+Profile the op-level benchmark and read the top-down breakdown against the same question
+`perf` answers: compute-bound (near the ceiling — ship it) or memory-bound (name bf16 storage
+and better B/C blocking as the next lever). Command reference:
+<https://developer.arm.com/documentation/109847/latest/>.
+
+**Deactivate `sl-venv` and re-activate the project `.venv` before running any further
+benchmarks.**
+
 ---
 
 ## 5. Retrieve and terminate (~10 min)

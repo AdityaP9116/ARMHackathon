@@ -12,10 +12,10 @@ Principle: **develop and test on free Arm hardware; rent Graviton4 only for a fe
 | **Daily dev** | Oracle Cloud **Always-Free Ampere A1** (Arm Neoverse N1, up to 4 OCPUs / 24 GB RAM, permanently free tier) | $0 | Writing/debugging the kernel, correctness tests, iterating on the PyTorch bridge, running the model on CPU. Neoverse N1 has full NEON — same intrinsics as Graviton. |
 | **CI** | **GitHub Actions arm64 runners** (free for public repos, e.g. `ubuntu-24.04-arm`) | $0 | Correctness suite + build on every push; the green-badge-on-real-Arm DX signal. |
 | **Local (if available)** | Apple Silicon Mac / Raspberry Pi 5 | $0 | Instant edit-compile-test loop; NEON is NEON. Also validates the "runs on a judge's MacBook" path. |
-| **Headline numbers** | AWS **Graviton4 `c8g`** on-demand (e.g. `c8g.4xlarge`/`c8g.16xlarge`) for the benchmark sessions + demo video | ~$5–20 total | Final op benchmarks, core-scaling curve, Performix profiles, end-to-end recon timing, cost table, video recording. Two or three sessions of 1–3 hours each; terminate the instance between sessions (script the setup so it rebuilds in minutes). Check whether the hackathon or AWS's current free-tier credits cover this — they may. |
+| **Headline numbers** | AWS **Graviton4 `c8g`** on-demand (e.g. `c8g.4xlarge`/`c8g.16xlarge`) for the benchmark sessions + demo video | ~$5–20 total | Final op benchmarks, core-scaling curve, Arm Streamline profiles, end-to-end recon timing, cost table, video recording. Two or three sessions of 1–3 hours each; terminate the instance between sessions (script the setup so it rebuilds in minutes). Check whether the hackathon or AWS's current free-tier credits cover this — they may. |
 | **GPU** | none | $0 | Deliberately not needed: we use a **published checkpoint**, never train. The GPU column in the cost table cites public on-demand pricing; if we want a measured GPU number, one ~$1 spot hour suffices — optional. |
 
-Everything else is free: fastMRI data (free with registration; we never redistribute it), Arm Performance Studio / Performix (free download), Rust toolchain, PyTorch CPU wheels, PyPI publishing, Gradio, YouTube hosting.
+Everything else is free: fastMRI data (free with registration; we never redistribute it), Arm Performance Studio / Streamline CLI Tools (free of charge), Rust toolchain, PyTorch CPU wheels, PyPI publishing, Gradio, YouTube hosting.
 
 ---
 
@@ -53,7 +53,7 @@ Performance testing, kept honest:
 - **Microbenchmarks** with `criterion` (Rust) + a Python harness timing the op through the full PyTorch bridge (so FFI overhead is included, not hidden).
 - **Two baselines**: stock fallback *and* `torch.compile` on the reference — pre-empting the "you beat a strawman" critique.
 - **Methodology hygiene**: pinned CPU frequency awareness, warmup iterations, median-of-N reporting, fixed thread counts per row, versions pinned in a lockfile. All benchmark scripts checked in; `RESULTS.md` states the exact instance type, AMI, and commands.
-- **Performix profiles** before/after on Graviton (cycles, cache behavior) — both evidence and debugging tool.
+- **Arm Streamline profiles** (top-down methodology) before/after on Graviton (cycles, cache behavior) — both evidence and debugging tool.
 
 CI (free, arm64): build + unit + property tests on every push; a nightly job additionally runs the synthetic end-to-end check. Badges in the README.
 
