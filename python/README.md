@@ -14,5 +14,22 @@ print(arm_scan.stats())  # confirm engagement
 Direct op (torch): `arm_scan.selective_scan(u, delta, A, B, C, D=..., z=...)`
 NumPy-only (no torch): `arm_scan.selective_scan_numpy(...)`
 
+Two-direction (bidirectional / non-causal models), one call that computes the
+shared discretize+`exp` pass once instead of twice:
+`arm_scan.bidirectional.bidirectional_scan(..., merge="sum"|"none")`
+
+2D cross-scan (VMamba-style SS2D) over a `(B, D, H, W)` token grid — the four
+directions run as two traversal-order pairs on that same fused kernel:
+
+```python
+from arm_scan.ss2d import ss2d_scan, use_arm_scan
+out = ss2d_scan(u, delta, A, B, C, D=D, merge="sum")   # (b, d, h, w)
+use_arm_scan(model)   # swap every SS2D block in a model onto the kernel
+```
+
+`merge="none"` returns the four direction planes unmerged, for models with a
+learned combine — and is the form the 2D goldens check, per direction, before
+any merge.
+
 See the repository root for the kernel, benchmarks, and correctness
 methodology: https://github.com/AdityaP9116/ARMHackathon
