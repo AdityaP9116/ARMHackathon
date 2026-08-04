@@ -11,8 +11,10 @@ Checks, in order:
   4. PERSISTS — pickle via the EDM/CSI persistence machinery, reload,
      identical outputs.
 
-Runs on CPU in ~2-4 min. Uses the CSI reference repo for EDMPrecond,
-EDMLoss, and persistence — the same classes the real training uses.
+Runs on CPU in ~2-4 min, on a clean checkout with no external clone: the EDM
+preconditioning and loss come from `apps/mri_diffusion/edm_min.py`. Set
+`ADM_REF` to a clone of ambient-diffusion-mri to run the identical checks
+against the CSI classes instead (see tests/_edm.py).
 
 Usage: python apps/mri_diffusion/tests/test_backbone_bringup.py
 """
@@ -26,12 +28,11 @@ import numpy as np
 import torch
 
 APP = Path(__file__).resolve().parents[1]
-REF = Path(r"C:\Users\Adity\Claude\Projects\reference\ambient-diffusion-mri")
 sys.path.insert(0, str(APP.parent.parent))  # repo root (apps package)
-sys.path.insert(0, str(REF))  # dnnlib, torch_utils, training
 
-import dnnlib  # noqa: E402
-from training.loss import EDMLoss  # noqa: E402
+from apps.mri_diffusion.tests import _edm  # noqa: E402
+
+EDMPrecond, EDMLoss, construct, EDM_SOURCE = _edm.load()
 
 torch.manual_seed(0)
 RES, CH, BATCH = 32, 2, 8
@@ -57,12 +58,10 @@ def toy_batch(n, res=RES, device="cpu"):
 
 def main():
     # --- 1. interface: construct exactly like train.py/prior.py ---------
-    # EDMPrecond looks up model_type in ITS OWN globals(); inject ours the
-    # way the --arch=ss2dmamba branch will (documented insertion point).
-    import training.networks as tn
-    from apps.mri_diffusion.backbone.mamba_ss2d import MambaSS2DNet
-    tn.MambaSS2DNet = MambaSS2DNet
-    net = dnnlib.util.construct_class_by_name(
+    # EDMPrecond looks up model_type by NAME (in EDM's own module globals);
+    # _edm.load() has already performed that injection for the CSI path.
+    print(f"0. EDM source: {EDM_SOURCE}")
+    net = construct(
         class_name="training.networks.EDMPrecond",
         model_type="MambaSS2DNet",
         img_resolution=RES, img_channels=CH, label_dim=0,
@@ -85,11 +84,11 @@ def main():
     for step in range(300):
         imgs = toy_batch(BATCH)
         # CSI's EDMLoss hardcodes the MRI width crop images[:,:,:,32:352]
-        # (384->320). Pre-pad 32 zero columns so the unmodified crop lands
-        # exactly on our 32-wide toy content — a Phase-A finding worth
-        # keeping visible here.
-        padded = torch.cat([torch.zeros_like(imgs), imgs], dim=-1)
-        loss = loss_fn(net=net, images=padded, labels=None).mean()
+        # (384->320), so under ADM_REF the batch is pre-padded with 32 zero
+        # columns to land the unmodified crop on our toy content — a Phase-A
+        # finding worth keeping visible. edm_min has no crop; identity there.
+        loss = loss_fn(net=net, images=_edm.pad_for_loss(imgs),
+                       labels=None).mean()
         opt.zero_grad()
         loss.backward()
         opt.step()
