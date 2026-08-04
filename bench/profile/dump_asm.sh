@@ -24,7 +24,11 @@ for fn in \
 do
   base="${fn##*::}"
   echo "== $fn =="
-  cargo asm --release --target "$target" -p arm-scan-core "$fn" \
+  # `--lib` is required: arm-scan-core also builds an example, two test
+  # targets and a bench, and without it cargo-asm exits with
+  # "Multiple targets found" and dumps nothing. The Aug 4 CI profile run
+  # produced an empty asm audit for exactly this reason.
+  cargo asm --release --target "$target" -p arm-scan-core --lib "$fn" \
     2>&1 | tee "$outdir/$base.s" || true
   echo
 done
