@@ -91,6 +91,13 @@ def main():
                     help="skip the torch.compile baseline")
     ap.add_argument("--only", default=None,
                     help="substring filter on case name (time-boxed runs)")
+    # torch.compile unrolls the reference scan's Python loop into an L-step
+    # graph, so compile cost explodes with L (the 1D suite already records
+    # inductor OOMing at L=8192). Cap it, and record the skip as a result the
+    # way bench_op.py's --compile-max-len does. Without this the mini grid
+    # (L=7680) can burn most of a rented-instance session on one compile.
+    ap.add_argument("--compile-max-l", type=int, default=2048,
+                    help="skip torch.compile above this sequence length")
     args = ap.parse_args()
 
     torch.manual_seed(0)
@@ -142,7 +149,17 @@ def main():
             print(f"{'':22s} torch eager {rtot*1e3:9.1f} ms  "
                   f"({rtot/pair_tot:.1f}x slower than kernel)")
 
-            if not args.no_compile:
+            L = h * w
+            if args.no_compile:
+                pass
+            elif L > args.compile_max_l:
+                row["ref_compile_total_s"] = None
+                row["ref_compile_skipped"] = (
+                    f"L={L} > --compile-max-l={args.compile_max_l}")
+                print(f"{'':22s} torch.compile SKIPPED (L={L} > "
+                      f"{args.compile_max_l}; unrolled graph is impractical "
+                      f"— that limitation is itself a result)")
+            else:
                 try:
                     cblk = torch.compile(blk, dynamic=False)
                     ctot, _ = timed_block(cblk, x, emb, 1, warmup=1)
@@ -157,16 +174,25 @@ def main():
             use_arm_scan(blk)
         out["cases"].append(row)
 
+    # Only the production-shape cases (L*) carry the P1-7 verdict. A --only
+    # filter can exclude all of them, and crashing on an empty max() AFTER
+    # the measurements are taken would throw away the run.
     real = [c for c in out["cases"] if c["case"].startswith("L")]
-    verdict = max(c["overhead_pct"] for c in real)
-    out["fused_kernel_justified"] = verdict > 15.0
-    out["pair_speedup_geomean"] = (
-        statistics.geometric_mean([c["pair_speedup_total"] for c in real]))
-    print(f"\ntraversal-pair rewrite: {out['pair_speedup_geomean']:.2f}x "
-          f"geomean on the real shapes (block total, same kernel both sides)")
-    print(f"P1-7 go/no-go: worst real-shape overhead {verdict:.1f}% "
-          f"-> fully fused selective_scan_2d "
-          f"{'JUSTIFIED' if verdict > 15 else 'NOT justified'} (15% rule)")
+    if real:
+        verdict = max(c["overhead_pct"] for c in real)
+        out["fused_kernel_justified"] = verdict > 15.0
+        out["pair_speedup_geomean"] = statistics.geometric_mean(
+            [c["pair_speedup_total"] for c in real])
+        print(f"\ntraversal-pair rewrite: {out['pair_speedup_geomean']:.2f}x "
+              f"geomean on the real shapes (block total, same kernel "
+              f"both sides)")
+        print(f"P1-7 go/no-go: worst real-shape overhead {verdict:.1f}% "
+              f"-> fully fused selective_scan_2d "
+              f"{'JUSTIFIED' if verdict > 15 else 'NOT justified'} "
+              f"(15% rule)")
+    else:
+        print("\n(no production-shape L* cases in this run -> no P1-7 "
+              "verdict; re-run without --only for the go/no-go)")
 
     if args.json:
         Path(args.json).parent.mkdir(parents=True, exist_ok=True)
