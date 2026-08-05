@@ -74,6 +74,107 @@ def make_fake_volume(path, slices=12, h=640, w=368, seed=0):
         f.attrs["patient_id"] = f"fake{seed}"
 
 
+def inspect(path):
+    """Check a REAL `.h5` against the assumptions the loader is built on.
+
+    The self-test proves the loader's logic against files we generate — which
+    cannot prove that real fastMRI files are shaped the way we assumed. Run
+    this on the first volume that finishes downloading, before trusting
+    anything downstream.
+
+    The load-bearing assumption is that k-space is stored **DC-centred**. If it
+    is not, every image comes out quadrant-swapped — and it would still have
+    plausible shapes, statistics and RMS, so it would sail through every other
+    check and train on nonsense. The centring test below is decisive: centred
+    k-space has its energy peak in the middle of the array, un-centred has it
+    at the corners.
+    """
+    from apps.mri_diffusion.fastmri_data import _require_h5py
+    h5py = _require_h5py()
+    print(f"inspecting {path}\n")
+    ok = True
+    with h5py.File(path, "r") as f:
+        print("datasets:")
+        for k in f:
+            d = f[k]
+            print(f"  {k:22s} {str(d.shape):24s} {d.dtype}")
+        print("attrs:")
+        for k, v in f.attrs.items():
+            print(f"  {k:22s} {v}")
+
+        if "kspace" not in f:
+            print("\nFAIL: no 'kspace' dataset — the loader needs it.")
+            return 1
+        k = np.asarray(f["kspace"][: min(4, f["kspace"].shape[0])])
+
+    print()
+    if k.ndim == 3:
+        print(f"OK  : kspace is 3-D {k.shape} -> single-coil, as expected")
+    elif k.ndim == 4:
+        print(f"FAIL: kspace is 4-D {k.shape} -> MULTI-COIL. Only knee "
+              f"singlecoil is supported;")
+        print("      brain/multicoil would need ESPIRiT maps and a different "
+              "forward operator.")
+        return 1
+    else:
+        print(f"FAIL: unexpected kspace rank {k.ndim}")
+        return 1
+
+    if np.iscomplexobj(k):
+        print(f"OK  : complex ({k.dtype}) -> phase is preserved")
+    else:
+        print(f"FAIL: kspace is real ({k.dtype}); expected complex")
+        ok = False
+
+    # THE decisive check: where does k-space energy live?
+    mag = np.abs(k[0])
+    h, w = mag.shape
+    ch, cw = h // 2, w // 2
+    q = max(4, min(h, w) // 16)
+    centre = mag[ch - q:ch + q, cw - q:cw + q].mean()
+    corners = np.mean([mag[:q, :q].mean(), mag[:q, -q:].mean(),
+                       mag[-q:, :q].mean(), mag[-q:, -q:].mean()])
+    ratio = centre / max(corners, 1e-30)
+    print(f"\nk-space energy: centre {centre:.3e} vs corners {corners:.3e} "
+          f"(ratio {ratio:.1f}x)")
+    if ratio > 10:
+        print("OK  : DC is at the ARRAY CENTRE -> centred storage, which is "
+              "what the loader")
+        print("      and sampling/posterior.fft both assume. No reshuffling "
+              "needed.")
+    elif ratio < 0.1:
+        print("FAIL: DC is at the CORNERS -> k-space is NOT centred.")
+        print("      The loader would produce quadrant-swapped images that "
+              "still look")
+        print("      statistically plausible. Fix: apply fftshift to kspace "
+              "before the")
+        print("      iFFT in fastmri_data.volume_to_images.")
+        ok = False
+    else:
+        print("WARN: ambiguous (ratio near 1). Inspect a reconstructed slice "
+              "by eye before trusting this.")
+        ok = False
+
+    # Reconstruct one slice and sanity-check it looks like an anatomy image.
+    img = np.fft.fftshift(np.fft.ifft2(np.fft.ifftshift(k[0]), norm="ortho"))
+    a = np.abs(img)
+    cropped = a[max(0, h // 2 - 160):h // 2 + 160,
+                max(0, w // 2 - 160):w // 2 + 160]
+    edge = np.mean([a[:8].mean(), a[-8:].mean()])
+    print(f"\nreconstructed slice: {a.shape}, centre-crop mean "
+          f"{cropped.mean():.3e}, border mean {edge:.3e}")
+    if cropped.mean() > 3 * edge:
+        print("OK  : signal is concentrated centrally, background is dark — "
+              "looks like anatomy")
+    else:
+        print("WARN: no clear centre/background contrast. Check a rendered "
+              "slice by eye.")
+
+    print("\nINSPECT:", "PASS — assumptions hold, proceed" if ok
+          else "PROBLEM — see above; do NOT train until resolved")
+    return 0 if ok else 1
+
+
 def self_test():
     print("self-test: synthesising fastMRI-shaped volumes (no real data)\n")
     tmp = Path(tempfile.mkdtemp(prefix="fastmri-selftest-"))
@@ -146,8 +247,13 @@ def main():
     ap.add_argument("--sigma-data", type=float, default=0.5)
     ap.add_argument("--self-test", action="store_true",
                     help="validate the pipeline on synthetic data, no download")
+    ap.add_argument("--inspect", metavar="FILE.h5", default=None,
+                    help="check a REAL volume against the loader's "
+                         "assumptions — run this first")
     args = ap.parse_args()
 
+    if args.inspect:
+        return inspect(Path(args.inspect))
     if args.self_test:
         return self_test()
     if not args.root:
