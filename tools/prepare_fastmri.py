@@ -204,10 +204,26 @@ def self_test():
         out = tmp / "cache.pt"
         blob = build_cache(raw, out, res=64, holdout=2, verbose=False)
         tr, ev = blob["train"].shape[0], blob["eval"].shape[0]
-        print(f"  cache: {tr} train / {ev} eval slices, "
+        print(f"  holdout mode: {tr} train / {ev} eval slices, "
               f"{out.stat().st_size/1e6:.1f} MB")
         assert tr > 0 and ev > 0, "empty split"
         assert blob["train"].dtype == torch.float16, "cache should be float16"
+        assert blob["split_mode"] == "holdout-from-train"
+
+        # The conventional setup: a separate directory as the eval split.
+        val = tmp / "val"
+        val.mkdir()
+        for i in range(2):
+            make_fake_volume(val / f"val{i}.h5", slices=10, seed=100 + i)
+        out2 = tmp / "cache_split.pt"
+        b2 = build_cache(raw, out2, res=64, eval_root=val, verbose=False)
+        print(f"  separate-val mode: {b2['train'].shape[0]} train / "
+              f"{b2['eval'].shape[0]} eval slices")
+        assert b2["split_mode"] == "separate-val"
+        # Nothing is held back from train when a real val split is supplied.
+        assert b2["train"].shape[0] > tr, (
+            "separate-val should train on ALL of --root")
+        assert b2["eval"].shape[0] > 0
 
         loaded = load_cache(out, "train")
         assert loaded.dtype == torch.float32 and loaded.shape[0] == tr
@@ -242,8 +258,16 @@ def main():
                     help="cap the number of volumes (default: all)")
     ap.add_argument("--max-slices", type=int, default=None,
                     help="cap slices taken per volume")
+    ap.add_argument("--eval-root", default=None,
+                    help="separate directory for the evaluation split "
+                         "(fastMRI's own val against its train) — the "
+                         "conventional setup; preferred over --holdout")
+    ap.add_argument("--eval-volumes", type=int, default=None,
+                    help="cap volumes taken from --eval-root")
     ap.add_argument("--holdout", type=int, default=8,
-                    help="volumes reserved for evaluation (never trained on)")
+                    help="volumes reserved from --root for evaluation when "
+                         "only ONE split was downloaded (ignored if "
+                         "--eval-root is given)")
     ap.add_argument("--sigma-data", type=float, default=0.5)
     ap.add_argument("--self-test", action="store_true",
                     help="validate the pipeline on synthetic data, no download")
@@ -260,11 +284,11 @@ def main():
         ap.error("--root is required (or use --self-test)")
 
     print(f"fastMRI knee single-coil -> {args.out}")
-    print(f"  source {args.root}, {args.res}px, "
-          f"holdout {args.holdout} volumes\n")
+    print(f"  source {args.root}, {args.res}px\n")
     build_cache(args.root, args.out, res=args.res,
                 limit_volumes=args.volumes, max_slices=args.max_slices,
-                holdout=args.holdout, sigma_data=args.sigma_data)
+                holdout=args.holdout, sigma_data=args.sigma_data,
+                eval_root=args.eval_root, eval_volumes=args.eval_volumes)
 
     print("\nThe raw data is no longer needed. To reclaim the space:")
     print(f"    rm -rf {args.root}")

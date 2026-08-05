@@ -116,24 +116,56 @@ def volume_to_images(path, res=None, crop=CROP, sigma_data=0.5,
 
 
 def build_cache(root, out, res=128, limit_volumes=None, max_slices=None,
-                holdout=8, sigma_data=0.5, verbose=True):
+                holdout=8, sigma_data=0.5, verbose=True, eval_root=None,
+                eval_volumes=None):
     """Preprocess volumes into one compact tensor file.
 
     The raw download is transient: after this you can delete the `.h5` files.
     A few thousand slices at 128px in float16 is a few hundred MB.
+
+    Two ways to get an evaluation split, and the first is preferable:
+
+    `eval_root` — a SEPARATE directory (fastMRI's own `val` split against its
+        `train` split). The conventional setup: nothing about the evaluation
+        data shares a split with training, so no caveat attaches to the
+        numbers.
+
+    `holdout` — reserve N volumes from `root` when only one split was
+        downloaded. Legitimate (the split is by volume, so no patient leaks
+        between the two) but non-standard, and it should be stated plainly
+        wherever the metrics are reported.
     """
     vols = list_volumes(root)
     if not vols:
         raise SystemExit(f"no .h5 files under {root}")
     if limit_volumes:
         vols = vols[:limit_volumes]
-    if holdout >= len(vols):
-        raise SystemExit(f"holdout={holdout} but only {len(vols)} volumes")
 
-    # Split by VOLUME (see module docstring, point 3). Deterministic: the
-    # sorted order plus a fixed stride, so the same volumes are always held
-    # out regardless of how many are processed.
-    eval_idx = set(np.linspace(0, len(vols) - 1, holdout).astype(int).tolist())
+    eval_vols = []
+    if eval_root:
+        eval_vols = list_volumes(eval_root)
+        if not eval_vols:
+            raise SystemExit(f"no .h5 files under {eval_root}")
+        if eval_volumes:
+            eval_vols = eval_vols[:eval_volumes]
+        eval_idx = set()  # nothing held back from `root`
+        if verbose:
+            print(f"  splits: {len(vols)} train volumes from {root}, "
+                  f"{len(eval_vols)} eval volumes from {eval_root}")
+    else:
+        if holdout >= len(vols):
+            raise SystemExit(f"holdout={holdout} but only {len(vols)} volumes")
+        # Split by VOLUME (module docstring, point 3). Deterministic: sorted
+        # order plus a fixed stride, so the same volumes are always held out
+        # regardless of how many are processed.
+        eval_idx = set(np.linspace(0, len(vols) - 1,
+                                   holdout).astype(int).tolist())
+        if verbose:
+            print(f"  splits: {len(vols) - len(eval_idx)} train / "
+                  f"{len(eval_idx)} holdout volumes, both from {root}")
+            print("  (single-split mode — state this when reporting metrics; "
+                  "pass --eval-root for")
+            print("   the conventional train/val setup)")
 
     train, evalset, skipped = [], [], []
     for i, v in enumerate(vols):
@@ -149,12 +181,26 @@ def build_cache(root, out, res=128, limit_volumes=None, max_slices=None,
                   f"({sum(t.shape[0] for t in train)} train slices)",
                   flush=True)
 
+    for v in eval_vols:
+        try:
+            evalset.append(volume_to_images(
+                v, res=res, sigma_data=sigma_data,
+                max_slices=max_slices).half())
+        except Exception as exc:  # noqa: BLE001
+            skipped.append((v.name, str(exc)[:80]))
+
     if not train:
         raise SystemExit("no usable volumes — are these single-coil files?")
     blob = {
         "train": torch.cat(train), "eval": torch.cat(evalset) if evalset
         else torch.empty(0), "res": res, "sigma_data": sigma_data,
         "n_volumes": len(vols), "n_holdout_volumes": len(eval_idx),
+        "n_eval_volumes": len(eval_vols),
+        # Recorded so the provenance travels with the data: whether the
+        # evaluation set came from fastMRI's own val split or was carved out
+        # of train changes what the metrics may be compared against.
+        "split_mode": "separate-val" if eval_root else "holdout-from-train",
+        "eval_root": str(eval_root) if eval_root else None,
         "source": "fastMRI knee singlecoil (NYU Langone; Knoll et al.)",
     }
     Path(out).parent.mkdir(parents=True, exist_ok=True)
@@ -162,11 +208,12 @@ def build_cache(root, out, res=128, limit_volumes=None, max_slices=None,
 
     if verbose:
         mb = Path(out).stat().st_size / 1e6
-        print(f"\ncache: {out}  ({mb:.0f} MB)")
+        print(f"\ncache: {out}  ({mb:.0f} MB)  mode={blob['split_mode']}")
         print(f"  train {blob['train'].shape[0]} slices from "
               f"{len(vols) - len(eval_idx)} volumes")
-        print(f"  eval  {blob['eval'].shape[0]} slices from "
-              f"{len(eval_idx)} held-out volumes")
+        n_ev = len(eval_vols) if eval_root else len(eval_idx)
+        print(f"  eval  {blob['eval'].shape[0]} slices from {n_ev} volumes"
+              + ("" if eval_root else " held out of the same split"))
         if skipped:
             print(f"  skipped {len(skipped)} file(s):")
             for name, why in skipped[:5]:
