@@ -6,7 +6,15 @@
 # credentials, and no external clone — target ~5 minutes on a laptop.
 PY ?= python3
 
-.PHONY: validate build test test-app test-app-slow bench demo goldens goldens-2d
+# Training-path defaults; override on the command line, e.g.
+#   make train CACHE=data/knee_128.pt RES=128 PRIOR=data/prior_knee.pt
+RAW   ?= data/raw
+CACHE ?= data/knee_128.pt
+PRIOR ?= data/prior.pt
+RES   ?= 128
+
+.PHONY: validate build test test-app test-app-slow bench demo goldens \
+        goldens-2d prepare-data calibrate train validate-prior train-session
 
 build:
 	cd kernel && cargo build --release -p arm-scan-ffi
@@ -39,6 +47,26 @@ demo: build
 
 bench: build
 	cd kernel && cargo bench
+
+# ---- training (GPU box; needs no Rust — the kernel has no autograd) ----
+# 1. prepare  2. calibrate the bar for THIS data  3. train  4. validate
+prepare-data:
+	$(PY) tools/prepare_fastmri.py --root $(RAW) --out $(CACHE) --res $(RES)
+
+calibrate:
+	$(PY) tools/calibrate_prior_bar.py --data fastmri --cache $(CACHE) \
+		--res $(RES)
+
+train:
+	$(PY) tools/train_prior.py --cache $(CACHE) --res $(RES) --out $(PRIOR)
+
+validate-prior:
+	$(PY) tools/validate_prior.py --checkpoint $(PRIOR) --cache $(CACHE) \
+		--json results/prior_validation.json
+
+# The whole GPU session end to end.
+train-session:
+	bash tools/run_training_session.sh --cache $(CACHE)
 
 goldens:
 	$(PY) tests/gen_golden.py

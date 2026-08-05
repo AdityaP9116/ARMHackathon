@@ -245,6 +245,24 @@ jobs:
         run: |
           python3 -m pip install --quiet h5py
           python3 tools/prepare_fastmri.py --self-test
+      # The training path runs on a GPU box we never touch in CI, so it would
+      # rot silently. A 4-step phantom run exercises trainer -> checkpoint ->
+      # resume -> validate, which is where the breakages actually are.
+      - name: Training path smoke (trainer, resume, validate)
+        working-directory: .
+        run: |
+          set -o pipefail
+          python3 tools/train_prior.py --steps 2 --res 32 --batch 2 \
+            --model-channels 16 --blocks 1 --log-every 1 --eval-every 2 \
+            --save-every 2 --no-early-stop --out /tmp/ci_prior.pt
+          python3 tools/train_prior.py --steps 4 --res 32 --batch 2 \
+            --model-channels 16 --blocks 1 --log-every 1 --eval-every 4 \
+            --save-every 4 --no-early-stop --out /tmp/ci_prior.pt \
+            --resume /tmp/ci_prior.pt.resume
+          python3 tools/prior_report.py --checkpoint /tmp/ci_prior.pt \
+            --res 32 --batch 4 || true   # a 4-step prior must fail its bar
+          python3 tools/validate_prior.py --checkpoint /tmp/ci_prior.pt \
+            --res 32 --steps 4 --R 4 --png /tmp/ci_val.png || true
       # Credential-free end-to-end: synthesises its own phantom, trains a small
       # prior in-process, reconstructs, and emits the demo image. Small sizes
       # here — this is a gate, not the video run.
