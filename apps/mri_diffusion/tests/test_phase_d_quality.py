@@ -18,9 +18,9 @@ whose real cause is "we have not trained a model yet".
 
 **The >1 dB bar is deliberately not softened.** It is the entire quality claim.
 If a prior cannot clear it, the honest outcome is to report that — together
-with the accuracy target from PHASE_D_DIAGNOSIS.md §4 (denoiser NRMSE < 0.95 x
-the data RMS at every sigma on the ladder). Check a candidate with `tools/prior_report.py`
-BEFORE spending sampling time on it.
+with the accuracy target from PHASE_D_DIAGNOSIS.md §4 (denoiser NRMSE below the
+data-calibrated bar at every sigma on the ladder). Check a candidate with
+`tools/prior_report.py` BEFORE spending sampling time on it.
 
 Evaluation uses Shepp-Logan phantoms, not the smooth bump data: on smooth
 images a centre-keeping mask discards ~0.2% of the energy, so zero-filling is
@@ -60,15 +60,17 @@ def main():
     ap.add_argument("--checkpoint", default=os.environ.get("PRIOR_CKPT"))
     ap.add_argument("--res", type=int, default=64)
     ap.add_argument("--steps", type=int, default=12)
-    ap.add_argument("--model-channels", type=int, default=32)
-    ap.add_argument("--blocks", type=int, default=1)
-    ap.add_argument("--d-state", type=int, default=16)
+    # None on purpose: a self-describing checkpoint supplies these, and
+    # an argparse default would silently override the embedded config.
+    ap.add_argument("--model-channels", type=int, default=None)
+    ap.add_argument("--blocks", type=int, default=None)
+    ap.add_argument("--d-state", type=int, default=None)
     args = ap.parse_args()
 
     if not args.checkpoint:
         print("PHASE D QUALITY GATE: SKIPPED — no trained prior.")
         print("  Pass --checkpoint PATH (or set PRIOR_CKPT).")
-        print("  Train one with apps/mri_diffusion/demo.py --save-prior, then")
+        print("  Train one with tools/train_prior.py, then")
         print("  check it with tools/prior_report.py before running this.")
         return 0
     ckpt = Path(args.checkpoint)
@@ -78,15 +80,16 @@ def main():
 
     torch.manual_seed(0)
     print(f"EDM source: {EDM_SOURCE}")
-    net = construct(
-        class_name="training.networks.EDMPrecond", model_type="MambaSS2DNet",
-        img_resolution=args.res, img_channels=2, label_dim=0,
-        model_channels=args.model_channels,
-        num_blocks_per_level=args.blocks, d_state=args.d_state,
-        use_fp16=False, sigma_data=0.5)
-    net.load_state_dict(torch.load(ckpt, map_location="cpu"))
-    net.eval()
+    from apps.mri_diffusion.checkpoint import build_prior
+    overrides = {k: v for k, v in (
+        ("img_resolution", args.res), ("model_channels", args.model_channels),
+        ("num_blocks_per_level", args.blocks), ("d_state", args.d_state),
+    ) if v is not None}
+    net, _cfg, meta = build_prior(construct, ckpt, **overrides)
     n_blocks = use_arm_scan(net)
+    if meta.get("step"):
+        print(f"checkpoint: step {meta['step']}"
+              + (f", data {meta['data']}" if meta.get("data") else ""))
     print(f"prior: {ckpt} "
           f"({sum(p.numel() for p in net.parameters())/1e3:.0f}K params, "
           f"{n_blocks} SS2D blocks on arm_scan)")
@@ -119,10 +122,9 @@ def main():
         print("  This is a PRIOR-QUALITY result, not a kernel or sampler "
               "fault: test_phase_d_pipeline.py")
         print("  proves the machinery is exact (oracle denoiser -> ~150 dB).")
-        print("  Check the prior with tools/prior_report.py — the target is "
-              "denoiser NRMSE < 0.95 x the")
-        print("  data RMS at every sigma on the ladder. Do NOT relax "
-              "this bar.")
+        print("  Check the prior with tools/prior_report.py — it must clear "
+              "the data-calibrated")
+        print("  NRMSE bar at every sigma. Do NOT relax this bar.")
         return 1
 
     print("\nPHASE D QUALITY GATE: PASS — diffusion prior beats zero-filled "

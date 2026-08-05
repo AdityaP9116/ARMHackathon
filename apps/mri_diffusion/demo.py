@@ -221,9 +221,19 @@ def main():
     print(f"1. prior: MambaSS2DNet under EDMPrecond, {n_params/1e3:.0f}K params")
 
     if args.checkpoint:
-        net.load_state_dict(torch.load(args.checkpoint, map_location="cpu"))
-        net.eval()
-        print(f"   loaded {args.checkpoint}")
+        from apps.mri_diffusion.checkpoint import build_prior
+        # Prefer the checkpoint's own architecture; fall back to this
+        # script's training defaults for bare state_dicts from older runs.
+        try:
+            net, _cfg, meta = build_prior(construct, args.checkpoint,
+                                          img_resolution=args.res)
+        except SystemExit:
+            net, _cfg, meta = build_prior(
+                construct, args.checkpoint, img_resolution=args.res,
+                model_channels=32, num_blocks_per_level=1, d_state=16)
+        print(f"   loaded {args.checkpoint}"
+              + (f" (step {meta['step']}, {meta.get('data', '?')})"
+                 if meta.get("step") else ""))
     else:
         print(f"   no --checkpoint: training in-process "
               f"({args.train_steps} steps on synthetic phantoms). This is a "

@@ -81,9 +81,11 @@ def main():
                     help="ladder length; match the sampler you will use")
     ap.add_argument("--sigma-max", type=float, default=None,
                     help="default: the prior's own trained support")
-    ap.add_argument("--model-channels", type=int, default=32)
-    ap.add_argument("--blocks", type=int, default=1)
-    ap.add_argument("--d-state", type=int, default=16)
+    # Default None on purpose: a self-describing checkpoint supplies these,
+    # and an argparse default would silently override the embedded config.
+    ap.add_argument("--model-channels", type=int, default=None)
+    ap.add_argument("--blocks", type=int, default=None)
+    ap.add_argument("--d-state", type=int, default=None)
     ap.add_argument("--bar", type=float, default=NRMSE_BAR,
                     help="NRMSE (RMSE / data RMS) that must not be exceeded")
     ap.add_argument("--cache", default=None,
@@ -96,14 +98,18 @@ def main():
     args = ap.parse_args()
 
     torch.manual_seed(args.seed)
-    net = construct(
-        class_name="training.networks.EDMPrecond", model_type="MambaSS2DNet",
-        img_resolution=args.res, img_channels=2, label_dim=0,
-        model_channels=args.model_channels,
-        num_blocks_per_level=args.blocks, d_state=args.d_state,
-        use_fp16=False, sigma_data=0.5)
-    net.load_state_dict(torch.load(args.checkpoint, map_location="cpu"))
-    net.eval()
+    # Checkpoints from tools/train_prior.py embed their architecture, so the
+    # --model-channels/--blocks/--d-state flags are only needed for bare
+    # state_dicts written by older runs.
+    from apps.mri_diffusion.checkpoint import build_prior
+    overrides = {k: v for k, v in (
+        ("img_resolution", args.res), ("model_channels", args.model_channels),
+        ("num_blocks_per_level", args.blocks), ("d_state", args.d_state),
+    ) if v is not None}
+    net, cfg, meta = build_prior(construct, args.checkpoint, **overrides)
+    if meta.get("step"):
+        print(f"checkpoint : step {meta['step']}"
+              + (f", trained on {meta['data']}" if meta.get("data") else ""))
 
     smax = args.sigma_max or float(getattr(net, "sigma_max_trained", 80.0))
     ladder = sigma_ladder(args.steps, smax)
