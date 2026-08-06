@@ -69,12 +69,42 @@ paper first**, and validating *that* against the official implementation
 requires a GPU. The kernel is the easy part; the correctness infrastructure is
 the expensive part.
 
-**This is also the opportunity, now verified first-hand rather than assumed:**
-there is no CPU implementation of Mamba-3 anywhere, and you cannot even install
-the reference implementation on a CPU-only machine. That remains a strong
-roadmap claim — see [`docs/roadmap/MAMBA3_KERNEL_PLAN.md`](docs/roadmap/MAMBA3_KERNEL_PLAN.md),
-whose "no public checkpoints" line is now out of date (checkpoints exist;
-`state-spaces/mamba3-siso-187m` confirmed).
+### Correction — two of the claims above were wrong
+
+A follow-up prior-art search (prompted by the user, not by me) turned up two
+repositories that change this section materially. Both verified:
+
+**[`rishikksh20/mamba3-pytorch`](https://github.com/rishikksh20/mamba3-pytorch)** —
+a pure-PyTorch Mamba-3 with trapezoidal discretization, RoPE on B/C, and both
+SISO and MIMO. Runs on CPU, no CUDA. So **the oracle problem is solvable
+without a GPU** — this is a usable reference, the same role
+`tests/reference/selective_scan_ref.py` plays for Mamba-1. (It is a community
+re-implementation, so it would itself need validating against the official
+kernels before being trusted as ground truth.)
+
+**[`silvermpx/mamba-rs`](https://github.com/silvermpx/mamba-rs)** — **Mamba-3
+SISO, in Rust, on CPU, with rayon parallelization** and optional BLAS. This is
+direct prior art, and it is the important finding: the argument for pivoting to
+Mamba-3 was "nobody has it on CPU." That is **no longer true**.
+
+What survives is narrow. `mamba-rs` is a standalone runtime — "no framework
+dependency," a library and CLI, no PyTorch interop — and its optimization story
+is x86/CUDA with no Arm/NEON. So a pivot would leave us claiming *"first
+PyTorch-callable, NEON-optimized Mamba-3 scan"*: defensible, but a much thinner
+claim that invites "isn't that mamba-rs with a Python binding?"
+
+Both are now in the README prior-art table. We claim to have checked; a judge
+finding `mamba-rs` in a table we omitted it from would be far more damaging
+than the row itself.
+
+**What this does NOT touch:** `mamba-rs` is 1D only. VMamba is CUDA-only.
+2DMamba is GPU-only. **"First fast CPU SS2D cross-scan on any architecture"
+stands unchallenged** — and it is the claim we already have working, gated, and
+measured.
+
+**Net effect on the recommendation: strengthens the case for not pivoting.**
+The novelty argument was the entire reason to spend ~5 of 8 remaining days on
+Mamba-3, and it just got substantially weaker.
 
 ---
 
