@@ -312,7 +312,8 @@ succeeds on the first try and Stage 1 finds a matching recurrence.
 
 ## Repo state at time of writing
 
-- Branch `feature/ss2d-fused-bidirectional`, **30 commits**, PR #9 open
+- Branch `feature/ss2d-fused-bidirectional`, **27 commits ahead of `main`**
+  (125 total), PR #9 open — **the branch, not `main`, is the current work**
 - CI **green on all 7 jobs**
 - Working tree clean, nothing unpushed
 
