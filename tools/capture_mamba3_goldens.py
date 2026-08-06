@@ -101,6 +101,63 @@ class Capture:
         return out
 
 
+def capture_block_io(model, outdir, manifest, limit=4):
+    """Record every Mamba3 BLOCK's input and output, as a fallback.
+
+    If the inner kernel cannot be wrapped — renamed, inlined, or dispatched
+    somewhere we did not find — block-level input/output still lets Stage 6
+    validate a CPU reimplementation end-to-end. It just cannot isolate the
+    scan from the projections around it, so it is the weaker artifact. Capture
+    both when possible.
+    """
+    try:
+        from mamba_ssm.modules.mamba3 import Mamba3
+    except Exception as exc:  # noqa: BLE001
+        print(f"  (block hook unavailable: {exc})")
+        return 0
+
+    recorded, handles = [], []
+
+    def hook(mod, inp, out):
+        if len(recorded) >= limit:
+            return
+        t_in = inp[0] if isinstance(inp, tuple) else inp
+        t_out = out[0] if isinstance(out, tuple) else out
+        if torch.is_tensor(t_in) and torch.is_tensor(t_out):
+            recorded.append((t_in.detach().float().cpu().numpy(),
+                             t_out.detach().float().cpu().numpy(),
+                             {k: v for k, v in mod.__dict__.items()
+                              if isinstance(v, (int, float, bool, str))}))
+
+    for m in model.modules():
+        if isinstance(m, Mamba3):
+            handles.append(m.register_forward_hook(hook))
+    return recorded, handles
+
+
+def dump_model_shape(model, outdir, manifest):
+    """Record config and every parameter's name/shape.
+
+    Stage 6 has to rebuild this block in plain PyTorch and load the published
+    weights into it. Guessing parameter names from a paper is miserable; this
+    makes it mechanical.
+    """
+    params = {n: list(p.shape) for n, p in model.named_parameters()}
+    buffers = {n: list(b.shape) for n, b in model.named_buffers()}
+    cfg = {}
+    for attr in ("config", "cfg"):
+        c = getattr(model, attr, None)
+        if c is not None:
+            cfg = (c.__dict__ if hasattr(c, "__dict__")
+                   else dict(c) if isinstance(c, dict) else str(c))
+            break
+    (Path(outdir) / "model_shape.json").write_text(json.dumps(
+        {"config": cfg, "parameters": params, "buffers": buffers}, indent=2,
+        default=str))
+    manifest["n_parameters"] = len(params)
+    print(f"  model_shape.json: {len(params)} params, {len(buffers)} buffers")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="tests/golden/mamba3")
