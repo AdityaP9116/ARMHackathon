@@ -1,5 +1,11 @@
 # CLAUDE.md — working guidelines for this repo
 
+> **Resuming in a fresh session, or on a different machine? Read
+> [`HANDOFF.md`](HANDOFF.md) first.** It carries the state that lives in a chat
+> log rather than in the code: what is blocked and why, the full nine-stage
+> Mamba-3 plan, decisions already settled, and the traps that have already cost
+> us time. This file is the standing rules; that one is where we currently are.
+
 ## The goal
 
 Win the **[Arm Create: AI Optimization Challenge](https://arm-ai-optimization-challenge.devpost.com/)** — **Cloud AI track**. Deadline **Aug 14, 2026, 4:00 PM PDT**. Every decision should be read against the judging rubric: Technical (40), WOW (25), Impact (20), Developer Experience (15).
