@@ -5,14 +5,14 @@
 > P1-6 / P1-7 deltas it recorded against `SS2D_REPOSITIONING_PLAN.md` §5 were overtaken on
 > Aug 3: routing SS2D through the fused bidirectional kernel captured most of that overhead,
 > and the fused `selective_scan_2d` no longer clears its own 15% bar. See
-> [`SUBMISSION_ENDGAME_PLAN.md`](SUBMISSION_ENDGAME_PLAN.md).
+> [`SUBMISSION_ENDGAME_PLAN.md`](../../SUBMISSION_ENDGAME_PLAN.md).
 
 **Written Jul 18, 2026.** A user-provided research survey ("Advanced ARM NEON Kernel
 Optimization for Mamba-2 Architectures in 2D Processing Domains via Rust") proposed a set of
 techniques. This document (1) verifies every substantive reference, (2) corrects where the
 survey's framing doesn't match this repo's actual kernel, and (3) triages each technique into
 adopt / already-planned / rejected-with-reasons / unverified — with concrete deltas to
-[`SS2D_REPOSITIONING_PLAN.md`](SS2D_REPOSITIONING_PLAN.md) where something changes.
+[`SS2D_REPOSITIONING_PLAN.md`](../archive/SS2D_REPOSITIONING_PLAN.md) where something changes.
 
 **The one-sentence outcome:** the survey validates the plan we already have (cache-blocked
 tiling, kernel fusion, static chunk tuning) and contributes two concrete implementation details

@@ -1,7 +1,7 @@
 # SUBMISSION_ENDGAME_PLAN — the last 10 days (Aug 4 → Aug 14, 2026)
 
 **Written Aug 4, 2026.** Supersedes the week tables in [`ROADMAP.md`](ROADMAP.md) §4 and
-[`SS2D_REPOSITIONING_PLAN.md`](SS2D_REPOSITIONING_PLAN.md) §7, both of which assumed the Jul 20 and
+[`SS2D_REPOSITIONING_PLAN.md`](docs/archive/SS2D_REPOSITIONING_PLAN.md) §7, both of which assumed the Jul 20 and
 Jul 27 weeks happened. They did not — the last commit is `eb707f6`, **Jul 18**. This doc is the
 single source of truth for what ships, what gets cut, and in what order. Where it disagrees with an
 older plan doc, this one wins.
@@ -56,7 +56,7 @@ This is *not* a regression from the work above, and the evidence rules the alter
   **exists**"* — it never claimed D passed.
 
 **→ Now fully diagnosed, with measurements, in
-[`PHASE_D_DIAGNOSIS.md`](PHASE_D_DIAGNOSIS.md).** Read that before touching anything.
+[`PHASE_D_DIAGNOSIS.md`](docs/archive/PHASE_D_DIAGNOSIS.md).** Read that before touching anything.
 
 The hypothesis originally recorded here — that hard DC at high σ was splicing clean k-space
 into a noise-dominated iterate — **was wrong, and the measurement says so.** DC is applied to
@@ -103,7 +103,7 @@ either a Windows x86 i9 box or a shared 4-core GitHub Actions runner:
 - [`bench/results/RESULTS.md`](bench/results/RESULTS.md) — entirely `windows-i9`, dated Jul 13.
   The scalar backend, on x86. It exercises the fallback path, not NEON.
 - `RESULTS_ci-arm64.md` — real aarch64, but a shared 4-core runner, and the repo's own
-  [`BASELINE_TEST_PLAN.md`](BASELINE_TEST_PLAN.md) classifies that as **provisional, not
+  [`BASELINE_TEST_PLAN.md`](docs/archive/BASELINE_TEST_PLAN.md) classifies that as **provisional, not
   headline-grade**.
 - The **core-scaling curve** — the single most important chart for a *Cloud* track submission, the
   "CPUs scale where the sequential scan hinders the GPU" argument — exists only as `windows-i9_t1`

@@ -1,7 +1,7 @@
 # SS2D_REPOSITIONING_PLAN — double down on vision/diffusion Mamba
 
 **Written Jul 17, 2026.** Follows the prior-art verification recorded in
-[`PROJECT_CONCEPT.md`](PROJECT_CONCEPT.md) ("Prior-art verification"). This doc is two things:
+[`PROJECT_CONCEPT.md`](../../PROJECT_CONCEPT.md) ("Prior-art verification"). This doc is two things:
 (1) the repo-wide list of what to change now that the framing is SS2D/diffusion-first, and
 (2) the kernel optimization plan **specialized to the actual workload** the diffusion app runs —
 grounded in the real shapes from `apps/mri_diffusion/backbone/mamba_ss2d.py` and
@@ -96,7 +96,7 @@ plan §3.3 (including non-square and non-multiple-of-4 grids) land **before** th
 
 > **External-research triage (Jul 18):** a literature sweep (VSSD, 2DMamba, EfficientViM,
 > COREY, FairyFuse — verified) converged on this same ordering; see
-> [`RESEARCH_TRIAGE_MAMBA2_2D.md`](RESEARCH_TRIAGE_MAMBA2_2D.md). Deltas folded in: P1-5 gains a
+> [`RESEARCH_TRIAGE_MAMBA2_2D.md`](../roadmap/RESEARCH_TRIAGE_MAMBA2_2D.md). Deltas folded in: P1-5 gains a
 > static `CHUNK` sweep at SS2D shapes + a preceding roofline run; P1-6 uses a `vld4q_f32`
 > de-interleave 4×4 transpose (fewer shuffles than vtrn/vzip); P1-7 cites 2DMamba's SRAM tiling
 > as GPU-side precedent. VSSD and SSD-on-CPU are rejected-with-reasons there (they'd dissolve
@@ -153,7 +153,7 @@ L-dimension Blelloch scan (§4.3 — the chunked two-pass already recovers most 
 
 ## 7. Sequencing to Aug 14 (submit Aug 12–13)
 
-> **Superseded (Aug 4, 2026)** by [`SUBMISSION_ENDGAME_PLAN.md`](SUBMISSION_ENDGAME_PLAN.md),
+> **Superseded (Aug 4, 2026)** by [`SUBMISSION_ENDGAME_PLAN.md`](../../SUBMISSION_ENDGAME_PLAN.md),
 > which is the single live schedule. The table that stood here assumed the Jul 20 / Jul 27
 > weeks were executed; they were not.
 >

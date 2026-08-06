@@ -1,10 +1,26 @@
-# ARMHackathon — Arm-Optimized Selective-Scan for Vision & Diffusion Mamba
+# ARMHackathon — Arm-Optimized Selective-Scan for the PyTorch Mamba Ecosystem
 
 **Arm Create: AI Optimization Challenge 2026 — Cloud AI track**
 
-Mamba state-space models are spreading from language into vision and diffusion — VMamba, MambaRecon, DiM, ZigMa, DiffuSSM — and every one of those research models lives in PyTorch, where the efficient selective-scan is **CUDA-only**. On CPU it falls back to an unoptimized sequential loop. Worse, the **multi-directional 2D cross-scan (SS2D)** that vision- and diffusion-Mamba models are built on has **no fast CPU implementation anywhere** — VMamba ships it as a CUDA-only extension, and CPU users are left with the slow pure-PyTorch reference.
+Mamba state-space models run in **linear time with constant memory** — which is exactly what
+a CPU is good at, and exactly what a transformer's growing KV cache is not. But every Mamba
+model in PyTorch calls a selective-scan that is **CUDA-only**. On CPU it falls back to an
+unoptimized sequential loop, and `torch.compile` cannot fix it: it cannot restructure a
+sequential recurrence, only unroll it into a graph that gets slower to build as the sequence
+grows.
 
-This project ships an **Arm-optimized `selective_scan` for the PyTorch ecosystem, written in Rust** (chunked/associative scan + NEON SIMD + rayon multi-core), as a pip-installable drop-in — and doubles down on the part nobody else has: **the SS2D cross-scan on CPU**, proven by running a **diffusion-based MRI reconstruction** (an EDM diffusion prior with an SS2D-Mamba denoiser) end-to-end on Arm cloud CPUs (AWS Graviton). Diffusion recon calls the denoiser 18–256 times per image, so every scan-level win compounds — exactly the workload "everyone knows" needs a GPU.
+This project ships an **Arm-optimized `selective_scan` written in Rust** (chunked scan +
+NEON SIMD + rayon), as a pip-installable PyTorch drop-in — and covers **all three scan
+topologies** the Mamba ecosystem actually uses, each proven on a real workload:
+
+| Topology | What it powers | Our demonstration |
+|---|---|---|
+| **1D unidirectional** | causal language models | **Long context on a CPU** — constant memory at any length, where `torch.compile` can't even build the graph |
+| **1D bidirectional** | non-causal sequences | **Speech enhancement** — noisy audio in, clean audio out, measured as real-time factor |
+| **2D cross-scan (SS2D)** | vision & diffusion Mamba | **Diffusion MRI reconstruction** — the scan runs 18–256× per image, so kernel wins compound |
+
+Three topologies, three demos, one kernel. That is the claim: **the kernel is general**, not a
+point optimization.
 
 ## Prior art — what exists, and what doesn't
 
@@ -19,7 +35,9 @@ We checked, so the "first" claims don't rest on faith:
 | [VMamba](https://github.com/MzeroMiko/VMamba) | The SS2D reference — as a **CUDA-only** extension | No CPU kernel at all; CPU falls back to the slow pure-PyTorch reference |
 | [2DMamba](https://arxiv.org/abs/2412.00678) (CVPR 2025) | Hardware-aware 2D selective scan with SRAM tiling — the GPU-side precedent for tiled 2D scanning | **GPU-only** (CUDA); intrinsic-2D semantics, not the VMamba cross-scan existing checkpoints use; no CPU or PyTorch-CPU path |
 
-**What this project claims — precisely.** Not "first Mamba on Arm" (see above). To the best of our knowledge it is: (1) the **first Arm-optimized `selective_scan` exposed as a PyTorch custom op** — a drop-in for existing PyTorch checkpoints, no model conversion; (2) the **first fast CPU implementation of the SS2D multi-directional cross-scan** on any architecture; (3) the **first diffusion-prior MRI reconstruction demonstrated on Arm CPU**.
+**What this project claims — precisely.** Not "first Mamba on Arm" (see above). To the best of our knowledge it is: (1) the **first Arm-optimized `selective_scan` exposed as a PyTorch custom op** — a drop-in for existing checkpoints, no model conversion; (2) the **first fast CPU implementation of the SS2D multi-directional cross-scan** on any architecture; (3) the **first diffusion-prior MRI reconstruction demonstrated on Arm CPU**.
+
+All three rest on the same kernel. The topology table above is the argument that it is general rather than tuned to one model.
 
 ## Why it matters
 
@@ -32,20 +50,33 @@ We checked, so the "first" claims don't rest on faith:
 | Component | Description |
 |---|---|
 | Rust `selective_scan` kernel | Chunked two-pass scan + fused discretization, NEON intrinsics (stable Rust), specialized non-positive `exp` paths, rayon threading over independent channels; scalar reference path is the in-crate oracle, the non-Arm fallback, and what keeps x86 CI meaningful |
-| SS2D path | `arm_scan.ss2d.ss2d_scan` takes a `(B, D, H, W)` token grid and runs VMamba's 4 directions as **two traversal-order pairs** on the fused bidirectional kernel, so the direction-independent Pass A (discretize + `exp`, ~85% of kernel time) is computed twice per block instead of four times, with no `torch.flip` copies. A single fused `selective_scan_2d` owning all four directions in Rust remains the identified next lever ([`TOPOLOGY_IMPLEMENTATION_PLAN.md`](./TOPOLOGY_IMPLEMENTATION_PLAN.md) §3.2) — currently **not** justified by its own >15% overhead rule, see below |
+| Bidirectional path | `arm_scan.bidirectional_scan` emits **both time directions from one call**, computing the direction-independent Pass A (discretize + `exp`, ~85% of kernel time) **once** instead of twice. Measured **6.4–9× vs `torch.compile`** on Arm — the strongest result in the project |
+| SS2D path | `arm_scan.ss2d.ss2d_scan` takes a `(B, D, H, W)` token grid and runs VMamba's 4 directions as **two traversal-order pairs** on that same fused bidirectional kernel, so Pass A is computed twice per block instead of four times, with no `torch.flip` copies. A single fused `selective_scan_2d` in Rust remains the identified next lever ([`docs/archive/TOPOLOGY_IMPLEMENTATION_PLAN.md`](./docs/archive/TOPOLOGY_IMPLEMENTATION_PLAN.md) §3.2) — currently **not** justified by its own >15% overhead rule, see below |
+| Streaming state | `h0` in, `last_state` out — process an unbounded stream with **flat memory**, verified bit-exact through the C ABI |
 | PyTorch custom-op bridge | `torch.library` op with registered fake kernel (composes with `torch.compile`), C-ABI FFI with panic containment, `arm_scan.patch()` for HF `transformers` Mamba |
 | MRI diffusion app | `apps/mri_diffusion`: SS2D-Mamba denoiser under NVIDIA EDM preconditioning, built on UT CSI Lab's [`ambient-diffusion-mri`](https://github.com/utcsilab/ambient-diffusion-mri) scaffolding; full (R=1) and undersampled (R=2–8) posterior reconstruction on CPU |
 | Correctness suite | Golden vectors vs. vendored upstream reference + an independent numpy re-derivation; NEON↔scalar parity; rayon output bit-identical to sequential at any thread count; goldens replayed through the real C ABI — **no dataset required**, runs on any arm64 machine, Apple Silicon included |
-| Benchmark harness | Op-level and end-to-end, against **both** eager and `torch.compile`; medians after warmup, pinned threads/seeds, host- and SHA-tagged JSON; every kernel optimization logged with measured attribution in [`OPTIMIZATION_LOG.md`](./OPTIMIZATION_LOG.md) |
+| Benchmark harness | Op-level and end-to-end, against **both** eager and `torch.compile`; medians after warmup, pinned threads/seeds, host- and SHA-tagged JSON; every kernel optimization logged with measured attribution in [`OPTIMIZATION_LOG.md`](./docs/archive/OPTIMIZATION_LOG.md) |
 
 ## Results so far (provisional — headline numbers land on Graviton)
 
-Measured on shared GitHub `ubuntu-24.04-arm` CI runners (4-core, torch 2.13); provisional per [`BASELINE_TEST_PLAN.md`](./BASELINE_TEST_PLAN.md), to be replaced by dedicated Graviton (`c8g`) numbers in [`bench/results/RESULTS.md`](./bench/results/RESULTS.md):
+Measured on shared GitHub `ubuntu-24.04-arm` CI runners (4-core, torch 2.13); provisional per [`BASELINE_TEST_PLAN.md`](./docs/archive/BASELINE_TEST_PLAN.md), to be replaced by dedicated Graviton (`c8g`) numbers in [`bench/results/RESULTS.md`](./bench/results/RESULTS.md):
 
 | Benchmark | vs eager | vs `torch.compile` |
 |---|---|---|
-| Op-level, B1 D768 L128 | 24.1× | **3.7×** |
+| Op-level, 1D unidirectional | 16.0× | **3.71×** |
+| **1D bidirectional** (fused, Pass A shared) | 26.9–42.9× | **6.39–8.99×** |
 | HF mamba-130m prefill, end-to-end (greedy tokens identical) | ~2× | — |
+
+**The compile-time wall.** `torch.compile` unrolls the recurrence into an L-step graph, so its
+*one-time compile* grows with sequence length — 59.9 s at L=256, 137.5 s at L=512, 254.3 s at
+L=1024, **532.8 s at L=2048** — and L=4096/8192 had to be capped rather than measured. Our
+kernel runs in constant memory at any L. That is the long-context argument as a measurement
+rather than an assertion.
+
+Ablation ladder on Neoverse-N2: NEON **4.03–4.08×** over scalar, threading **3.99× on 4
+cores** (99.7% scaling efficiency). Single-core time is **53.7% `exp`**, 0.1% transpose —
+see [`bench/ARM_FIRST_LOOK.md`](./bench/ARM_FIRST_LOOK.md).
 
 Kernel error vs the f64 reference ≤ 5e-6 across all golden cases (gate: 1e-4). The 2D
 cross-scan goldens land at ~1.0× each case's recorded f32 error floor — i.e. the kernel is
@@ -122,7 +153,7 @@ than reconstruction quality. Both are the active work, sequenced in
 [`SUBMISSION_ENDGAME_PLAN.md`](./SUBMISSION_ENDGAME_PLAN.md).
 
 Decision history: [`PROJECT_CONCEPT.md`](./PROJECT_CONCEPT.md). Engineering plans:
-[`TOPOLOGY_IMPLEMENTATION_PLAN.md`](./TOPOLOGY_IMPLEMENTATION_PLAN.md),
+[`TOPOLOGY_IMPLEMENTATION_PLAN.md`](./docs/archive/TOPOLOGY_IMPLEMENTATION_PLAN.md),
 [`MRI_DIFFUSION_IMPLEMENTATION_PLAN.md`](./MRI_DIFFUSION_IMPLEMENTATION_PLAN.md).
 
 ## License

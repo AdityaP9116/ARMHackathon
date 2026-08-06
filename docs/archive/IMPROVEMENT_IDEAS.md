@@ -11,7 +11,7 @@ Written Jul 14, 2026, from a deep read of the kernel at `ce07edd`, the measured
 numbers in [`BASELINE_REPORT.md`](./BASELINE_REPORT.md), the §1.0 profile,
 Neoverse microarchitecture docs, and prior art (sources at the bottom).
 
-Rules that bind every idea below (per [`CLAUDE.md`](./CLAUDE.md)):
+Rules that bind every idea below (per [`CLAUDE.md`](../../CLAUDE.md)):
 - **Correctness gates speed.** Every new mode/path gets its own golden gate and
   recorded error floor before it is benchmarked. Never loosen a tolerance.
 - **Measure before optimizing.** DONE for single-thread NEON: the §1.0 profile

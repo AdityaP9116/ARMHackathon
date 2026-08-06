@@ -8,7 +8,7 @@ its own log when that work starts.
 
 Plan: [`TOPOLOGY_IMPLEMENTATION_PLAN.md`](./TOPOLOGY_IMPLEMENTATION_PLAN.md) §2
 (SS2D is §3 of the same plan). Every entry obeys the
-[`CLAUDE.md`](./CLAUDE.md) rule **correctness gates speed** — nothing is
+[`CLAUDE.md`](../../CLAUDE.md) rule **correctness gates speed** — nothing is
 benchmarked, and no fusion work starts, until the correctness path is green.
 
 **Convention used throughout:** the topology ships in two stages — *correct*

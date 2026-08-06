@@ -2,7 +2,7 @@
 
 A running, measured record of each kernel optimization: what changed, why,
 the measured impact, and the correctness status. Every entry obeys the
-[`CLAUDE.md`](./CLAUDE.md) rule **correctness gates speed** — no speed number
+[`CLAUDE.md`](../../CLAUDE.md) rule **correctness gates speed** — no speed number
 is recorded until the golden gate (max_abs vs f64 reference < 1e-4) and the
 scalar↔NEON parity check (< 1e-5) are green.
 

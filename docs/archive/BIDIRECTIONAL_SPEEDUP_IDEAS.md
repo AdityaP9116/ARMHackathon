@@ -11,7 +11,7 @@ does not repeat it — where an idea overlaps, it is cited, not restated. The
 bidirectional-native ideas (§3) are new white space that neither document nor the
 upstream repo covers.
 
-Rules that bind every idea (per [`CLAUDE.md`](./CLAUDE.md)):
+Rules that bind every idea (per [`CLAUDE.md`](../../CLAUDE.md)):
 - **Correctness gates speed.** Every new path gets its own golden gate and error
   floor before it is benchmarked. The bidirectional definition
   (`tests/check_bidirectional_math.py`, `reverse_matches_flip_forward_flip`) is

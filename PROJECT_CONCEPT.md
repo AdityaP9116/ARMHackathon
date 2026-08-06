@@ -9,6 +9,37 @@
 
 ---
 
+## Final scope (Aug 4, 2026) — three topologies, three demos
+
+**This supersedes the paragraph below**, which locked MRI as *the* single application. It
+does not change the kernel work or the claims; it changes what we demonstrate them on.
+
+`APPLICATIONS.md` made the argument and we are now acting on it: *"Three demos that each
+exercise a different scan topology prove the **kernel itself** is general — which is the
+claim we actually want the judges to believe (Impact, 20 pts)."*
+
+| Topology | Demo | Why this one |
+|---|---|---|
+| 1D unidirectional | **Long context** on a language model | A *capability* claim, not a speed delta: constant memory at any L, while `torch.compile`'s compile time goes 59.9 s → 532.8 s from L=256 → 2048 and had to be capped past that. It is also Mamba's actual reason to exist. |
+| 1D bidirectional | **Speech enhancement** | Our **strongest-measured** topology (6.39–8.99× vs `torch.compile` on Arm) had **no application at all**. It is also the only demo a judge can *hear*, its metric (real-time factor) needs no explanation, and Arm CPUs are literally where speech enhancement ships — earbuds, hearing aids, phones. |
+| 2D cross-scan | **Diffusion MRI reconstruction** | Already built and gated. Highest ceiling, and the workload where kernel wins compound (18–256 denoiser calls per image). |
+
+**Rejected, with reasons:**
+
+- **Pivoting the kernel to Mamba-3.** Checkpoints *do* now exist (`state-spaces/mamba3-*`,
+  arXiv 2603.15569 — the "no public checkpoints" line in `docs/roadmap/MAMBA3_KERNEL_PLAN.md`
+  is out of date), and there is still **no CPU implementation anywhere**, so it is genuinely
+  attractive. But it is a different recurrence, and with 10 days left and zero dedicated-Arm
+  numbers banked, it trades a measured submission for an unmeasured one. It stays the
+  roadmap — strengthened by the fact that the SSD substrate is 90% of it and the λ=1 / r=1
+  reductions give free correctness gates against what we already verify. **Open:** a
+  half-day spike may show our existing scan can serve the Mamba-3 SISO recurrence with only
+  a 2-tap change to Pass A, which would make it cheap enough to reconsider.
+- **VMamba classification as the 2D demo.** Cleaner metric, lower integration risk — kept
+  explicitly as the de-risked substitute if MRI quality does not materialise.
+- **Text generation as the 1D demo.** Same model, weaker framing. Long context is the same
+  work with a far better story.
+
 ## The decision in one paragraph
 
 **(Amended Jul 17, 2026 — see "Prior-art verification" and the amended rows below.)** We ship the **first Arm-optimized `selective_scan` for the PyTorch ecosystem, written in Rust** (chunked/associative scan + NEON + multi-core threading), packaged as a **reusable, pip-installable kernel** — and we double down on the **SS2D multi-directional cross-scan**, the one variant with no fast CPU implementation anywhere, proven on **diffusion-based MRI reconstruction** (EDM prior + SS2D-Mamba denoiser, per `MRI_DIFFUSION_IMPLEMENTATION_PLAN.md`). 1D language Mamba on CPU is contested space (llama.cpp, BitMamba, Rust engines); the PyTorch drop-in and SS2D are not. Diffusion recon invokes the scan hundreds of times per image, which is the regime where kernel wins compound — and it directly attacks "diffusion recon must be GPU-bound."

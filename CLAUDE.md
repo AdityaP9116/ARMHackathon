@@ -4,20 +4,42 @@
 
 Win the **[Arm Create: AI Optimization Challenge](https://arm-ai-optimization-challenge.devpost.com/)** — **Cloud AI track**. Deadline **Aug 14, 2026, 4:00 PM PDT**. Every decision should be read against the judging rubric: Technical (40), WOW (25), Impact (20), Developer Experience (15).
 
-The contribution: the **first Arm-optimized `selective_scan` for the PyTorch/Mamba ecosystem, written in Rust** (NEON + chunked scan + rayon), shipped as a pip-installable drop-in that makes *any* Mamba model faster on Arm CPU — and proven on a real application running on Graviton.
+The contribution: the **first Arm-optimized `selective_scan` for the PyTorch/Mamba ecosystem, written in Rust** (NEON + chunked scan + rayon), shipped as a pip-installable drop-in that makes *any* Mamba model faster on Arm CPU — covering **all three scan topologies**, each proven on a real workload running on Graviton.
+
+| Topology | Kernel | Demonstration |
+|---|---|---|
+| 1D unidirectional | 3.71× vs `torch.compile` | **Long context** — constant memory at any L, where `torch.compile`'s compile time explodes (59.9 s → 532.8 s, L=256 → 2048) |
+| 1D bidirectional | **6.39–8.99×** vs `torch.compile` | **Speech enhancement** — audible before/after, real-time factor |
+| 2D cross-scan (SS2D) | 1.80× over the four-scan formulation | **Diffusion MRI reconstruction** — 18–256 denoiser calls per image |
+
+**The argument is generality**: three topologies, three unrelated workloads, one kernel. A
+point optimization would not survive that.
 
 ## Where things stand (as of Aug 4, 2026 — 10 days out)
 
 **Sequencing lives in one place now: [`SUBMISSION_ENDGAME_PLAN.md`](SUBMISSION_ENDGAME_PLAN.md).**
-It supersedes the week tables in `ROADMAP.md` §4 and `SS2D_REPOSITIONING_PLAN.md` §7,
+It supersedes the week tables in `ROADMAP.md` §4 and `docs/archive/SS2D_REPOSITIONING_PLAN.md` §7,
 which assumed the Jul 20 / Jul 27 weeks happened. They did not.
 
-The kernel is built and measured. `INTEGRATION_PLAN.md` Phases 0–6 landed (goldens,
+The kernel is built and measured. `docs/archive/INTEGRATION_PLAN.md` Phases 0–6 landed (goldens,
 scalar+NEON chunked kernel, rayon, C ABI, torch custom op + `arm_scan.patch()`, wheels,
-arm64/macOS/x86 CI, benchmark harnesses, `BASELINE_REPORT.md` with CI-provisional Arm
-numbers). 1D bidirectional + resumable-state (h0) kernels exist. **The application is
-DECIDED:** SS2D-Mamba **diffusion MRI reconstruction** (EDM + CSI-lab scaffolding;
-MambaRecon is the fallback) — see `MRI_DIFFUSION_IMPLEMENTATION_PLAN.md`.
+arm64/macOS/x86 CI, benchmark harnesses, `docs/archive/BASELINE_REPORT.md` with CI-provisional Arm
+numbers). 1D bidirectional + resumable-state (h0) kernels exist.
+
+**The demonstrations are DECIDED — one per topology** (rationale in `APPLICATIONS.md`:
+*"three demos that each exercise a different scan topology prove the kernel itself is
+general"*):
+
+- **1D unidirectional → long context.** Not "text generation" — the *capability* claim.
+  Constant memory at any L, against a `torch.compile` whose compile time explodes with
+  sequence length. Cheapest of the three: `bench_e2e.py` already exists.
+- **1D bidirectional → speech enhancement.** The only demo a judge can *hear*, measured as
+  real-time factor. Fills the slot for our **strongest-measured** topology, which currently
+  has no application at all. Known risk: audio Mamba checkpoints are research-grade and
+  CUDA-coupled — resolve with a spike before committing.
+- **2D cross-scan → diffusion MRI.** Built and gated; see
+  `MRI_DIFFUSION_IMPLEMENTATION_PLAN.md`. VMamba classification is the de-risked
+  substitute if MRI quality does not come together (`APPLICATIONS.md`).
 
 Landed Aug 4 (the SS2D/app hole-closing pass):
 
@@ -51,7 +73,7 @@ Not done — the half that wins or loses the competition:
    distillation for a small-scale prior.
 3. **Phase D's quality gate has never passed** — R=4 reconstruction is 2.75 dB *worse* than
    zero-filled against a >1 dB-better bar. **Fully diagnosed in
-   [`PHASE_D_DIAGNOSIS.md`](PHASE_D_DIAGNOSIS.md); read it before touching the sampler.** An
+   [`PHASE_D_DIAGNOSIS.md`](docs/archive/PHASE_D_DIAGNOSIS.md); read it before touching the sampler.** An
    oracle denoiser reconstructs to 151 dB, so the sampler/FFT/mask/DC are exact — the causes
    are the evaluation data (smooth bumps, where zero-filled is already near-optimal), a mask
    that delivers effective R=2.67 when labelled R=4, a sampler σ_max=80 far outside the
@@ -93,7 +115,15 @@ bench/                   bench_op.py (kernel vs eager vs torch.compile), bench_e
 .github/workflows/ci.yml arm64 + macOS + x86: fmt, clippy, tests, golden-through-C-ABI, wheels, bench
 ```
 
-Docs, and what each is for — **keep them non-duplicative**:
+Docs live in three places now — root is judge-facing only:
+- **root** — `README.md` (pitch), `PROJECT_CONCEPT.md` (decision log), `ROADMAP.md`,
+  `APPLICATIONS.md` (why these three demos), `MRI_DIFFUSION_IMPLEMENTATION_PLAN.md`,
+  `SUBMISSION_ENDGAME_PLAN.md` (live schedule, archive after Aug 14).
+- **`docs/archive/`** — the working record: build logs, superseded plans, measurement
+  history. Kept because it is real evidence of how decisions were made; not judge-facing.
+- **`docs/roadmap/`** — post-submission programs (Mamba-3 / SSD).
+
+What each root doc is for — **keep them non-duplicative**:
 - `README.md` — the pitch and the deliverables (what a judge reads first).
 - `PROJECT_CONCEPT.md` — the decision log: what we chose, what we rejected, why.
 - `ROADMAP.md` — schedule, compute strategy, risk register.
