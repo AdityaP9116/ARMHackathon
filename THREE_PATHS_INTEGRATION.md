@@ -243,13 +243,43 @@ serve B4, which is not scoped). Regenerate with `--max-blocks 2` when B4 starts.
 
 | | Work |
 |---|---|
-| **B1** | Extend the reference: `mamba3_ref.py` gains `rank`, state update sums `r` rank-1 terms. Gate: `r=1` reproduces the SISO goldens **bit-for-bit** — a free correctness check, exactly like λ=1 collapsing the trapezoid |
+| ~~**B1**~~ | ✅ **DONE Aug 7.** `mamba3_mimo_ref` reproduces the official TileLang kernel to **2.40 bf16 ULP** (bound 12) across all 10 goldens — tighter than SISO's 4.47. Gate: `tests/verify_golden_mamba3_mimo.py` |
 | **B2** | `Mamba3Dims` gains `rank`; validation accepts `groups == rank`; scalar, tiled and NEON inner loops sum over `r`. The tile loop is unchanged in shape — `r` is an outer accumulation |
 | **B3** | **ABI 6 → 7** (new field in `ArmMamba3Dims`), Python loader bump, `mamba3_scan(rank=...)` |
 | **B4** | `apps/mamba3_lm` gains the `mimo_x` / `mimo_z` / `mimo_o` projections; run `mamba3-mimo-187m` end to end |
 
 **Gates:** `r=1` bit-identical to SISO; MIMO goldens at the bf16 bound; NEON↔scalar parity;
 thread bit-identity; logits vs a MIMO `model_forward.npz`.
+
+### What B1 established — read this before starting B2
+
+**The two kernels use DIFFERENT RoPE conventions.** SISO's Triton kernel rotates *interleaved*
+lanes `(2i, 2i+1)`; MIMO's TileLang kernel rotates *split halves* `(i, i + n/2)` for
+`i < n/4`, leaving the other lanes untouched entirely. Read from the source and confirmed
+against the goldens. **B2's Rust kernel needs both**, selected per family — this is the single
+most consequential finding for the kernel work.
+
+**The plan's "r=1 reproduces the SISO goldens bit-for-bit" is false, and now disproved rather
+than dropped.** At r=1 with unit Ψ/Φ/ζ every MIMO-specific term degenerates, so the two *are*
+algebraically identical — except for that rotation. Measured: rel **3.8e-01** as captured,
+**7.7e-16** with the angles zeroed. So the free check still exists, just in the zero-angle form,
+and `check_rank1_collapse` runs it.
+
+**What MIMO changes, precisely** (everything else — discretization, the angle pre-pass — is
+byte-identical to SISO):
+
+- the state is **shared across ranks**, updated with a sum of `r` outer products
+- `V` is projected **elementwise**, `x_r = Ψ_r · v` — a per-rank reweighting, not a matmul
+- the diagonal term is a **rank-by-rank contraction**: `r_out` collects `(q_{r_out}·k_{r_in})·x_{r_in}` over every `r_in`
+- `D` multiplies the **projected** `x_r` and is **not** scaled by γ
+- the gate is per rank, `silu(z·ζ_r)`, applied **before** Φ reduces the rank axis
+
+**A bug worth remembering, because the golden design is what caught it.** `Q_bias`/`K_bias` are
+`(h, r, n)` and the reference needs `(1, 1, r, h, n)` — and `h·r·n == r·h·n`, so `.view()`
+succeeds and silently transposes head against rank instead of raising. It cost 195–358 ULP on
+the four model-driven goldens while **every synthetic sweep case passed at ~1 ULP**, because a
+freshly-built `Mamba3` initialises `B_bias`/`C_bias` to a *constant*, where the transposition is
+invisible. Only real trained weights expose it. Keep both kinds of case.
 
 **Set the model-level gate against ~93–95%, not SISO's ~99%.** MIMO's across-process reference
 floor is measurably worse *and* variable (recorded per run in

@@ -26,14 +26,21 @@ What is left is not kernel work:
    built around — the RoPE angle pre-pass must run on the traversal **views**,
    not the grid, or both orderings silently share the row-major `theta`. C2 is
    a second, GEMM-shaped kernel with a deliberately thin moat.
-3. **MIMO kernel work (B1–B4) has not started**, but it is unblocked: the B0
-   capture probe came back **green** and `tests/golden/mamba3_mimo/` now holds
-   ground truth from the real `mamba3-mimo-187m` at its published config.
-   Capturing it needs `tools/setup_cuda_toolchain.sh` first (TileLang shells out
-   to `nvcc`; the system one was too old for Blackwell), and MIMO **must** be
-   captured at bf16. Set B1–B4's model gate against MIMO's own across-process
-   floor — measured at 93.4% and 95.3% on two runs, so it is a band, not a
-   number — rather than SISO's ~99%.
+3. **MIMO kernel work (B2–B4) has not started**, but B0 and B1 are done:
+   `tests/golden/mamba3_mimo/` holds ground truth from the real
+   `mamba3-mimo-187m` at its published config, and `mamba3_mimo_ref` reproduces
+   it to **2.40 bf16 ULP**. Re-capturing needs `tools/setup_cuda_toolchain.sh`
+   first (TileLang shells out to `nvcc`; the system one was too old for
+   Blackwell), and MIMO **must** be captured at bf16.
+
+   **The thing to know before writing B2's Rust:** SISO and MIMO use
+   **different RoPE conventions** — interleaved `(2i, 2i+1)` vs split-halves
+   `(i, i+n/2)` over the first `n/4` lanes. The kernel needs both. That is also
+   why the plan's "r=1 collapses to SISO bit-for-bit" is false; the zero-angle
+   form of that check is real and is in the gate.
+
+   Set B4's model gate against MIMO's own across-process floor — measured at
+   93.4% and 95.3% on two runs, so it is a band, not a number — not SISO's ~99%.
    *(Stage 6 — running the real 187M checkpoint end to end — is now **done**:
    see `apps/mamba3_lm/` and `THREE_PATHS_INTEGRATION.md` Path A.)*
 4. **Performance is untuned.** `TILE = 32` in the blocked kernel has never been

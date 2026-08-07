@@ -44,6 +44,7 @@ test-mamba3:
 	$(PY) tests/check_mamba3_op.py
 	$(PY) tests/check_mamba3_block.py
 	$(PY) tests/check_ss2d_mamba3.py
+	$(PY) tests/verify_golden_mamba3_mimo.py
 
 # Path A end to end: the published 187M checkpoint, on CPU, through our kernel.
 # Kept OUT of `test-mamba3` because it downloads ~357 MB, which no CI job

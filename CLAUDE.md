@@ -56,11 +56,15 @@ Not done, in priority order:
 2. **2D non-causal (C2) not started.** The *causal* 2D cross-scan is done —
    `arm_scan.ss2d_scan_mamba3`, pure layout over `mamba3_scan_pair`, no new kernel code, gated
    by `tests/check_ss2d_mamba3.py` at 2.0e-07. C2 is the second, GEMM-shaped kernel.
-3. **MIMO kernel work (B1–B4) not started.** The B0 probe is **green**: ground truth is
-   captured in `tests/golden/mamba3_mimo/` from the real `mamba3-mimo-187m` at its published
-   configuration. Capturing it needs a TileLang-capable nvcc — see
-   `tools/setup_cuda_toolchain.sh`, and note MIMO **must** be captured at bf16 (fp32 doubles
-   the TileLang shared tiles past consumer Blackwell's limit).
+3. **MIMO kernel work (B2–B4) not started.** B0 and B1 are done: ground truth is captured in
+   `tests/golden/mamba3_mimo/` from the real `mamba3-mimo-187m`, and `mamba3_mimo_ref`
+   reproduces it to **2.40 bf16 ULP**. Re-capturing needs a TileLang-capable nvcc
+   (`tools/setup_cuda_toolchain.sh`) and **must** be at bf16 — fp32 doubles the TileLang shared
+   tiles past consumer Blackwell's limit.
+
+   **Before touching the Rust for B2:** the two families use **different RoPE conventions** —
+   SISO interleaved `(2i, 2i+1)`, MIMO split-halves `(i, i+n/2)` over the first `n/4` lanes.
+   The kernel needs both. See `THREE_PATHS_INTEGRATION.md` Path B.
 4. **Performance is unmeasured and untuned.** `TILE = 32` in the blocked kernel is a placeholder
    that has never been swept, and there is no phase profile for Mamba-3.
 
