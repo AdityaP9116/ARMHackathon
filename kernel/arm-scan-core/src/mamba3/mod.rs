@@ -97,6 +97,7 @@
 //! new NEON transcendental lands on the critical path. Fusing them is a
 //! measured optimisation, not a prerequisite.
 
+mod mimo;
 mod scalar;
 mod tiled;
 
@@ -105,12 +106,37 @@ pub(crate) use tiled::TILE;
 
 use crate::{Backend, Float, ScanError, ScanOptions};
 
-/// Which Mamba-3 block variant to run. `Mimo` is reserved so adding it later is
-/// an addition rather than a refactor; it is rejected at validation today.
+/// Which Mamba-3 block variant to run. Determined by the input, not chosen:
+/// see [`Mamba3Input::variant`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mamba3Variant {
-    /// Single-input single-output — the published 187M/443M/893M/1.5B models.
+    /// Single-input single-output — the published `mamba3-siso-*` models.
     Siso,
+    /// Rank-`r` multi-input multi-output — the published `mamba3-mimo-*`
+    /// models. A **shared** state updated with `r` outer products per step, so
+    /// `r` times the arithmetic on one state load. That ratio is the reason
+    /// this variant is interesting on a CPU at all.
+    Mimo,
+}
+
+/// The three per-(head, rank) projections that define a MIMO block.
+///
+/// Grouped into one struct so "all three or none" is a property of the type
+/// rather than something validation has to check — passing two of them is not
+/// a representable state.
+///
+/// All three are `(heads, rank, dv)`, row-major. They are *elementwise*
+/// reweightings of the head dimension, not matmuls: upstream builds them as
+/// `Psi`/`Zeta`/`Phi` and multiplies pointwise.
+pub struct Mamba3Mimo<'a, T> {
+    /// `Psi` — input projection. `x_r[p] = psi[h][r][p] * v[p]`.
+    pub psi: &'a [T],
+    /// `Zeta` — gate projection. The gate is `silu(z[p] * zeta[h][r][p])`,
+    /// applied per rank **before** `phi` reduces the rank axis.
+    pub zeta: &'a [T],
+    /// `Phi` — output projection. Multiplies each rank's result, then the
+    /// ranks are summed away.
+    pub phi: &'a [T],
 }
 
 /// Problem dimensions for the Mamba-3 scan.
@@ -124,6 +150,11 @@ pub struct Mamba3Dims {
     /// (RoPE rotates lane pairs).
     pub dqk: usize,
     pub len: usize,
+    /// MIMO rank. **1 for SISO**, and the two are not interchangeable even at
+    /// `rank == 1`: the families rotate different lane pairs (see
+    /// [`Mamba3Mimo`] and the `rope` functions). `rank > 1` requires the MIMO
+    /// projections to be present.
+    pub rank: usize,
 }
 
 /// Borrowed input tensors. See the module docs for layouts.
@@ -158,6 +189,20 @@ pub struct Mamba3Input<'a, T> {
     /// This is the 1D half of both the bidirectional and the 2D cross-scan
     /// topologies — they are traversal orders over the same primitive.
     pub reverse: bool,
+    /// Present iff this is a MIMO block. See [`Mamba3Mimo`].
+    pub mimo: Option<Mamba3Mimo<'a, T>>,
+}
+
+impl<T> Mamba3Input<'_, T> {
+    /// Which variant these inputs describe. The caller does not choose it —
+    /// supplying the projections *is* the choice.
+    pub fn variant(&self) -> Mamba3Variant {
+        if self.mimo.is_some() {
+            Mamba3Variant::Mimo
+        } else {
+            Mamba3Variant::Siso
+        }
+    }
 }
 
 /// Errors specific to the Mamba-3 entry point. Shape problems reuse
@@ -177,6 +222,7 @@ pub(crate) fn validate<T>(
         dv,
         dqk,
         len,
+        rank,
     } = *dims;
     for (n, v) in [
         ("batch", batch),
@@ -184,10 +230,21 @@ pub(crate) fn validate<T>(
         ("dv", dv),
         ("dqk", dqk),
         ("len", len),
+        ("rank", rank),
     ] {
         if v == 0 {
             return Err(ScanError::ZeroDim(n));
         }
+    }
+    // A rank above 1 has no meaning without the projections that consume it,
+    // and SISO has no place to put them. Reject the mismatch rather than
+    // silently ignoring one side.
+    if rank > 1 && input.mimo.is_none() {
+        return Err(ScanError::BadLen {
+            tensor: "rank > 1 requires the MIMO projections (psi/zeta/phi)",
+            expected: 1,
+            got: rank,
+        });
     }
     // RoPE rotates (2i, 2i+1) lane pairs, so an odd head dim has no meaning.
     if dqk % 2 != 0 {
@@ -198,11 +255,14 @@ pub(crate) fn validate<T>(
         });
     }
 
-    let blqk = batch * len * dqk; // q, k — groups axis is 1
+    // Every formula below is written with `rank` in it and reduces to the SISO
+    // expression at rank 1, so there is one set of shape rules, not two.
+    let blqk = batch * len * rank * dqk; // q, k — groups axis is 1
     let blhv = batch * len * heads * dv; // v, z, out
     let bhl = batch * heads * len; // adt, dt, trap
     let blhr = batch * len * heads * (dqk / 2); // cos, sin
-    let hqk = heads * dqk; // q_bias, k_bias
+    let hqk = heads * rank * dqk; // q_bias, k_bias
+    let hrv = heads * rank * dv; // psi, zeta, phi
 
     let checks: [(&'static str, usize, usize); 10] = [
         ("q", input.q.len(), blqk),
@@ -226,10 +286,13 @@ pub(crate) fn validate<T>(
         }
     }
 
-    let optional: [(&'static str, Option<usize>, usize); 5] = [
+    let optional: [(&'static str, Option<usize>, usize); 8] = [
         ("d_skip", input.d_skip.map(<[T]>::len), heads),
         ("z", input.z.map(<[T]>::len), blhv),
         ("out", Some(out.len()), blhv),
+        ("mimo psi", input.mimo.as_ref().map(|m| m.psi.len()), hrv),
+        ("mimo zeta", input.mimo.as_ref().map(|m| m.zeta.len()), hrv),
+        ("mimo phi", input.mimo.as_ref().map(|m| m.phi.len()), hrv),
         (
             "last_state",
             last_state.map(<[T]>::len),
@@ -290,6 +353,16 @@ pub fn mamba3_scan_with_options<T: Float>(
             expected: usize::from(last_state.is_some()),
             got: usize::from(last_bx.is_some()),
         });
+    }
+    // MIMO has one implementation today: the portable scalar path. It is
+    // correct on every target and is what the goldens gate. Routing it here —
+    // before the backend match — keeps `Backend::Neon` from reporting a
+    // MIMO-shaped call as "NEON unavailable", which would be true but useless.
+    // A blocked/NEON MIMO path is B3 work; until it exists, saying so plainly
+    // beats silently running something slower than the caller asked for.
+    if input.variant() == Mamba3Variant::Mimo {
+        mimo::scan(dims, input, out, last_state, last_bx, opts.threading);
+        return Ok(());
     }
     match opts.backend {
         // NEON lands in M4; until then Auto resolves to scalar, which is

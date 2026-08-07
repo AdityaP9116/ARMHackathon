@@ -30,6 +30,7 @@ __all__ = [
     "use_arm_scan",
     "mamba3_scan",
     "mamba3_scan_pair",
+    "mamba3_mimo_scan",
     "ss2d_scan_mamba3",
     "angles_to_cos_sin",
     "patch",
@@ -51,7 +52,8 @@ def __getattr__(name):
             ".bidirectional", __name__).bidirectional_scan
     if name in ("ss2d_scan", "use_arm_scan"):
         return getattr(importlib.import_module(".ss2d", __name__), name)
-    if name in ("mamba3_scan", "mamba3_scan_pair", "angles_to_cos_sin"):
+    if name in ("mamba3_scan", "mamba3_scan_pair", "mamba3_mimo_scan",
+                "angles_to_cos_sin"):
         return getattr(importlib.import_module(".mamba3", __name__), name)
     if name == "ss2d_scan_mamba3":
         return importlib.import_module(

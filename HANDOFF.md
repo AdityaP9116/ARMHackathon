@@ -247,7 +247,7 @@ in the status section at the top.
 
 ## Repo state (Aug 7)
 
-- Mamba-1 and Mamba-3 kernels both shipped; ABI **6**
+- Mamba-1 and Mamba-3 kernels both shipped; ABI **7** (Mamba-3 SISO + MIMO)
 - CI green on `linux-arm64`, `macos-arm64`, `linux-x86_64`
 - Root docs reduced to six; superseded plans moved to `docs/archive/`
 - The MRI diffusion app is **demoted but still CI-gated** — it is the only

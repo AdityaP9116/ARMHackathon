@@ -244,12 +244,33 @@ serve B4, which is not scoped). Regenerate with `--max-blocks 2` when B4 starts.
 | | Work |
 |---|---|
 | ~~**B1**~~ | ✅ **DONE Aug 7.** `mamba3_mimo_ref` reproduces the official TileLang kernel to **2.40 bf16 ULP** (bound 12) across all 10 goldens — tighter than SISO's 4.47. Gate: `tests/verify_golden_mamba3_mimo.py` |
-| **B2** | `Mamba3Dims` gains `rank`; validation accepts `groups == rank`; scalar, tiled and NEON inner loops sum over `r`. The tile loop is unchanged in shape — `r` is an outer accumulation |
-| **B3** | **ABI 6 → 7** (new field in `ArmMamba3Dims`), Python loader bump, `mamba3_scan(rank=...)` |
+| ~~**B2**~~ | ✅ **DONE Aug 7.** `Mamba3Dims` gained `rank`; `Mamba3Mimo` carries ψ/ζ/φ; `mamba3/mimo.rs` is the scalar rank-r kernel. Matches the official TileLang goldens to **1.90 bf16 ULP** *through the C ABI* — tighter than the PyTorch reference's 2.40. Gate: `tests/check_mamba3_mimo_op.py` |
+| ~~**B3**~~ | ✅ **DONE Aug 7** as part of B2 — **ABI 6 → 7**, Python loader bumped, `arm_scan.mamba3_mimo_scan(...)` exported |
 | **B4** | `apps/mamba3_lm` gains the `mimo_x` / `mimo_z` / `mimo_o` projections; run `mamba3-mimo-187m` end to end |
 
 **Gates:** `r=1` bit-identical to SISO; MIMO goldens at the bf16 bound; NEON↔scalar parity;
 thread bit-identity; logits vs a MIMO `model_forward.npz`.
+
+### What B2 shipped, and the one thing it deliberately did not
+
+`arm_scan.mamba3_mimo_scan(...)` runs the rank-r recurrence in Rust. Five checks in
+`tests/check_mamba3_mimo_op.py`: vs the official goldens (**1.90 ULP**), vs the f64 reference
+(1.3e-07 — the fp32 floor), rank-1-equals-SISO-unrotated **kernel to kernel** (2.4e-07),
+partial-projection rejection at the C boundary, and bit-identity across 1/2/8 threads.
+
+**MIMO runs on the scalar path only.** There is no blocked or NEON MIMO kernel yet, and
+dispatch routes MIMO *before* the backend match so that asking for `Backend::Neon` does not
+report "unavailable" — which would be true but useless. This is the honest state: MIMO is
+**correct everywhere and fast nowhere**. Making it fast is the remaining kernel work, and it is
+worth doing precisely because MIMO's `r`× arithmetic on one state load is the shape a CPU
+should like.
+
+Two API notes that matter to a caller:
+
+- `mamba3_mimo_scan` is **not** `mamba3_scan` with `rank=1`. Different rotation convention;
+  they agree only when the rotation is the identity.
+- The three projections are **all-or-nothing** at every layer — `Mamba3Mimo` makes a partial
+  set unrepresentable in Rust, and the C entry point rejects two-of-three rather than guessing.
 
 ### What B1 established — read this before starting B2
 

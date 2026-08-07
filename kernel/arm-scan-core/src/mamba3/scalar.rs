@@ -61,6 +61,9 @@ pub(crate) fn scan<T: Float>(
         dv,
         dqk,
         len,
+        // SISO by construction: validation rejects rank > 1 without the MIMO
+        // projections, and dispatch routes MIMO to `mimo::scan` before here.
+        rank: _,
     } = *dims;
     let half = dqk / 2;
 

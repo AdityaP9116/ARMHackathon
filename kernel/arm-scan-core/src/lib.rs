@@ -24,7 +24,8 @@ mod scalar;
 
 pub use float::Float;
 pub use mamba3::{
-    mamba3_scan, mamba3_scan_with_options, Mamba3Dims, Mamba3Error, Mamba3Input, Mamba3Variant,
+    mamba3_scan, mamba3_scan_with_options, Mamba3Dims, Mamba3Error, Mamba3Input, Mamba3Mimo,
+    Mamba3Variant,
 };
 
 /// Phase-level profiling of the NEON fast path. Diagnostic tool, not part of

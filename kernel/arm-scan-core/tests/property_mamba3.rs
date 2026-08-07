@@ -67,6 +67,7 @@ fn make(seed: u64, batch: usize, heads: usize, dv: usize, dqk: usize, len: usize
             dv,
             dqk,
             len,
+            rank: 1,
         },
         q: r.vec(batch * len * dqk),
         k: r.vec(batch * len * dqk),
@@ -99,6 +100,7 @@ impl Case {
             d_skip: Some(&self.d),
             z: Some(&self.z),
             reverse,
+            mimo: None,
         }
     }
 

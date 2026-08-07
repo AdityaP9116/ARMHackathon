@@ -32,7 +32,7 @@ schedules (`ROADMAP.md`, `SUBMISSION_ENDGAME_PLAN.md`, `APPLICATIONS.md`) are in
 last measured at 1.80× over the four-scan formulation.
 
 **Mamba-3: kernel complete, gated (Stages 0–5, M0–M8).** Ground truth captured from the
-official GPU kernels; reference, Rust scalar, cache-blocked and NEON kernels, C ABI at v6, and
+official GPU kernels; reference, Rust scalar, cache-blocked and NEON kernels, C ABI at v7, and
 the torch op all reproduce it to **4.47 bf16 ULP** — the floor bf16 output quantisation allows.
 NEON verified on `linux-arm64` and `macos-arm64` in CI.
 
@@ -56,15 +56,15 @@ Not done, in priority order:
 2. **2D non-causal (C2) not started.** The *causal* 2D cross-scan is done —
    `arm_scan.ss2d_scan_mamba3`, pure layout over `mamba3_scan_pair`, no new kernel code, gated
    by `tests/check_ss2d_mamba3.py` at 2.0e-07. C2 is the second, GEMM-shaped kernel.
-3. **MIMO kernel work (B2–B4) not started.** B0 and B1 are done: ground truth is captured in
-   `tests/golden/mamba3_mimo/` from the real `mamba3-mimo-187m`, and `mamba3_mimo_ref`
-   reproduces it to **2.40 bf16 ULP**. Re-capturing needs a TileLang-capable nvcc
-   (`tools/setup_cuda_toolchain.sh`) and **must** be at bf16 — fp32 doubles the TileLang shared
-   tiles past consumer Blackwell's limit.
+3. **MIMO is correct but not fast.** B0–B3 are done: ground truth captured, PyTorch reference
+   at 2.40 bf16 ULP, and `arm_scan.mamba3_mimo_scan` running the rank-r recurrence in Rust at
+   **1.90 bf16 ULP** through ABI v7. But `mamba3/mimo.rs` is the **scalar path only** — there is
+   no blocked or NEON MIMO kernel, and dispatch routes MIMO before the backend match to say so
+   rather than silently substituting. B4 (the MIMO model path) is also not started.
 
-   **Before touching the Rust for B2:** the two families use **different RoPE conventions** —
-   SISO interleaved `(2i, 2i+1)`, MIMO split-halves `(i, i+n/2)` over the first `n/4` lanes.
-   The kernel needs both. See `THREE_PATHS_INTEGRATION.md` Path B.
+   Two things to know before touching that kernel: the families use **different RoPE
+   conventions** (SISO interleaved `(2i, 2i+1)`, MIMO split-halves `(i, i+n/2)` over the first
+   `n/4` lanes), and re-capturing goldens needs `tools/setup_cuda_toolchain.sh` at bf16.
 4. **Performance is unmeasured and untuned.** `TILE = 32` in the blocked kernel is a placeholder
    that has never been swept, and there is no phase profile for Mamba-3.
 

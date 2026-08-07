@@ -180,7 +180,7 @@ goldens, replayed via a Rust-side loader.
 
 **Gate:** NEON↔scalar parity; rayon bit-identical at `RAYON_NUM_THREADS ∈ {1,2,8}`.
 
-## 7. Stage 4 — FFI + torch op ✅ **DONE (Aug 7)** — ABI 6
+## 7. Stage 4 — FFI + torch op ✅ **DONE (Aug 7)** — ABI 6, now **7** (MIMO)
 
 `arm_scan_mamba3_scan_f32`, same discipline as the existing entry point. Bump
 `arm_scan_abi_version()`. `python/arm_scan/mamba3.py` with a registered fake
