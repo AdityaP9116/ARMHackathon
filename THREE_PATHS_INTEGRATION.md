@@ -246,10 +246,52 @@ serve B4, which is not scoped). Regenerate with `--max-blocks 2` when B4 starts.
 | ~~**B1**~~ | ✅ **DONE Aug 7.** `mamba3_mimo_ref` reproduces the official TileLang kernel to **2.40 bf16 ULP** (bound 12) across all 10 goldens — tighter than SISO's 4.47. Gate: `tests/verify_golden_mamba3_mimo.py` |
 | ~~**B2**~~ | ✅ **DONE Aug 7.** `Mamba3Dims` gained `rank`; `Mamba3Mimo` carries ψ/ζ/φ; `mamba3/mimo.rs` is the scalar rank-r kernel. Matches the official TileLang goldens to **1.90 bf16 ULP** *through the C ABI* — tighter than the PyTorch reference's 2.40. Gate: `tests/check_mamba3_mimo_op.py` |
 | ~~**B3**~~ | ✅ **DONE Aug 7** as part of B2 — **ABI 6 → 7**, Python loader bumped, `arm_scan.mamba3_mimo_scan(...)` exported |
-| **B4** | `apps/mamba3_lm` gains the `mimo_x` / `mimo_z` / `mimo_o` projections; run `mamba3-mimo-187m` end to end |
+| ~~**B4**~~ | ✅ **DONE Aug 7.** `apps/mamba3_lm` runs **`mamba3-mimo-187m` end to end on CPU** — 96.48% argmax, 0 unexplained flips, against a reference-vs-itself floor of 95.31%. Gate: `make test-mamba3-model` |
 
 **Gates:** `r=1` bit-identical to SISO; MIMO goldens at the bf16 bound; NEON↔scalar parity;
 thread bit-identity; logits vs a MIMO `model_forward.npz`.
+
+### B4 — the MIMO model end to end ✅
+
+**Both published families now run on CPU through our kernel**, which is the claim Path B existed
+to support:
+
+| | argmax agreement | reference vs **itself** | unexplained flips |
+|---|---|---|---|
+| `mamba3-siso-187m` | **98.05%** | 98.83% | 0 |
+| `mamba3-mimo-187m` | **96.48%** | 95.31% | 0 |
+
+Read the MIMO row carefully: **we agree with the reference more closely than the reference
+agrees with itself** (96.48% vs 95.31%), and our logit drift is smaller too (9.7e-3 vs 9.9e-3).
+
+That forced a real change to the gate. It was failing MIMO on a hardcoded 98% — a
+SISO-calibrated constant. **A gate must not demand better agreement than the oracle can
+produce**, so the requirement is now capped at the measured across-process floor from the
+manifest. It never loosens SISO (`min(0.98, 0.988) = 0.98`, unchanged); it only stops the gate
+asking for precision the ground truth does not have. The sharp test remains "every disagreement
+is explained by the measured drift", which passed on both families unchanged.
+
+**A shape bug `strict=True` caught.** Upstream's `GatedMLP` rounds its hidden width **up to a
+multiple of 128**, so `d_intermediate` in the config is not the layer's real width. SISO-187M
+never showed it (1536 is already a multiple); MIMO-187M asks for 1264 and the checkpoint carries
+1280. Loading non-strictly would have left twelve randomly-initialised MLPs in the model and
+produced plausible garbage.
+
+**Throughput** (`bench/bench_mamba3_lm.py --model state-spaces/mamba3-mimo-187m`, x86, 16
+threads):
+
+| L | our kernel | PyTorch eager | speedup | `torch.compile` | vs compiled |
+|---|---|---|---|---|---|
+| 128 | 259 ms | 505 ms | 1.95× | 366 ms | 1.41× |
+| 256 | 386 ms | 581 ms | 1.50× | 783 ms | **2.03×** |
+| 512 | 695 ms | 1893 ms | 2.72× | *(skipped)* | — |
+| 1024 | 1280 ms | 2381 ms | 1.86× | *(skipped)* | — |
+
+**MIMO is ~2× slower in absolute terms than SISO** (259 ms vs 126 ms at L=128) and its speedup
+is lower. Both are expected and neither is hidden: MIMO does `r`× the state arithmetic, *and*
+our MIMO path is unoptimised scalar with no blocked or NEON kernel behind it. The
+arithmetic-intensity argument for MIMO on CPU is therefore **still untested** — it predicts MIMO
+should close the gap once the kernel is optimised, and that remains a prediction, not a result.
 
 ### What B2 shipped, and the one thing it deliberately did not
 

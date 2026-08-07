@@ -80,6 +80,7 @@ test-mamba3:
 # catches the same plumbing bugs without the download.
 test-mamba3-model:
 	$(PY) tests/check_mamba3_model.py
+	$(PY) tests/check_mamba3_model.py --dir tests/golden/mamba3_mimo
 
 # The minutes-long ones: in-process prior training. CI and pre-release only.
 test-app-slow: build

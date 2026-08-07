@@ -98,8 +98,9 @@ make test-mamba3   # Mamba-3 reference + torch op + Path A mixer vs official-ker
 Running the real 187M model on your CPU (downloads ~357 MB):
 
 ```bash
-make test-mamba3-model    # logits vs the official GPU model
+make test-mamba3-model    # logits vs the official GPU model, SISO and MIMO
 python bench/bench_mamba3_lm.py --quick
+python bench/bench_mamba3_lm.py --model state-spaces/mamba3-mimo-187m --quick
 ```
 
 Runs on AWS Graviton, Oracle Ampere, Raspberry Pi 5 and Apple Silicon. Correctness validation
@@ -108,9 +109,9 @@ never needs credentials.
 ## Status — honestly
 
 **Done:** both kernels, every correctness gate, the PyTorch integration, wheels, CI across three
-platforms — and **the real 187M Mamba-3 running end to end on CPU** (`apps/mamba3_lm/`). The
-mixer matches the official block to 1.36 bf16 ULP; the logits agree on 98.05% of argmax
-positions, against a *measured* reference-vs-itself floor of 98.83%.
+platforms — and **both published Mamba-3 families running end to end on CPU**
+(`apps/mamba3_lm/`): `mamba3-siso-187m` at **98.05%** argmax agreement and the rank-4
+`mamba3-mimo-187m` at **96.48%**. The SISO mixer matches the official block to 1.36 bf16 ULP.
 
 That floor is worth a sentence, because it surprised us: the official kernel is
 `triton.autotune`d, so it picks its config by timing candidates at first call. Two runs of the
@@ -131,7 +132,9 @@ only**: no 2D Mamba-3 weights have ever been published, so no accuracy claim is 
 we do not make one.
 
 Still outstanding: the non-causal 2D formulation (the causal-vs-non-causal comparison is the
-novel result), and the MIMO kernel work now that its ground truth is captured.
+novel result), and **making MIMO fast** — it is correct everywhere but runs on the portable
+scalar path only, so its arithmetic-intensity advantage on CPU is still a prediction rather
+than a measurement.
 
 ## Where to look
 

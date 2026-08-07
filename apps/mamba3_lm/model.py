@@ -39,8 +39,16 @@ class GatedMLP(nn.Module):
     pinning down here rather than discovering at the logits gate.
     """
 
-    def __init__(self, in_features: int, hidden_features: int):
+    def __init__(self, in_features: int, hidden_features: int,
+                 multiple_of: int = 128):
         super().__init__()
+        # Upstream rounds the hidden width UP to a multiple of 128, so the
+        # config's `d_intermediate` is not always the layer's actual width.
+        # SISO-187M never showed this (1536 is already a multiple); MIMO-187M
+        # asks for 1264 and the checkpoint carries 1280. Caught by
+        # `strict=True` rather than by silently loading a mis-shaped layer.
+        hidden_features = ((hidden_features + multiple_of - 1)
+                           // multiple_of * multiple_of)
         self.fc1 = nn.Linear(in_features, 2 * hidden_features, bias=False)
         self.fc2 = nn.Linear(hidden_features, in_features, bias=False)
 
@@ -114,20 +122,18 @@ class Mamba3LMHeadModel(nn.Module):
         super().__init__()
         self.config = config
         ssm_cfg = dict(config.get("ssm_cfg", {}))
-        if ssm_cfg.get("is_mimo", False):
-            raise ValueError(
-                "This model path is SISO only. MIMO needs a rank-r state "
-                "update in the kernel — see Path B in "
-                "THREE_PATHS_INTEGRATION.md.")
         if ssm_cfg.get("is_outproj_norm", False):
             raise ValueError(
                 "is_outproj_norm=True routes Z through a gated RMSNorm after "
                 "the scan instead of into the kernel. The published SISO "
                 "checkpoints set it False and carry no mixer `norm.weight`.")
         ssm_cfg.pop("layer", None)          # selects the class; not a mixer arg
-        for k in ("dt_min", "dt_max", "dt_init_floor", "is_mimo",
-                  "is_outproj_norm"):
+        for k in ("dt_min", "dt_max", "dt_init_floor", "is_outproj_norm"):
             ssm_cfg.pop(k, None)            # init-only, or checked above
+        # `is_mimo` and `mimo_rank` ARE mixer args and are passed through.
+        # Upstream forces rank 1 when is_mimo is False; the mixer mirrors that,
+        # so a config carrying a stale mimo_rank alongside is_mimo=False still
+        # builds a SISO block rather than a silently mis-shaped one.
 
         vocab_size = config["vocab_size"]
         pad = config.get("pad_vocab_size_multiple", 1)

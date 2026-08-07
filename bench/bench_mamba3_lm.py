@@ -52,7 +52,7 @@ sys.path.insert(0, str(REPO / "tests"))
 
 import mamba3_lm.block as block_mod  # noqa: E402
 from mamba3_lm import load_model  # noqa: E402
-from reference.mamba3_ref import mamba3_siso_ref  # noqa: E402
+from reference.mamba3_ref import mamba3_mimo_ref, mamba3_siso_ref  # noqa: E402
 
 LENGTHS = [128, 256, 512, 1024]
 QUICK = [128, 256]
@@ -81,19 +81,35 @@ def _ref_scan(q, k, v, adt, dt, trap, q_bias, k_bias, angles=None, D=None,
         dtype=torch.float32).to(v.dtype)
 
 
+def _ref_mimo_scan(q, k, v, adt, dt, trap, q_bias, k_bias, psi=None,
+                   zeta=None, phi=None, angles=None, D=None, z=None,
+                   reverse=False, cos=None, sin=None):
+    """`arm_scan.mamba3_mimo_scan`'s signature, backed by the reference."""
+    if reverse:
+        raise NotImplementedError("bench does not exercise the reverse pass")
+    return mamba3_mimo_ref(
+        Q=q, K=k, V=v, ADT=adt, DT=dt, Trap=trap, Q_bias=q_bias, K_bias=k_bias,
+        MIMO_V=psi, MIMO_Z=zeta, MIMO_Out=phi, Angles=angles, D=D, Z=z,
+        dtype=torch.float32).to(v.dtype)
+
+
 @contextmanager
-def scan_backend(fn):
+def scan_backend(fn, mimo=False):
     """Swap the scan the model's mixers call, then put it back.
 
     The model is built once and reused across backends so that weight loading
-    and allocator state cannot differ between the rows being compared.
+    and allocator state cannot differ between the rows being compared. `mimo`
+    selects WHICH entry point to swap: the two families call different
+    functions, so patching the wrong one silently benchmarks the kernel against
+    itself and reports a 1.0x speedup that looks like a real measurement.
     """
-    original = block_mod.arm_scan.mamba3_scan
-    block_mod.arm_scan.mamba3_scan = fn
+    name = "mamba3_mimo_scan" if mimo else "mamba3_scan"
+    original = getattr(block_mod.arm_scan, name)
+    setattr(block_mod.arm_scan, name, fn)
     try:
         yield
     finally:
-        block_mod.arm_scan.mamba3_scan = original
+        setattr(block_mod.arm_scan, name, original)
 
 
 def bench(fn, warmup, reps):
@@ -132,6 +148,10 @@ def main():
     print("loading checkpoint ...")
     model = load_model(**kw)
     n_params = sum(p.numel() for p in model.parameters())
+    # Which family did we actually load? Ask the model, do not infer from the
+    # name -- the reference and the swapped entry point must both match it.
+    is_mimo = bool(getattr(model.backbone.layers[0].mixer, "is_mimo", False))
+    ref_fn = _ref_mimo_scan if is_mimo else _ref_scan
 
     meta = {
         "host": platform.node(),
@@ -143,8 +163,12 @@ def main():
         "git": git_sha(),
         "params": n_params,
         "model": args.model or "state-spaces/mamba3-siso-187m",
+        "variant": "mimo" if is_mimo else "siso",
+        "mimo_rank": getattr(model.backbone.layers[0].mixer, "mimo_rank", 1),
     }
-    print(f"\n{meta['model']}  ({n_params / 1e6:.1f}M params)")
+    print(f"\n{meta['model']}  ({n_params / 1e6:.1f}M params, "
+          f"{meta['variant'].upper()}"
+          f"{f", rank {meta['mimo_rank']}" if is_mimo else ''})")
     print(f"{meta['machine']}  torch {meta['torch']}  "
           f"threads {meta['threads']}  git {meta['git']}")
     print("\nbaseline = the PyTorch recurrence (fp32). Upstream has NO CPU "
@@ -163,7 +187,7 @@ def main():
 
         with torch.no_grad():
             got = model(ids)
-            with scan_backend(_ref_scan):
+            with scan_backend(ref_fn, mimo=is_mimo):
                 want = model(ids)
         delta = float((got - want).abs().max())
         # Gate before timing. The two paths differ only in the scan, both in
@@ -177,18 +201,18 @@ def main():
 
         with torch.no_grad():
             t_kernel = bench(lambda: model(ids), args.warmup, args.reps)
-            with scan_backend(_ref_scan):
+            with scan_backend(ref_fn, mimo=is_mimo):
                 t_ref = bench(lambda: model(ids), args.warmup, args.reps)
 
         t_comp, compile_s = None, None
         if not args.no_compile and L <= args.max_compile_len:
             try:
-                compiled = torch.compile(_ref_scan, dynamic=False)
+                compiled = torch.compile(ref_fn, dynamic=False)
                 t0 = time.perf_counter()
-                with torch.no_grad(), scan_backend(compiled):
+                with torch.no_grad(), scan_backend(compiled, mimo=is_mimo):
                     model(ids)                       # triggers compilation
                 compile_s = time.perf_counter() - t0
-                with torch.no_grad(), scan_backend(compiled):
+                with torch.no_grad(), scan_backend(compiled, mimo=is_mimo):
                     t_comp = bench(lambda: model(ids), 0, args.reps)
             except Exception as exc:  # noqa: BLE001
                 print(f"{L:>6}  (torch.compile failed: "

@@ -87,7 +87,7 @@ class Mamba3Mixer(nn.Module):
 
     def __init__(self, d_model=768, d_state=128, expand=2, headdim=64,
                  ngroups=1, rope_fraction=0.5, A_floor=1e-4, chunk_size=64,
-                 layer_idx=None):
+                 layer_idx=None, is_mimo=False, mimo_rank=1):
         super().__init__()
         self.d_model = d_model
         self.d_state = d_state
@@ -95,12 +95,15 @@ class Mamba3Mixer(nn.Module):
         self.A_floor = A_floor
         self.chunk_size = chunk_size
         self.layer_idx = layer_idx
+        self.is_mimo = is_mimo
 
         self.d_inner = int(expand * d_model)
         assert self.d_inner % headdim == 0
         self.nheads = self.d_inner // headdim
         self.num_bc_heads = ngroups
-        self.mimo_rank = 1  # SISO
+        # Upstream forces rank 1 when is_mimo is False, and the rank axis then
+        # collapses so SISO and MIMO share every reshape below.
+        self.mimo_rank = mimo_rank if is_mimo else 1
 
         # RoPE: at rope_fraction=0.5 only the first half of the head dimension
         # rotates, so there are d_state/4 angles, not d_state/2.
@@ -128,6 +131,17 @@ class Mamba3Mixer(nn.Module):
             torch.ones(self.nheads, self.mimo_rank, d_state))
         self.B_norm = RMSNorm(d_state, eps=1e-5)
         self.C_norm = RMSNorm(d_state, eps=1e-5)
+
+        if is_mimo:
+            # Psi / Zeta / Phi — the input, gate and output projections. All
+            # (nheads, rank, headdim) and applied ELEMENTWISE over the head
+            # dimension; they are per-rank reweightings, not matmuls. Names
+            # match the checkpoint (`mimo_x`/`mimo_z`/`mimo_o`), which is what
+            # keeps `load.py` free of any remapping.
+            shape = (self.nheads, self.mimo_rank, headdim)
+            self.mimo_x = nn.Parameter(torch.ones(*shape) / self.mimo_rank)
+            self.mimo_z = nn.Parameter(torch.ones(*shape))
+            self.mimo_o = nn.Parameter(torch.ones(*shape) / self.mimo_rank)
 
     def forward(self, u: torch.Tensor) -> torch.Tensor:
         """u: (batch, seqlen, d_model) -> same shape."""
@@ -162,13 +176,24 @@ class Mamba3Mixer(nn.Module):
         B = self.B_norm(B)
         C = self.C_norm(C)
 
-        # The recurrence, on our kernel. Q<-C and K<-B; see the module docstring.
-        y = arm_scan.mamba3_scan(
-            q=C.squeeze(2), k=B.squeeze(2), v=x,
-            adt=ADT, dt=DT, trap=trap,
-            q_bias=self.C_bias.squeeze(1), k_bias=self.B_bias.squeeze(1),
-            angles=angles, D=self.D, z=z,
-        )
+        # The recurrence, on our kernel. Q<-C and K<-B in BOTH variants; see the
+        # module docstring for why that mapping is not the alphabetical one.
+        if self.is_mimo:
+            # MIMO keeps the rank axis (upstream squeezes only for SISO) and
+            # passes the biases unsqueezed at (nheads, rank, d_state).
+            y = arm_scan.mamba3_mimo_scan(
+                q=C, k=B, v=x, adt=ADT, dt=DT, trap=trap,
+                q_bias=self.C_bias, k_bias=self.B_bias,
+                psi=self.mimo_x, zeta=self.mimo_z, phi=self.mimo_o,
+                angles=angles, D=self.D, z=z,
+            )
+        else:
+            y = arm_scan.mamba3_scan(
+                q=C.squeeze(2), k=B.squeeze(2), v=x,
+                adt=ADT, dt=DT, trap=trap,
+                q_bias=self.C_bias.squeeze(1), k_bias=self.B_bias.squeeze(1),
+                angles=angles, D=self.D, z=z,
+            )
 
         y = y.reshape(b, seqlen, h * p)
         return self.out_proj(y.to(x.dtype))

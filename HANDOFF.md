@@ -26,23 +26,20 @@ What is left is not kernel work:
    built around — the RoPE angle pre-pass must run on the traversal **views**,
    not the grid, or both orderings silently share the row-major `theta`. C2 is
    a second, GEMM-shaped kernel with a deliberately thin moat.
-3. **MIMO kernel work (B2–B4) has not started**, but B0 and B1 are done:
-   `tests/golden/mamba3_mimo/` holds ground truth from the real
-   `mamba3-mimo-187m` at its published config, and `mamba3_mimo_ref` reproduces
-   it to **2.40 bf16 ULP**. Re-capturing needs `tools/setup_cuda_toolchain.sh`
-   first (TileLang shells out to `nvcc`; the system one was too old for
-   Blackwell), and MIMO **must** be captured at bf16.
+3. **MIMO is correct end to end but SLOW.** Path B is complete (B0-B4):
+   `mamba3-mimo-187m` runs on CPU at **96.48%** argmax — better than the
+   reference reproduces itself (95.31%) — through ABI v7. But `mamba3/mimo.rs`
+   is the **scalar path only**; there is no blocked or NEON MIMO kernel, so
+   MIMO is ~2x slower than SISO in absolute terms and the arithmetic-intensity
+   argument for MIMO on CPU is **still untested**. That kernel is the highest-
+   value remaining Path B work.
 
-   **The thing to know before writing B2's Rust:** SISO and MIMO use
-   **different RoPE conventions** — interleaved `(2i, 2i+1)` vs split-halves
-   `(i, i+n/2)` over the first `n/4` lanes. The kernel needs both. That is also
-   why the plan's "r=1 collapses to SISO bit-for-bit" is false; the zero-angle
-   form of that check is real and is in the gate.
-
-   Set B4's model gate against MIMO's own across-process floor — measured at
-   93.4% and 95.3% on two runs, so it is a band, not a number — not SISO's ~99%.
-   *(Stage 6 — running the real 187M checkpoint end to end — is now **done**:
-   see `apps/mamba3_lm/` and `THREE_PATHS_INTEGRATION.md` Path A.)*
+   Two things to know: the families use **different RoPE conventions** (SISO
+   interleaved `(2i, 2i+1)`, MIMO split-halves `(i, i+n/2)` over the first
+   `n/4` lanes), and re-capturing goldens needs `tools/setup_cuda_toolchain.sh`
+   at bf16.
+   *(Stage 6 — the real checkpoints end to end — is **done** for both families:
+   see `apps/mamba3_lm/` and `THREE_PATHS_INTEGRATION.md`.)*
 4. **Performance is untuned.** `TILE = 32` in the blocked kernel has never been
    swept, and there is no Mamba-3 phase profile. Tuning genuinely needs Arm —
    the blocking exists to fit NEON registers and Arm's L1, and x86 does not even

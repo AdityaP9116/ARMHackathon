@@ -62,7 +62,9 @@ def main():
                          "and ours does not, so positions where the top two "
                          "logits are within bf16 noise are genuine coin "
                          "tosses. A real plumbing bug does not land at 0.98, "
-                         "it lands near chance.")
+                         "it lands near chance. CAPPED at the reference's own "
+                         "across-process floor when the manifest records one: "
+                         "see the note where that is applied.")
     ap.add_argument("--max-rel-drift", type=float, default=0.05,
                     help="gate: max |delta logit| relative to the logit range")
     args = ap.parse_args()
@@ -151,8 +153,26 @@ def main():
     print(f"unexplained flips  : {n_unex}  "
           f"(disagreements whose top-2 margin exceeds the budget)")
 
-    ok = (n_unex == 0 and rate >= args.min_argmax_agree
-          and rel <= args.max_rel_drift)
+    # Never demand better agreement than the ORACLE achieves against itself.
+    #
+    # A fixed threshold cannot be right for both families: SISO's reference
+    # reproduces itself across processes at ~98.8%, MIMO's at only ~93-95%
+    # (it is a different kernel with a different autotune surface). Holding
+    # MIMO to SISO's 98% would fail a CPU model that is *closer to the
+    # reference than the reference is to itself* -- which is exactly what
+    # happened, and is not a meaningful test of anything.
+    #
+    # So the requirement is capped at the measured floor. It never LOOSENS
+    # SISO (min(0.98, 0.988) = 0.98); it only stops the gate asking for
+    # precision the ground truth does not have.
+    required = args.min_argmax_agree
+    floor = noise.get("across_process_argmax_agreement")
+    if floor is not None and floor < required:
+        required = floor
+        print(f"required agreement : {required:.4%}  (capped at the "
+              f"reference's own across-process floor, not {args.min_argmax_agree:.2%})")
+
+    ok = (n_unex == 0 and rate >= required and rel <= args.max_rel_drift)
     print()
     if ok:
         print(f"PATH A MODEL GATE: PASS — the CPU model reproduces "
@@ -164,7 +184,7 @@ def main():
         print(f"PATH A MODEL GATE: FAIL — {n_unex} position(s) flipped with a "
               f"top-2 margin wider than the observed drift can explain. That "
               f"is a real difference, not precision.")
-    print(f"agreement {rate:.2%} (need {args.min_argmax_agree:.2%}), "
+    print(f"agreement {rate:.2%} (need {required:.2%}), "
           f"drift {rel:.2e} (need <= {args.max_rel_drift:.2e}).")
     print("Check tests/check_mamba3_block.py first: if the MIXER gate passes "
           "and this does not, the bug is in the surrounding scaffolding — "

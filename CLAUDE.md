@@ -56,11 +56,14 @@ Not done, in priority order:
 2. **2D non-causal (C2) not started.** The *causal* 2D cross-scan is done —
    `arm_scan.ss2d_scan_mamba3`, pure layout over `mamba3_scan_pair`, no new kernel code, gated
    by `tests/check_ss2d_mamba3.py` at 2.0e-07. C2 is the second, GEMM-shaped kernel.
-3. **MIMO is correct but not fast.** B0–B3 are done: ground truth captured, PyTorch reference
-   at 2.40 bf16 ULP, and `arm_scan.mamba3_mimo_scan` running the rank-r recurrence in Rust at
-   **1.90 bf16 ULP** through ABI v7. But `mamba3/mimo.rs` is the **scalar path only** — there is
-   no blocked or NEON MIMO kernel, and dispatch routes MIMO before the backend match to say so
-   rather than silently substituting. B4 (the MIMO model path) is also not started.
+3. **MIMO is correct but not fast.** Path B is complete end to end (B0–B4): ground truth
+   captured, reference at 2.40 bf16 ULP, Rust kernel at **1.90** through ABI v7, and
+   `mamba3-mimo-187m` running on CPU at **96.48%** argmax — *better than the reference
+   reproduces itself* (95.31%). But `mamba3/mimo.rs` is the **scalar path only**: no blocked or
+   NEON MIMO kernel, and dispatch routes MIMO before the backend match to say so rather than
+   silently substituting. So MIMO is ~2x slower than SISO in absolute terms, and **the
+   arithmetic-intensity argument for MIMO on CPU remains untested** — it is a prediction about
+   what an optimised kernel would do, not a result.
 
    Two things to know before touching that kernel: the families use **different RoPE
    conventions** (SISO interleaved `(2i, 2i+1)`, MIMO split-halves `(i, i+n/2)` over the first
