@@ -5,9 +5,79 @@
 **Track:** Cloud AI
 
 > This document is the **decision log** — what we chose, what we rejected, and why.
-> For the pitch and deliverables see [`README.md`](./README.md); for the build/test plan and schedule see [`ROADMAP.md`](./ROADMAP.md). This file avoids duplicating those.
+> For the pitch and deliverables see [`README.md`](./README.md); for the build/test plan and schedule see [`ROADMAP.md`](docs/archive/ROADMAP.md). This file avoids duplicating those.
 
 ---
+
+## AMENDED Aug 6–7, 2026 — the Mamba-3 pivot happened
+
+**This supersedes the Aug 4 scope below, including its "Rejected" row on Mamba-3.**
+That row said pivoting "trades a measured submission for an unmeasured one" and left the
+door open with: *"a half-day spike may show our existing scan can serve the Mamba-3 SISO
+recurrence with only a 2-tap change to Pass A."*
+
+The spike happened, and it was **half right in a way worth recording**. The 2-tap is indeed
+one extra term and Pass B's *equation* is unchanged — but Mamba-1's state is 16 floats living
+in four NEON registers, which is the entire reason that kernel is fast, while Mamba-3's is a
+`dv x dqk` **matrix** (8–32 KB). It could not be a flag on the existing scan; it needed its
+own kernel family. See `MAMBA3_KERNEL_WORKPLAN.md` §14.2.
+
+**What changed the decision:** a prior-art sweep (verified repo by repo, Aug 6) moved two of
+the three demo slots.
+
+| Slot | Aug 4 plan | What the sweep found | Now |
+|---|---|---|---|
+| 1D bidirectional | Speech enhancement (SEMamba) | SEMamba is *outer* bidirectional — separate weights per direction — so our fused kernel **cannot help it**. VideoMamba later turned out identical. And `burn-mamba` already ships bidirectional Mamba-3 | **No novelty claim.** Kept as a near-free capability |
+| 2D cross-scan | Diffusion MRI | The app's quality gate has never passed and there is no trained prior. Meanwhile **no CPU implementation of any 2D Mamba-3 exists anywhere** | **2D Mamba-3 is the headline.** MRI **demoted, not deleted** — still CI-gated as the only end-to-end SS2D exercise |
+| 1D unidirectional | Long context | Unchanged, and now stronger: Mamba-3 has published weights *and* an authoritative oracle | **The evidence track** |
+
+**Locked as of Aug 7:** two kernel families in one library (Mamba-1 shipped and measured;
+Mamba-3 shipped and gated to 4.47 bf16 ULP against ground truth captured from the official
+GPU kernels). They are **not** cross-compatible — Mamba-1 uses a per-state-element decay
+vector, Mamba-3 a scalar decay per head.
+
+**Also rejected on the way, with reasons:** the Mamba-2/SSD substrate route (target Mamba-3
+directly instead — the substrate detour buys correctness gates we already have); MIMO and the
+chunked dual form (the dual form is GEMM-shaped and would trade away the sequential-recurrence
+moat); and a resumable Mamba-3 decode path, which is **structurally impossible via a carry** —
+`scale_t` depends on `dt_{t+1}`, so the trapezoid looks forward.
+
+**Standing caution:** three separate research digests handed to this project asserted Mamba-3
+connections that did not exist (MFil-Mamba, Akasha 2, a VNCT code release). Verify against the
+repo or the paper before a claim enters a document.
+
+---
+
+## Superseded — Final scope (Aug 4, 2026) — three topologies, three demos
+
+**This supersedes the paragraph below**, which locked MRI as *the* single application. It
+does not change the kernel work or the claims; it changes what we demonstrate them on.
+
+`APPLICATIONS.md` made the argument and we are now acting on it: *"Three demos that each
+exercise a different scan topology prove the **kernel itself** is general — which is the
+claim we actually want the judges to believe (Impact, 20 pts)."*
+
+| Topology | Demo | Why this one |
+|---|---|---|
+| 1D unidirectional | **Long context** on a language model | A *capability* claim, not a speed delta: constant memory at any L, while `torch.compile`'s compile time goes 59.9 s → 532.8 s from L=256 → 2048 and had to be capped past that. It is also Mamba's actual reason to exist. |
+| 1D bidirectional | **Speech enhancement** | Our **strongest-measured** topology (6.39–8.99× vs `torch.compile` on Arm) had **no application at all**. It is also the only demo a judge can *hear*, its metric (real-time factor) needs no explanation, and Arm CPUs are literally where speech enhancement ships — earbuds, hearing aids, phones. |
+| 2D cross-scan | **Diffusion MRI reconstruction** | Already built and gated. Highest ceiling, and the workload where kernel wins compound (18–256 denoiser calls per image). |
+
+**Rejected, with reasons:**
+
+- **Pivoting the kernel to Mamba-3.** Checkpoints *do* now exist (`state-spaces/mamba3-*`,
+  arXiv 2603.15569 — the "no public checkpoints" line in `docs/roadmap/MAMBA3_KERNEL_PLAN.md`
+  is out of date), and there is still **no CPU implementation anywhere**, so it is genuinely
+  attractive. But it is a different recurrence, and with 10 days left and zero dedicated-Arm
+  numbers banked, it trades a measured submission for an unmeasured one. It stays the
+  roadmap — strengthened by the fact that the SSD substrate is 90% of it and the λ=1 / r=1
+  reductions give free correctness gates against what we already verify. **Open:** a
+  half-day spike may show our existing scan can serve the Mamba-3 SISO recurrence with only
+  a 2-tap change to Pass A, which would make it cheap enough to reconsider.
+- **VMamba classification as the 2D demo.** Cleaner metric, lower integration risk — kept
+  explicitly as the de-risked substitute if MRI quality does not materialise.
+- **Text generation as the 1D demo.** Same model, weaker framing. Long context is the same
+  work with a far better story.
 
 ## The decision in one paragraph
 

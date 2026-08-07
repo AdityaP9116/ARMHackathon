@@ -31,6 +31,7 @@
 //! contribute c*h = 0 to the output.
 
 mod exp;
+pub(crate) mod mamba3;
 mod math;
 #[cfg(feature = "profiling")]
 pub mod profile;

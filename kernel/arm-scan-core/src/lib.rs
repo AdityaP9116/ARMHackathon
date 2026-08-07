@@ -16,12 +16,16 @@
 //!   last_state       : (batch, dim, state)
 
 mod float;
+mod mamba3;
 #[cfg(target_arch = "aarch64")]
 mod neon;
 mod parallel;
 mod scalar;
 
 pub use float::Float;
+pub use mamba3::{
+    mamba3_scan, mamba3_scan_with_options, Mamba3Dims, Mamba3Error, Mamba3Input, Mamba3Variant,
+};
 
 /// Phase-level profiling of the NEON fast path. Diagnostic tool, not part of
 /// the stable API — only present on aarch64 with the `profiling` feature.

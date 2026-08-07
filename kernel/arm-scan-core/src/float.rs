@@ -41,6 +41,40 @@ pub trait Float:
     fn silu(self) -> Self {
         self / (Self::ONE + (-self).exp())
     }
+
+    /// sigmoid(x) = 1 / (1 + e^-x) — Mamba-3's trapezoid gate.
+    ///
+    /// Written as the branch below rather than the direct formula because
+    /// `exp(-x)` overflows to +inf for x <~ -88 in f32, and inf/inf is NaN.
+    /// Reflecting to the other branch keeps every argument non-positive, which
+    /// is the same precondition `vexpq_f32_nonpos` exploits on the NEON side.
+    #[inline]
+    fn sigmoid(self) -> Self {
+        if self >= Self::ZERO {
+            Self::ONE / (Self::ONE + (-self).exp())
+        } else {
+            let e = self.exp();
+            e / (Self::ONE + e)
+        }
+    }
+
+    /// tanh(x) — used only for the Mamba-3 RoPE angle squashing
+    /// (`theta = cumsum(tanh(angle) * PI * dt)`).
+    ///
+    /// `tanh(x) = 1 - 2/(e^{2x} + 1)`, evaluated on the non-positive branch and
+    /// reflected for the same overflow reason as `sigmoid`. Saturates cleanly:
+    /// at |x| >= ~20 the result is +/-1 to well within f32.
+    #[inline]
+    fn tanh(self) -> Self {
+        let two = Self::ONE + Self::ONE;
+        if self >= Self::ZERO {
+            let e = (-two * self).exp();
+            (Self::ONE - e) / (Self::ONE + e)
+        } else {
+            let e = (two * self).exp();
+            -((Self::ONE - e) / (Self::ONE + e))
+        }
+    }
 }
 
 macro_rules! impl_float {

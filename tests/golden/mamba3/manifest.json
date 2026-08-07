@@ -1,0 +1,901 @@
+{
+  "device": "NVIDIA GeForce RTX 5090",
+  "torch": "2.13.0+cu130",
+  "capture_dtype": "float32",
+  "mamba_ssm": "2.3.2.post1",
+  "blackwell_fix_997": true,
+  "cases": [
+    {
+      "name": "mamba3_siso_combined_00",
+      "kernel": "mamba_ssm.modules.mamba3.mamba3_siso_combined",
+      "arrays": {
+        "kw_Q": [
+          1,
+          256,
+          1,
+          128
+        ],
+        "kw_K": [
+          1,
+          256,
+          1,
+          128
+        ],
+        "kw_V": [
+          1,
+          256,
+          24,
+          64
+        ],
+        "kw_ADT": [
+          1,
+          24,
+          256
+        ],
+        "kw_DT": [
+          1,
+          24,
+          256
+        ],
+        "kw_Trap": [
+          1,
+          24,
+          256
+        ],
+        "kw_Q_bias": [
+          24,
+          128
+        ],
+        "kw_K_bias": [
+          24,
+          128
+        ],
+        "kw_Angles": [
+          1,
+          256,
+          24,
+          32
+        ],
+        "kw_D": [
+          24
+        ],
+        "kw_Z": [
+          1,
+          256,
+          24,
+          64
+        ],
+        "out": [
+          1,
+          256,
+          24,
+          64
+        ]
+      },
+      "dtypes": {
+        "kw_Q": "bfloat16",
+        "kw_K": "bfloat16",
+        "kw_V": "bfloat16",
+        "kw_ADT": "float32",
+        "kw_DT": "float32",
+        "kw_Trap": "bfloat16",
+        "kw_Q_bias": "float32",
+        "kw_K_bias": "float32",
+        "kw_Angles": "bfloat16",
+        "kw_D": "float32",
+        "kw_Z": "bfloat16",
+        "out": "bfloat16"
+      }
+    },
+    {
+      "name": "mamba3_siso_combined_01",
+      "kernel": "mamba_ssm.modules.mamba3.mamba3_siso_combined",
+      "arrays": {
+        "kw_Q": [
+          1,
+          256,
+          1,
+          128
+        ],
+        "kw_K": [
+          1,
+          256,
+          1,
+          128
+        ],
+        "kw_V": [
+          1,
+          256,
+          24,
+          64
+        ],
+        "kw_ADT": [
+          1,
+          24,
+          256
+        ],
+        "kw_DT": [
+          1,
+          24,
+          256
+        ],
+        "kw_Trap": [
+          1,
+          24,
+          256
+        ],
+        "kw_Q_bias": [
+          24,
+          128
+        ],
+        "kw_K_bias": [
+          24,
+          128
+        ],
+        "kw_Angles": [
+          1,
+          256,
+          24,
+          32
+        ],
+        "kw_D": [
+          24
+        ],
+        "kw_Z": [
+          1,
+          256,
+          24,
+          64
+        ],
+        "out": [
+          1,
+          256,
+          24,
+          64
+        ]
+      },
+      "dtypes": {
+        "kw_Q": "bfloat16",
+        "kw_K": "bfloat16",
+        "kw_V": "bfloat16",
+        "kw_ADT": "float32",
+        "kw_DT": "float32",
+        "kw_Trap": "bfloat16",
+        "kw_Q_bias": "float32",
+        "kw_K_bias": "float32",
+        "kw_Angles": "bfloat16",
+        "kw_D": "float32",
+        "kw_Z": "bfloat16",
+        "out": "bfloat16"
+      }
+    },
+    {
+      "name": "mamba3_siso_combined_02",
+      "kernel": "mamba_ssm.modules.mamba3.mamba3_siso_combined",
+      "arrays": {
+        "kw_Q": [
+          1,
+          256,
+          1,
+          128
+        ],
+        "kw_K": [
+          1,
+          256,
+          1,
+          128
+        ],
+        "kw_V": [
+          1,
+          256,
+          24,
+          64
+        ],
+        "kw_ADT": [
+          1,
+          24,
+          256
+        ],
+        "kw_DT": [
+          1,
+          24,
+          256
+        ],
+        "kw_Trap": [
+          1,
+          24,
+          256
+        ],
+        "kw_Q_bias": [
+          24,
+          128
+        ],
+        "kw_K_bias": [
+          24,
+          128
+        ],
+        "kw_Angles": [
+          1,
+          256,
+          24,
+          32
+        ],
+        "kw_D": [
+          24
+        ],
+        "kw_Z": [
+          1,
+          256,
+          24,
+          64
+        ],
+        "out": [
+          1,
+          256,
+          24,
+          64
+        ]
+      },
+      "dtypes": {
+        "kw_Q": "bfloat16",
+        "kw_K": "bfloat16",
+        "kw_V": "bfloat16",
+        "kw_ADT": "float32",
+        "kw_DT": "float32",
+        "kw_Trap": "bfloat16",
+        "kw_Q_bias": "float32",
+        "kw_K_bias": "float32",
+        "kw_Angles": "bfloat16",
+        "kw_D": "float32",
+        "kw_Z": "bfloat16",
+        "out": "bfloat16"
+      }
+    },
+    {
+      "name": "mamba3_siso_combined_03",
+      "kernel": "mamba_ssm.modules.mamba3.mamba3_siso_combined",
+      "arrays": {
+        "kw_Q": [
+          1,
+          256,
+          1,
+          128
+        ],
+        "kw_K": [
+          1,
+          256,
+          1,
+          128
+        ],
+        "kw_V": [
+          1,
+          256,
+          24,
+          64
+        ],
+        "kw_ADT": [
+          1,
+          24,
+          256
+        ],
+        "kw_DT": [
+          1,
+          24,
+          256
+        ],
+        "kw_Trap": [
+          1,
+          24,
+          256
+        ],
+        "kw_Q_bias": [
+          24,
+          128
+        ],
+        "kw_K_bias": [
+          24,
+          128
+        ],
+        "kw_Angles": [
+          1,
+          256,
+          24,
+          32
+        ],
+        "kw_D": [
+          24
+        ],
+        "kw_Z": [
+          1,
+          256,
+          24,
+          64
+        ],
+        "out": [
+          1,
+          256,
+          24,
+          64
+        ]
+      },
+      "dtypes": {
+        "kw_Q": "bfloat16",
+        "kw_K": "bfloat16",
+        "kw_V": "bfloat16",
+        "kw_ADT": "float32",
+        "kw_DT": "float32",
+        "kw_Trap": "bfloat16",
+        "kw_Q_bias": "float32",
+        "kw_K_bias": "float32",
+        "kw_Angles": "bfloat16",
+        "kw_D": "float32",
+        "kw_Z": "bfloat16",
+        "out": "bfloat16"
+      }
+    },
+    {
+      "name": "mamba3_siso_combined_04",
+      "kernel": "mamba_ssm.modules.mamba3.mamba3_siso_combined",
+      "arrays": {
+        "kw_Q": [
+          1,
+          1,
+          1,
+          64
+        ],
+        "kw_K": [
+          1,
+          1,
+          1,
+          64
+        ],
+        "kw_V": [
+          1,
+          1,
+          16,
+          32
+        ],
+        "kw_ADT": [
+          1,
+          16,
+          1
+        ],
+        "kw_DT": [
+          1,
+          16,
+          1
+        ],
+        "kw_Trap": [
+          1,
+          16,
+          1
+        ],
+        "kw_Q_bias": [
+          16,
+          64
+        ],
+        "kw_K_bias": [
+          16,
+          64
+        ],
+        "kw_Angles": [
+          1,
+          1,
+          16,
+          16
+        ],
+        "kw_D": [
+          16
+        ],
+        "kw_Z": [
+          1,
+          1,
+          16,
+          32
+        ],
+        "out": [
+          1,
+          1,
+          16,
+          32
+        ]
+      },
+      "dtypes": {
+        "kw_Q": "bfloat16",
+        "kw_K": "bfloat16",
+        "kw_V": "bfloat16",
+        "kw_ADT": "float32",
+        "kw_DT": "float32",
+        "kw_Trap": "bfloat16",
+        "kw_Q_bias": "float32",
+        "kw_K_bias": "float32",
+        "kw_Angles": "bfloat16",
+        "kw_D": "float32",
+        "kw_Z": "bfloat16",
+        "out": "bfloat16"
+      }
+    },
+    {
+      "name": "mamba3_siso_combined_05",
+      "kernel": "mamba_ssm.modules.mamba3.mamba3_siso_combined",
+      "arrays": {
+        "kw_Q": [
+          1,
+          63,
+          1,
+          64
+        ],
+        "kw_K": [
+          1,
+          63,
+          1,
+          64
+        ],
+        "kw_V": [
+          1,
+          63,
+          16,
+          32
+        ],
+        "kw_ADT": [
+          1,
+          16,
+          63
+        ],
+        "kw_DT": [
+          1,
+          16,
+          63
+        ],
+        "kw_Trap": [
+          1,
+          16,
+          63
+        ],
+        "kw_Q_bias": [
+          16,
+          64
+        ],
+        "kw_K_bias": [
+          16,
+          64
+        ],
+        "kw_Angles": [
+          1,
+          63,
+          16,
+          16
+        ],
+        "kw_D": [
+          16
+        ],
+        "kw_Z": [
+          1,
+          63,
+          16,
+          32
+        ],
+        "out": [
+          1,
+          63,
+          16,
+          32
+        ]
+      },
+      "dtypes": {
+        "kw_Q": "bfloat16",
+        "kw_K": "bfloat16",
+        "kw_V": "bfloat16",
+        "kw_ADT": "float32",
+        "kw_DT": "float32",
+        "kw_Trap": "bfloat16",
+        "kw_Q_bias": "float32",
+        "kw_K_bias": "float32",
+        "kw_Angles": "bfloat16",
+        "kw_D": "float32",
+        "kw_Z": "bfloat16",
+        "out": "bfloat16"
+      }
+    },
+    {
+      "name": "mamba3_siso_combined_06",
+      "kernel": "mamba_ssm.modules.mamba3.mamba3_siso_combined",
+      "arrays": {
+        "kw_Q": [
+          1,
+          64,
+          1,
+          64
+        ],
+        "kw_K": [
+          1,
+          64,
+          1,
+          64
+        ],
+        "kw_V": [
+          1,
+          64,
+          16,
+          32
+        ],
+        "kw_ADT": [
+          1,
+          16,
+          64
+        ],
+        "kw_DT": [
+          1,
+          16,
+          64
+        ],
+        "kw_Trap": [
+          1,
+          16,
+          64
+        ],
+        "kw_Q_bias": [
+          16,
+          64
+        ],
+        "kw_K_bias": [
+          16,
+          64
+        ],
+        "kw_Angles": [
+          1,
+          64,
+          16,
+          16
+        ],
+        "kw_D": [
+          16
+        ],
+        "kw_Z": [
+          1,
+          64,
+          16,
+          32
+        ],
+        "out": [
+          1,
+          64,
+          16,
+          32
+        ]
+      },
+      "dtypes": {
+        "kw_Q": "bfloat16",
+        "kw_K": "bfloat16",
+        "kw_V": "bfloat16",
+        "kw_ADT": "float32",
+        "kw_DT": "float32",
+        "kw_Trap": "bfloat16",
+        "kw_Q_bias": "float32",
+        "kw_K_bias": "float32",
+        "kw_Angles": "bfloat16",
+        "kw_D": "float32",
+        "kw_Z": "bfloat16",
+        "out": "bfloat16"
+      }
+    },
+    {
+      "name": "mamba3_siso_combined_07",
+      "kernel": "mamba_ssm.modules.mamba3.mamba3_siso_combined",
+      "arrays": {
+        "kw_Q": [
+          1,
+          255,
+          1,
+          128
+        ],
+        "kw_K": [
+          1,
+          255,
+          1,
+          128
+        ],
+        "kw_V": [
+          1,
+          255,
+          16,
+          32
+        ],
+        "kw_ADT": [
+          1,
+          16,
+          255
+        ],
+        "kw_DT": [
+          1,
+          16,
+          255
+        ],
+        "kw_Trap": [
+          1,
+          16,
+          255
+        ],
+        "kw_Q_bias": [
+          16,
+          128
+        ],
+        "kw_K_bias": [
+          16,
+          128
+        ],
+        "kw_Angles": [
+          1,
+          255,
+          16,
+          32
+        ],
+        "kw_D": [
+          16
+        ],
+        "kw_Z": [
+          1,
+          255,
+          16,
+          32
+        ],
+        "out": [
+          1,
+          255,
+          16,
+          32
+        ]
+      },
+      "dtypes": {
+        "kw_Q": "bfloat16",
+        "kw_K": "bfloat16",
+        "kw_V": "bfloat16",
+        "kw_ADT": "float32",
+        "kw_DT": "float32",
+        "kw_Trap": "bfloat16",
+        "kw_Q_bias": "float32",
+        "kw_K_bias": "float32",
+        "kw_Angles": "bfloat16",
+        "kw_D": "float32",
+        "kw_Z": "bfloat16",
+        "out": "bfloat16"
+      }
+    },
+    {
+      "name": "mamba3_siso_combined_08",
+      "kernel": "mamba_ssm.modules.mamba3.mamba3_siso_combined",
+      "arrays": {
+        "kw_Q": [
+          2,
+          128,
+          1,
+          64
+        ],
+        "kw_K": [
+          2,
+          128,
+          1,
+          64
+        ],
+        "kw_V": [
+          2,
+          128,
+          16,
+          32
+        ],
+        "kw_ADT": [
+          2,
+          16,
+          128
+        ],
+        "kw_DT": [
+          2,
+          16,
+          128
+        ],
+        "kw_Trap": [
+          2,
+          16,
+          128
+        ],
+        "kw_Q_bias": [
+          16,
+          64
+        ],
+        "kw_K_bias": [
+          16,
+          64
+        ],
+        "kw_Angles": [
+          2,
+          128,
+          16,
+          16
+        ],
+        "kw_D": [
+          16
+        ],
+        "kw_Z": [
+          2,
+          128,
+          16,
+          32
+        ],
+        "out": [
+          2,
+          128,
+          16,
+          32
+        ]
+      },
+      "dtypes": {
+        "kw_Q": "bfloat16",
+        "kw_K": "bfloat16",
+        "kw_V": "bfloat16",
+        "kw_ADT": "float32",
+        "kw_DT": "float32",
+        "kw_Trap": "bfloat16",
+        "kw_Q_bias": "float32",
+        "kw_K_bias": "float32",
+        "kw_Angles": "bfloat16",
+        "kw_D": "float32",
+        "kw_Z": "bfloat16",
+        "out": "bfloat16"
+      }
+    },
+    {
+      "name": "mamba3_siso_combined_09",
+      "kernel": "mamba_ssm.modules.mamba3.mamba3_siso_combined",
+      "arrays": {
+        "kw_Q": [
+          1,
+          2048,
+          1,
+          64
+        ],
+        "kw_K": [
+          1,
+          2048,
+          1,
+          64
+        ],
+        "kw_V": [
+          1,
+          2048,
+          16,
+          32
+        ],
+        "kw_ADT": [
+          1,
+          16,
+          2048
+        ],
+        "kw_DT": [
+          1,
+          16,
+          2048
+        ],
+        "kw_Trap": [
+          1,
+          16,
+          2048
+        ],
+        "kw_Q_bias": [
+          16,
+          64
+        ],
+        "kw_K_bias": [
+          16,
+          64
+        ],
+        "kw_Angles": [
+          1,
+          2048,
+          16,
+          16
+        ],
+        "kw_D": [
+          16
+        ],
+        "kw_Z": [
+          1,
+          2048,
+          16,
+          32
+        ],
+        "out": [
+          1,
+          2048,
+          16,
+          32
+        ]
+      },
+      "dtypes": {
+        "kw_Q": "bfloat16",
+        "kw_K": "bfloat16",
+        "kw_V": "bfloat16",
+        "kw_ADT": "float32",
+        "kw_DT": "float32",
+        "kw_Trap": "bfloat16",
+        "kw_Q_bias": "float32",
+        "kw_K_bias": "float32",
+        "kw_Angles": "bfloat16",
+        "kw_D": "float32",
+        "kw_Z": "bfloat16",
+        "out": "bfloat16"
+      }
+    }
+  ],
+  "model": "state-spaces/mamba3-siso-187m",
+  "model_forward": {
+    "seq": 256,
+    "vocab": 128256,
+    "subset_size": 512,
+    "subset_seed": 0,
+    "stored": [
+      "input_ids",
+      "argmax",
+      "vocab_subset",
+      "logits_subset",
+      "logsumexp"
+    ],
+    "note": "full logits deliberately not stored; see save_model_forward"
+  },
+  "n_parameters": 146,
+  "sweep": [
+    {
+      "name": "edge_L1",
+      "batch": 1,
+      "seqlen": 1,
+      "d_model": 256,
+      "d_state": 64,
+      "headdim": 32,
+      "status": "ok"
+    },
+    {
+      "name": "short_L63",
+      "batch": 1,
+      "seqlen": 63,
+      "d_model": 256,
+      "d_state": 64,
+      "headdim": 32,
+      "status": "ok"
+    },
+    {
+      "name": "chunk_L64",
+      "batch": 1,
+      "seqlen": 64,
+      "d_model": 256,
+      "d_state": 64,
+      "headdim": 32,
+      "status": "ok"
+    },
+    {
+      "name": "odd_L255",
+      "batch": 1,
+      "seqlen": 255,
+      "d_model": 256,
+      "d_state": 128,
+      "headdim": 32,
+      "status": "ok"
+    },
+    {
+      "name": "batch2_L128",
+      "batch": 2,
+      "seqlen": 128,
+      "d_model": 256,
+      "d_state": 64,
+      "headdim": 32,
+      "status": "ok"
+    },
+    {
+      "name": "long_L2048",
+      "batch": 1,
+      "seqlen": 2048,
+      "d_model": 256,
+      "d_state": 64,
+      "headdim": 32,
+      "status": "ok"
+    }
+  ]
+}

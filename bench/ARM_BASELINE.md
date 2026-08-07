@@ -135,7 +135,41 @@ stalled-cycles-backend,stalled-cycles-frontend \
   python bench/bench_op.py --quick --no-compile
 ```
 
-> Caveat: on shared cloud VMs the PMU is often not exposed, so `perf stat` counters may read zero. On Graviton bare-metal-ish instances they usually work; otherwise use `perf record` software sampling (still shows *where* time goes) and Arm's **Performance Studio / Performix** (the contest's own tool) for counters.
+> Caveat: on shared cloud VMs the PMU is often not exposed, so `perf stat` counters may read zero. On Graviton bare-metal-ish instances they usually work; otherwise use `perf record` software sampling (still shows *where* time goes), and **Arm Streamline CLI Tools** for counters — see below.
+
+### Arm Streamline CLI Tools (Arm's own profiler — use it)
+
+Part of **Arm Performance Studio**, free of charge, and it runs *natively on the Neoverse
+server* rather than needing a desktop GUI. ("Performix", named in earlier drafts of this
+repo, is not an Arm product — the tool is Streamline.) Three reasons it beats hand-reading
+`perf stat` for our purposes:
+
+1. It implements Arm's **top-down profiling methodology**, which classifies where cycles go
+   (frontend / backend / retiring / bad speculation) instead of leaving us to infer
+   compute-vs-memory bound from IPC by eye.
+2. It attributes those metrics **function by function**, and it profiles **Rust** — so it can
+   point at `channel_n16` or `vexpq_f32` directly.
+3. It is *Arm's* tool, on an *Arm* contest. Using it and citing its output is a signal to the
+   judges that we know the ecosystem.
+
+**It degrades gracefully**, which is what makes it safe to run on a virtualized EC2 box: zero
+counters still gives time-based hot-spot sampling, three counters enable top-down metrics at
+a reduced sample rate, six or more is optimal. SPE (Statistical Profiling Extension) is
+optional — without it you lose load-data-source metrics and branch-mispredict accuracy.
+
+Run `sysreport` first; it reports exactly what the instance exposes.
+
+```bash
+wget https://artifacts.tools.arm.com/arm-performance-studio/Streamline_CLI_Tools/get-streamline-cli.py
+python3 -m venv sl-venv && source ./sl-venv/bin/activate
+python3 get-streamline-cli.py install
+python3 -m pip install -r ./streamline_cli_tools/bin/requirements.txt
+export PATH=$PATH:$PWD/streamline_cli_tools/bin
+```
+
+Command reference: <https://developer.arm.com/documentation/109847/latest/>. Use a **separate
+venv** from the project's `.venv` so its dependencies cannot perturb the benchmark
+environment.
 
 **Interpretation — this is the strength/weakness verdict:**
 

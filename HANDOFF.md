@@ -1,0 +1,254 @@
+# HANDOFF — read this first when resuming on a new machine or in a new session
+
+**Written Aug 6, 2026.** Deadline **Aug 14, 4:00 PM PDT — 8 days.**
+
+This exists because the working context of a session does not survive a reboot
+or a fresh clone. Everything below is state that was in someone's head or in a
+chat log, not in the code. Start here, then read
+[`MAMBA3_IMPLEMENTATION_PLAN.md`](MAMBA3_IMPLEMENTATION_PLAN.md).
+
+---
+
+## The one-line status (updated Aug 7)
+
+The Mamba-1 work is **complete, measured and CI-green** — that is the floor and
+it is safe. The **Mamba-3 kernel is now also complete and gated**: Stages 0–5
+and workplan items M0–M8 are done, and the NEON path is verified on real Arm
+hardware in CI.
+
+What is left is not kernel work:
+
+1. **No dedicated-hardware numbers, for anything.** Every timing in this repo is
+   x86 or a shared 4-core runner. Existential for a Cloud-track entry.
+2. **2D cross-scan is not wired** to the Mamba-3 primitive — `ss2d_scan`'s
+   machinery is recurrence-agnostic, but its `scan_pair` seam still speaks
+   Mamba-1's parameter list. This is the smallest item and it unblocks the
+   headline claim.
+3. **The real 187M checkpoint has not been run end to end** (Stage 6).
+4. **Performance is untuned.** `TILE = 32` in the blocked kernel has never been
+   swept, and there is no Mamba-3 phase profile. Tuning genuinely needs Arm —
+   the blocking exists to fit NEON registers and Arm's L1, and x86 does not even
+   execute that path.
+
+Read [`MAMBA3_IMPLEMENTATION_PLAN.md`](MAMBA3_IMPLEMENTATION_PLAN.md) for the
+plan and [`MAMBA3_KERNEL_WORKPLAN.md`](MAMBA3_KERNEL_WORKPLAN.md) for what each
+file does and why.
+
+### Things that cost time and should not cost it twice
+
+- **CI runs on `pull_request`, not on pushes to a feature branch** — and
+  `pull_request` workflows build a *merge ref*, which GitHub cannot create for a
+  **conflicted** PR. CI silently stopped firing for a day while a different
+  workflow kept going green and made the pipeline look healthy. If CI seems
+  quiet, check `gh pr view N --json mergeable` first.
+- **Anything reproducible must avoid transcendental ufuncs.** Golden draws moved
+  off `torch.Generator` (unstable across torch versions) and then off float32
+  `np.exp` (numpy dispatches float32 transcendentals to per-architecture SIMD,
+  so x86 and aarch64 disagree in the last bit). Only exact-rounded IEEE
+  operations are portable.
+- **The FFI cannot validate buffer lengths.** It is handed a pointer and told
+  how many elements to read, so a short buffer is an out-of-bounds read, not an
+  error — it surfaces as NaN much later. The Python layer owns shape
+  correctness; see `_check_shapes` in `python/arm_scan/mamba3.py`.
+- **Mamba-3 is not resumable and no carry can make it so.** `scale_t` depends on
+  `dt_{t+1}`, so the trapezoid looks *forward*. Mamba-1's `h0` contract does not
+  transfer. `last_bx` exists but is diagnostic only.
+
+## Stage 0 — DONE, Aug 6, 2026
+
+`tests/golden/mamba3/` holds **10 golden cases across 7 output shapes**
+(L ∈ {1, 63, 64, 128, 255, 256, 2048}, batch 1–2, d_state 64/128), captured
+from `mamba3_siso_combined` driven by the real `state-spaces/mamba3-siso-187m`
+checkpoint plus an edge-shape sweep, alongside `model_forward.npz` and
+`model_shape.json`. Verified to replay under a Python with **no torch, no
+mamba_ssm, no CUDA** — so the GPU really is never needed again.
+
+### Reproducing the environment (read before touching a GPU box)
+
+```bash
+python3 -m venv ~/venv-arm && source ~/venv-arm/bin/activate
+pip install --upgrade pip wheel setuptools ninja packaging numpy
+pip install torch --index-url https://download.pytorch.org/whl/cu130   # triton comes with it
+MAMBA_SKIP_CUDA_BUILD=TRUE pip install --no-build-isolation \
+    "git+https://github.com/state-spaces/mamba.git@main"
+python tools/capture_mamba3_goldens.py --out tests/golden/mamba3
+```
+
+Three things that are not obvious and cost real time to find:
+
+1. **Install from git, NOT PyPI.** The released wheel `2.3.2.post1`
+   (2026-05-09) fails twice over: `create_block` only accepts
+   `["Mamba1","Mamba2"]` so it **rejects every published Mamba-3 checkpoint**,
+   and it predates upstream **PR #997** (merged 2026-07-22) which fixes
+   **silent forward-pass corruption** in `mamba3_siso_fwd_kernel` on Blackwell
+   (SM100/103/120 — `num_stages` 2 or 3 returns wrong output with no error).
+   Ground truth captured through that bug would have validated every downstream
+   Rust kernel against garbage *and looked green doing it*. The capture script
+   now refuses to run without the fix; it inspects the source, because patched
+   and unpatched installs both report version `2.3.2.post1`.
+2. **`MAMBA_SKIP_CUDA_BUILD=TRUE` is required**, and then
+   `import mamba_ssm` fails on `No module named 'selective_scan_cuda'` —
+   that is *Mamba-1's* CUDA extension, hard-imported by `__init__.py` and
+   never used by Mamba-3. Do not install a CUDA toolkit to satisfy it: the
+   system nvcc must be ≥12.8 to emit `sm_120` at all. Write a stub instead,
+   one that **raises on every attribute access** so it can never silently
+   corrupt a capture. (Ours lives in the venv, not the repo:
+   `~/venv-arm/lib/python3.14/site-packages/selective_scan_cuda.py`.)
+3. **The kernel is mixed precision with no flag to change it.**
+   `Q/K/V/Trap/Angles/Z` are cast to bf16 on entry; `ADT/DT` stay fp32 "for
+   stability"; `Q_bias/K_bias/D` stay fp32 as model parameters; the output is
+   bf16. The goldens therefore record inputs **post-cast** — the values the
+   kernel actually consumed, not the ones we handed it. Recording pre-cast
+   fp32 would make a CPU reference diverge by an amount that *compounds over
+   the sequence* and reads as a kernel bug. **Our Rust kernel must mirror this
+   precision split.**
+
+### Why Stage 0 could not run on Windows
+
+Established by inventory, not assumption:
+
+| | Finding |
+|---|---|
+| `mamba-ssm` | **0 Windows wheels for any version.** sdist only |
+| `triton` (official) | **0 Windows wheels.** The unofficial `triton-windows` fork ships cp310/cp311 only; the host is cp312 |
+| `causal-conv1d` | source only |
+| `cargo test` | **has never run on the Windows host** — active toolchain is `windows-msvc` with no MSVC linker; the `windows-gnu` fallback lacks `dlltool` |
+
+That last row is the more serious finding and is easy to miss: **our primary
+correctness gate has only ever run in CI.** `tools/setup_linux.sh` fixes it as
+a side effect, independently of whether Mamba-3 works out.
+
+**Do not install the CUDA toolkit preemptively.** PyTorch's cu128 wheels bundle
+a CUDA runtime, Triton JIT-compiles through its own LLVM rather than shelling
+out to `nvcc`, and `mamba-ssm` wants `nvcc` only for extensions the Triton SISO
+path does not use (`MAMBA_SKIP_CUDA_BUILD=TRUE` skips them). It is 3 GB against
+a problem you may not have.
+
+---
+
+## Why Stage 0 exists at all — the finding that drives everything
+
+**There is no trustworthy Mamba-3 oracle, and the obvious substitute is wrong.**
+
+`mamba_ssm/modules/mamba3.py` has **no CPU path** — it imports Triton/TileLang/
+CuTe kernels and asserts if they are missing. The community reimplementation
+[`rishikksh20/mamba3-pytorch`](https://github.com/rishikksh20/mamba3-pytorch)
+runs on CPU, but **implements a different recurrence from the paper.** Measured
+by `tools/check_mamba3_recurrence.py` on O(1) states, so this is not rounding:
+
+```
+community vs paper, same gate ........................ max_abs 1.06
+best gate remapping (1 - gate/2) ..................... max_abs 0.145
+structural difference alone (decay on the prev term) . max_abs 0.363
+```
+
+The paper carries the state decay on the **previous** input term; the community
+version does not. **No gate remapping reconciles them.** We cannot tell which is
+right from outside — and it does not matter, because the only authoritative
+answer is what the official kernels compute, since that is what the published
+checkpoints were trained against. Hence: capture from the official kernels.
+
+Re-run that check any time with:
+
+```bash
+python tools/check_mamba3_recurrence.py
+```
+
+---
+
+## Decisions already made — do not relitigate
+
+- **Target Mamba-3 specifically**, not a Mamba-1 retrofit. The user's call, on
+  novelty grounds. **All three topologies** must run on Mamba-3, including 1D
+  unidirectional.
+- **SISO inference only.** MIMO, the SSD/dual form, and training are out of scope.
+- **The Mamba-1 work is untouched and remains the floor.** Mamba-3 is additive:
+  if it lands it leads the submission; if not, nothing is lost but the days.
+- Prior art exists and is in the README table — `silvermpx/mamba-rs` is
+  Mamba-3 SISO in Rust on CPU. **Never claim "first Mamba-3 on CPU."** The
+  defensible claim is *first PyTorch-callable, NEON-optimized* Mamba-3 scan.
+
+---
+
+# The plan lives in one place, not here
+
+An earlier revision of this file reproduced all nine stages verbatim "so it is
+self-contained". That is how the two copies drifted: this one still described
+Stage 1 as pending after it had shipped. **The plan of record is
+[`MAMBA3_IMPLEMENTATION_PLAN.md`](MAMBA3_IMPLEMENTATION_PLAN.md)**, with
+file-level execution in
+[`MAMBA3_KERNEL_WORKPLAN.md`](MAMBA3_KERNEL_WORKPLAN.md). Both carry status
+markers; this file carries only what is *not* in them — the environment recipe
+above, the decisions below, and the traps that have already cost time.
+
+Short version: Stages 0–5 and M0–M8 are **done**. Remaining are the four items
+in the status section at the top.
+
+## Live gaps, in priority order
+
+1. **No dedicated-Arm numbers at all.** Every figure in the repo is x86 or a
+   shared 4-core CI runner. **The Graviton session is still unbooked.** This is
+   the existential gap — a Cloud AI track submission with no Graviton numbers —
+   and the *only* item here that cannot be done from a laptop. Nothing else on
+   this list is unrecoverable; this is.
+2. ~~Stage 0 / Stage 1 blocked~~ — **both done.** The whole Mamba-3 kernel is
+   done and gated; see the status section at the top for what actually remains.
+3. **Phase D quality gate has never passed** — MRI app, now **demoted**. Fully diagnosed in
+   `docs/archive/PHASE_D_DIAGNOSIS.md` — **read it before touching the sampler.**
+   An oracle denoiser reconstructs to 151 dB, so the sampler/FFT/mask/DC are
+   exact. **Do not "fix" it by relaxing the assertion.**
+4. **No video, no Devpost writeup.** Submit Aug 12–13, not at 3:50 PM on the 14th.
+
+## Rules that have bitten us
+
+- **Never loosen a tolerance to make a test pass.** Find the bug.
+- **Benchmark quiesced.** A contaminated run (reps=2 under load) once produced a
+  phantom "0.50× regression" that was written into several docs before a clean
+  re-run gave 1.82×. Fixed thread counts, pinned seeds, medians after warmup.
+- **Watch for vacuous gates.** Phase C's parity check compared an untrained net
+  whose zero-init `out_proj`/`head` made the output independent of the scan — it
+  reported `max_abs 0.0` and looked green. If a parity number is *exactly* zero,
+  suspect the harness. Same class: a gate that *skips* silently is not a gate —
+  the golden determinism check passed CI for weeks by importing torch and
+  bailing when it was absent.
+- **Verify a claim before it enters a document.** Three research digests handed
+  to this project asserted Mamba-3 connections that did not exist. Fetch the
+  repo or the paper; a search summary is not evidence.
+
+## Security constraints that remain in force
+
+- The fastMRI download email contains **signed URLs with `AWSAccessKeyId` and
+  `Signature` — these are credentials.** They must never appear in the repo, a
+  commit, an issue, the Devpost writeup, or demo-video terminal scrollback.
+  `.gitignore` blocks `/data/`, `*.h5`, `*.tar.xz`, `knee_singlecoil_*`,
+  `brain_multicoil_*`.
+- fastMRI Data Sharing Agreement: no redistribution of data **or links**,
+  internal research/education only, no commercial monetisation, cite Knoll et al.
+
+---
+
+## Repo state (Aug 7)
+
+- Mamba-1 and Mamba-3 kernels both shipped; ABI **6**
+- CI green on `linux-arm64`, `macos-arm64`, `linux-x86_64`
+- Root docs reduced to six; superseded plans moved to `docs/archive/`
+- The MRI diffusion app is **demoted but still CI-gated** — it is the only
+  end-to-end exercise of the SS2D kernel, which is why it was not deleted
+
+## Measured results that already exist
+
+**All provisional** — x86 or a shared 4-core CI runner, never dedicated Arm.
+By this repo's own rules none of these is headline-grade.
+
+| Result | Number |
+|---|---|
+| Mamba-3 vs captured official-kernel truth | **4.47 bf16 ULP** (correctness, not speed) |
+| SS2D via the fused bidirectional kernel | **1.77–1.82×** (geomean 1.80×) |
+| 1D unidirectional vs `torch.compile` | 3.71× |
+| 1D bidirectional vs `torch.compile` | 6.39–8.99× |
+| Long context, L=131,072 | ours **4.60 s**; reference needs **12.88 GB**, not attempted |
+| NEON vs scalar (Neoverse-N2) | 4.03–4.08× |
+| Threading, 4 cores | 3.99× (99.7% efficiency) |
+
+Reproduce the long-context row with `python bench/bench_longctx.py`
+(needs `psutil`).

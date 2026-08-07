@@ -1,42 +1,86 @@
 # CLAUDE.md — working guidelines for this repo
 
+> **Resuming in a fresh session, or on a different machine? Read
+> [`HANDOFF.md`](HANDOFF.md) first.** It carries the state that lives in a chat
+> log rather than in the code: what is blocked and why, the full nine-stage
+> Mamba-3 plan, decisions already settled, and the traps that have already cost
+> us time. This file is the standing rules; that one is where we currently are.
+
 ## The goal
 
 Win the **[Arm Create: AI Optimization Challenge](https://arm-ai-optimization-challenge.devpost.com/)** — **Cloud AI track**. Deadline **Aug 14, 2026, 4:00 PM PDT**. Every decision should be read against the judging rubric: Technical (40), WOW (25), Impact (20), Developer Experience (15).
 
-The contribution: the **first Arm-optimized `selective_scan` for the PyTorch/Mamba ecosystem, written in Rust** (NEON + chunked scan + rayon), shipped as a pip-installable drop-in that makes *any* Mamba model faster on Arm CPU — and proven on a real application running on Graviton.
+The contribution: **hand-written Arm/NEON selective-scan kernels in Rust**, exposed as PyTorch
+custom ops — for the deployed **Mamba-1** ecosystem and for **Mamba-3** (ICLR 2026), whose
+official kernels are Triton/TileLang/CuTe and have **no CPU path at all**.
 
-## Where things stand (as of Jul 13, 2026)
+**Two kernels, one library, deliberately separate.** Mamba-3's state is a matrix per head where
+Mamba-1's is a vector per channel, and their tensor sets are disjoint — one entry point serving
+both would be half-ignored on every call. They share threading, the C ABI, packaging, CI and the
+whole correctness harness. **They are not cross-compatible**: Mamba-1 uses a per-state-element
+decay vector, Mamba-3 a scalar decay per head, so no input massaging bridges them.
 
-*(Updated Jul 17, 2026 — the SS2D/diffusion reframe; see `SS2D_REPOSITIONING_PLAN.md`.)*
+## Where things stand (Aug 7, 2026)
 
-The kernel is built and measured. `INTEGRATION_PLAN.md` Phases 0–6 landed (goldens,
-scalar+NEON chunked kernel, rayon, C ABI, torch custom op + `arm_scan.patch()`, wheels,
-arm64/macOS/x86 CI, benchmark harnesses, `BASELINE_REPORT.md` with CI-provisional Arm
-numbers). 1D bidirectional + resumable-state (h0) kernels exist. **The application is
-DECIDED:** SS2D-Mamba **diffusion MRI reconstruction** (EDM + CSI-lab scaffolding;
-MambaRecon is the fallback) — see `MRI_DIFFUSION_IMPLEMENTATION_PLAN.md`. App phases
-A (GO), B, C are gated green in `apps/mri_diffusion/`; D's gate test exists.
+**Sequencing lives in [`MAMBA3_IMPLEMENTATION_PLAN.md`](MAMBA3_IMPLEMENTATION_PLAN.md);
+file-level execution in [`MAMBA3_KERNEL_WORKPLAN.md`](MAMBA3_KERNEL_WORKPLAN.md).** Earlier
+schedules (`ROADMAP.md`, `SUBMISSION_ENDGAME_PLAN.md`, `APPLICATIONS.md`) are in
+`docs/archive/` — read for history, not for what to do next.
 
-Not done — the half that wins or loses the competition:
+**Mamba-1: complete.** Goldens, scalar + NEON chunked kernel, rayon, C ABI, torch op,
+`arm_scan.patch()`, wheels, three-platform CI. 1D · fused bidirectional · SS2D cross-scan, the
+last measured at 1.80× over the four-scan formulation.
 
-1. **Route A/B prior decision + GPU budget** (`MRI_DIFFUSION_IMPLEMENTATION_PLAN.md` §14) —
-   the only open decision that can starve everything downstream.
-2. **SS2D kernel work** (`SS2D_REPOSITIONING_PLAN.md` §5): P0 done (batched directions;
-   measurement says fused 2D **is** justified — overhead 21–25%); P1-3/P1-4 done;
-   next P1-5 cache-block over L, P1-6 tile transpose, then P1-7 fused kernel.
-3. **No dedicated-hardware numbers** (Ampere/Graviton). `make validate` exists and `make test` runs in CI.
-4. **No demo, no <3-min video, no Devpost writeup.** Submit Aug 12–13.
+**Mamba-3: kernel complete, gated (Stages 0–5, M0–M8).** Ground truth captured from the
+official GPU kernels; reference, Rust scalar, cache-blocked and NEON kernels, C ABI at v6, and
+the torch op all reproduce it to **4.47 bf16 ULP** — the floor bf16 output quantisation allows.
+NEON verified on `linux-arm64` and `macos-arm64` in CI.
+
+**The three paths.** 1D unidirectional earns credibility (the only one with published weights
+*and* an authoritative oracle). 2D earns the novelty — no CPU implementation of any 2D Mamba-3
+exists. Bidirectional is a near-free capability with **no novelty claim**: `burn-mamba` ships
+bidirectional Mamba-3, and both candidate applications (SEMamba, VideoMamba) turned out to use
+*outer* bidirectional — separate weights per direction — which our fused kernel cannot help.
+
+Not done, in priority order:
+
+1. **No dedicated-hardware numbers, for anything.** Every timing is x86 or a shared 4-core
+   runner. This is the existential gap for a Cloud-track entry and no kernel work substitutes.
+2. **2D cross-scan not yet wired to the Mamba-3 primitive.** `ss2d_scan`'s machinery is
+   recurrence-agnostic; the `scan_pair` seam still speaks Mamba-1's parameter list.
+3. **The real 187M checkpoint has not been run end to end** (Stage 6).
+4. **Performance is unmeasured and untuned.** `TILE = 32` in the blocked kernel is a placeholder
+   that has never been swept, and there is no phase profile for Mamba-3.
+
+**Demoted, not abandoned:** the SS2D-Mamba diffusion MRI app (`apps/mri_diffusion/`). It stays
+CI-gated because it is the only end-to-end exercise of the SS2D kernel, but it is off the
+critical path and its quality gate has never passed — see
+[`docs/archive/PHASE_D_DIAGNOSIS.md`](docs/archive/PHASE_D_DIAGNOSIS.md).
 
 ## Rules of engagement
 
-**Claims policy (never over-claim).** Real prior art exists for 1D Mamba on CPU/Arm
-(llama.cpp `ssm_scan`, BitMamba-2, mamba.rs, Candle). Never claim "first Mamba on Arm."
-The three defensible to-our-knowledge claims: (1) first SIMD `selective_scan` callable
-from PyTorch as a drop-in; (2) first fast CPU SS2D cross-scan; (3) first diffusion-prior
-MRI reconstruction on CPU. Cite the prior-art table in `README.md`.
+**Claims policy (never over-claim).** Prior art is real and was verified repo by repo, not by
+search summary — the table is in `README.md` and in `MAMBA3_IMPLEMENTATION_PLAN.md` §1.
 
-**Correctness gates speed. Always.** Every optimization layer must reproduce the previous layer's output within tolerance before anyone benchmarks it. The acceptance criterion is fixed: for every `tests/golden/*.npz`, `max_abs(out_kernel - out_f64) < 1e-4`, and a correct f32 kernel lands within a small factor of that case's recorded `f32_max_abs_err` floor — not orders of magnitude above it. Never loosen a tolerance to make a test pass; find the bug.
+May claim, to the best of our knowledge: (1) first Arm/NEON `selective_scan` exposed as a
+**PyTorch custom op**; (2) first fast CPU **SS2D cross-scan**; (3) first **PyTorch-callable,
+NEON-optimised Mamba-3** scan; and, once wired, (4) first **CPU implementation of a 2D
+Mamba-3** plus the causal-vs-non-causal comparison, which is the novel *result*.
+
+**Never claim:** "first Mamba on Arm/CPU" (llama.cpp, BitMamba-2, mamba.rs, Candle);
+"first Mamba-3 on CPU" or "in Rust" (`mamba-rs`, `burn-mamba`, `mamba.c`); **anything about
+bidirectional Mamba-3** (`burn-mamba` ships it); any accuracy result for 2D or bidirectional
+Mamba-3 (no weights exist); or the old "first diffusion-prior MRI reconstruction on CPU" — that
+app is demoted and its quality gate has never passed.
+
+**Verify before repeating.** Three research digests handed to this project asserted Mamba-3
+connections that did not exist (MFil-Mamba, Akasha 2, and a VNCT code release). Check the actual
+repo or paper before a claim enters a document.
+
+**Correctness gates speed. Always.** Every optimization layer must reproduce the previous layer's output within tolerance before anyone benchmarks it. The acceptance criterion is fixed: for every `tests/golden/*.npz`, `max_abs(out_kernel - out_f64) < 1e-4`, and a correct f32 kernel lands within a small factor of that case's recorded `f32_max_abs_err` floor — not orders of magnitude above it. Never loosen a tolerance to make a test pass; find the bug. **The one documented exception is
+Mamba-3**, whose ground truth is a bf16-emitting GPU kernel: 1e-4 is unsatisfiable there, so its
+gate is bf16 ULPs at tensor scale. That is a different instrument, not a relaxed bound — see
+`tests/verify_golden_mamba3.py`.
 
 **Benchmark honestly.** `torch.compile` is the baseline that matters, not just the eager fallback — a "we beat a strawman" critique from an Arm engineer judge is fatal. Report medians after warmup, fixed thread counts, pinned seeds, and state the instance type and torch version alongside every number. If a row is unflattering, publish it anyway. The kernel's moat is that `torch.compile` cannot restructure a sequential recurrence; that argument only lands if the numbers are clearly trustworthy.
 
@@ -56,19 +100,31 @@ kernel/arm-scan-core/    Rust kernel: scalar.rs (reference), neon/ (exp, math, c
 kernel/arm-scan-ffi/     cdylib, C ABI, one entry point. All raw-pointer handling.
 python/arm_scan/         _ffi.py (ctypes loader), op.py (torch custom_op), patch.py (HF monkeypatch),
                          numpy_api.py (torch-free path)
-tests/                   gen_golden.py, verify_golden.py (independent), golden/*.npz,
+tests/                   golden_inputs.py (torch-free draws + case table), gen_golden.py,
+                         verify_golden.py (independent, numpy-only), golden/*.npz,
                          reference/selective_scan_ref.py (vendored ground truth), check_*.py
-bench/                   bench_op.py (kernel vs eager vs torch.compile), bench_e2e.py (mamba-130m generate)
+bench/                   bench_op.py, bench_e2e.py, bench_ss2d.py, bench_mamba3.py
+                         (all vs eager AND torch.compile; correctness gates speed)
 .github/workflows/ci.yml arm64 + macOS + x86: fmt, clippy, tests, golden-through-C-ABI, wheels, bench
 ```
 
-Docs, and what each is for — **keep them non-duplicative**:
-- `README.md` — the pitch and the deliverables (what a judge reads first).
-- `PROJECT_CONCEPT.md` — the decision log: what we chose, what we rejected, why.
-- `ROADMAP.md` — schedule, compute strategy, risk register.
-- `INTEGRATION_PLAN.md` — the engineering plan, phase by phase.
+Docs live in three places — **root is judge-facing and current only**:
 
-When a decision changes, update the decision log — don't leave two docs disagreeing. (They currently disagree about the application; that's a bug, not a feature.)
+- **root** — `README.md` (pitch), `PROJECT_CONCEPT.md` (decision log),
+  `MAMBA3_IMPLEMENTATION_PLAN.md` (the plan), `MAMBA3_KERNEL_WORKPLAN.md` (execution),
+  `HANDOFF.md` (session state).
+- **`docs/archive/`** — the working record: superseded plans, build logs, measurement history,
+  diagnoses. Kept because how a decision was reached is itself evidence. **Not** judge-facing,
+  and **not** a source of instructions — a plan in here has been superseded by definition.
+- **`docs/roadmap/`** — programs deferred past the current push.
+
+**One sequencing table, and only one.** It is in `MAMBA3_IMPLEMENTATION_PLAN.md`. The repo
+previously carried schedules in six documents at once and they disagreed; when a plan changes,
+move the old one to `docs/archive/` rather than leaving two versions live.
+
+The kernel also grew a second family. `kernel/arm-scan-core/src/mamba3/` (types, dispatch,
+naive scalar oracle, cache-blocked) plus `neon/mamba3.rs` are Mamba-3; everything else is
+Mamba-1 and is **not** modified by that work.
 
 ## Commands
 

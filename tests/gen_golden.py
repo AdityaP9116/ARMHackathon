@@ -10,9 +10,12 @@ For each case this script:
          establishes the tolerance floor any correct f32 kernel should meet,
   3. saves everything to tests/golden/<name>.npz plus a manifest.json.
 
-Determinism: every case uses its own torch.Generator seeded from the case
-name, so cases are independent and the whole set is reproducible bit-for-bit
-on the same torch version.
+Determinism: the inputs come from `golden_inputs.draw_inputs`, a torch-free
+draw seeded per case from the case name, so cases are independent and the
+whole set is reproducible bit-for-bit on any torch and any numpy — see that
+module for why the draws no longer go through `torch.Generator`.
+`verify_golden.py` re-runs the same draws and compares against the committed
+inputs, and being torch-free it does so in CI's torch-free `test` job.
 
 Usage:
     python tests/gen_golden.py            # core (committed) cases, small
@@ -21,9 +24,7 @@ Usage:
 """
 
 import argparse
-import hashlib
 import json
-import math
 from pathlib import Path
 
 import numpy as np
@@ -31,58 +32,19 @@ import torch
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent))
+from golden_inputs import (CORE_CASES, INPUT_DRAW_SPEC, LARGE_CASES,
+                           case_seed, draw_inputs)
 from reference import selective_scan_ref
 
 GOLDEN_DIR = Path(__file__).parent / "golden"
 
 
-def case_seed(name: str) -> int:
-    return int.from_bytes(hashlib.sha256(name.encode()).digest()[:4], "little")
-
-
-def draw_inputs(name, B, D, L, N, *, groups=None, with_z=True, with_D=True,
-                with_bias=True, softplus=True, delta_style="normal"):
-    g = torch.Generator().manual_seed(case_seed(name))
-
-    def randn(*shape):
-        return torch.randn(*shape, generator=g, dtype=torch.float32)
-
-    def uniform(lo, hi, *shape):
-        return torch.empty(*shape, dtype=torch.float32).uniform_(lo, hi, generator=g)
-
-    u = randn(B, D, L)
-    # A: negative, magnitudes spanning the trained-Mamba range (init is
-    # -[1..N] per channel; training spreads it out).
-    A = -torch.exp(uniform(math.log(0.5), math.log(16.0), D, N))
-
-    if softplus:
-        # raw (pre-softplus) delta; bias chosen so softplus(delta+bias)
-        # lands in the realistic ~[1e-3, 0.1] region.
-        delta = randn(B, D, L) * 0.5
-        delta_bias = uniform(-6.0, -3.0, D) if with_bias else None
-        if not with_bias:
-            delta = delta - 4.5
-        if delta_style == "extreme":
-            # stress exp underflow: softplus(delta) up to ~10 -> exp(delta*A)
-            # down to exp(-160) == 0.0 in f32
-            delta = uniform(-8.0, 10.0, B, D, L)
-    else:
-        # delta used directly as the (positive) timestep
-        delta = uniform(1e-3, 0.1, B, D, L)
-        delta_bias = None
-
-    bc_batch_shape = (B, groups, N, L) if groups else (B, N, L)
-    Bmat = randn(*bc_batch_shape)
-    Cmat = randn(*bc_batch_shape)
-    D_skip = randn(D) if with_D else None
-    z = randn(B, D, L) if with_z else None
-    return u, delta, A, Bmat, Cmat, D_skip, z, delta_bias
-
-
 def generate_case(name, B, D, L, N, **kw):
     softplus = kw.get("softplus", True)
-    u, delta, A, Bmat, Cmat, D_skip, z, delta_bias = draw_inputs(
-        name, B, D, L, N, **kw)
+    drawn = draw_inputs(name, B, D, L, N, **kw)
+    # the draws are numpy (torch-free by design); the reference is torch
+    u, delta, A, Bmat, Cmat, D_skip, z, delta_bias = [
+        None if a is None else torch.from_numpy(a) for a in drawn]
 
     # float64 ground truth: upcast the *same f32 values* so the comparison
     # with any f32 kernel is apples-to-apples.
@@ -116,7 +78,10 @@ def generate_case(name, B, D, L, N, **kw):
         "groups": kw.get("groups"), "delta_softplus": softplus,
         "has_z": z is not None, "has_D": D_skip is not None,
         "has_delta_bias": delta_bias is not None,
-        "seed": case_seed(name), "torch_version": torch.__version__,
+        # `seed` and `input_draw` pin the INPUTS (torch-free, reproducible
+        # anywhere); `torch_version` records only what computed the outputs.
+        "seed": case_seed(name), "input_draw": INPUT_DRAW_SPEC,
+        "torch_version": torch.__version__, "numpy_version": np.__version__,
         # observed f32-vs-f64 gap, the floor a correct f32 kernel should hit
         "f32_max_abs_err": float((out_f32.double() - out_f64).abs().max()),
     }
@@ -126,33 +91,6 @@ def generate_case(name, B, D, L, N, **kw):
     GOLDEN_DIR.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(GOLDEN_DIR / f"{name}.npz", **arrays)
     return meta
-
-
-CORE_CASES = [
-    # (name, B, D, L, N, kwargs) — full Mamba config (z, D, bias, softplus)
-    # unless overridden
-    ("tiny",                1, 4,    8,    16, {}),
-    ("small",               2, 8,    32,   16, {}),
-    ("medium",              2, 64,   128,  16, {}),
-    ("channels",            1, 256,  64,   16, {}),
-    ("long_seq",            1, 16,   1024, 16, {}),
-    ("edge_L1",             2, 8,    1,    16, {}),
-    ("edge_D1",             1, 1,    32,   16, {}),
-    ("state8",              2, 8,    32,   8,  {}),
-    ("state13_neon_tail",   2, 8,    32,   13, {}),
-    ("no_z",                2, 8,    32,   16, {"with_z": False}),
-    ("no_D",                2, 8,    32,   16, {"with_D": False}),
-    ("no_bias",             2, 8,    32,   16, {"with_bias": False}),
-    ("no_softplus",         2, 8,    32,   16, {"softplus": False}),
-    ("extreme_delta",       2, 8,    64,   16, {"delta_style": "extreme"}),
-    ("grouped_BC",          2, 8,    32,   16, {"groups": 2}),
-]
-
-LARGE_CASES = [
-    # benchmark-shaped; regenerate on demand, never committed
-    ("large_mamba130m", 1, 1536, 512,  16, {}),
-    ("large_batch",     4, 768,  1024, 16, {}),
-]
 
 
 def main():

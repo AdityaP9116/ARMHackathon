@@ -19,20 +19,39 @@ import torch
 
 APP = Path(__file__).resolve().parents[1]
 ROOT = APP.parent.parent
-REF = Path(r"C:\Users\Adity\Claude\Projects\reference\ambient-diffusion-mri")
 sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "python"))
-sys.path.insert(0, str(REF))
 
-import dnnlib  # noqa: E402
-import training.networks as tn  # noqa: E402
-from apps.mri_diffusion.backbone.mamba_ss2d import MambaSS2DNet  # noqa: E402
+from apps.mri_diffusion.tests import _edm  # noqa: E402
 from arm_scan.ss2d import use_arm_scan  # noqa: E402
 from arm_scan.op import kernel_calls  # noqa: E402
+
+EDMPrecond, EDMLoss, construct, EDM_SOURCE = _edm.load()
 
 torch.manual_seed(0)
 RES, CH = 32, 2
 TOL = 1e-4  # scale-relative, same bound family as the kernel gates
+
+
+def activate_output_layers(net):
+    """Break the identity-at-init residual before comparing anything.
+
+    `SS2DBlock.out_proj` and `MambaSS2DNet.head` are deliberately zero-init, so
+    a FRESHLY CONSTRUCTED net returns `c_skip * x` no matter what the scan
+    computed — every scan output is multiplied by zero on its way out. A parity
+    check on an untrained net is therefore vacuously green (it reported
+    max_abs=0.000e+00 for exactly this reason). Give those layers real weights
+    so the scan actually reaches the output and the comparison has teeth.
+    """
+    touched = 0
+    with torch.no_grad():
+        for m in net.modules():
+            if isinstance(m, torch.nn.Conv2d) and not m.weight.any():
+                m.weight.normal_(0.0, 0.1)
+                if m.bias is not None:
+                    m.bias.normal_(0.0, 0.05)
+                touched += 1
+    assert touched, "expected zero-init output layers to activate"
+    return touched
 
 
 def heun_sample(net, latents, num_steps=4):
@@ -55,12 +74,15 @@ def heun_sample(net, latents, num_steps=4):
 
 
 def main():
-    tn.MambaSS2DNet = MambaSS2DNet
-    net = dnnlib.util.construct_class_by_name(
+    print(f"0. EDM source: {EDM_SOURCE}")
+    net = construct(
         class_name="training.networks.EDMPrecond", model_type="MambaSS2DNet",
         img_resolution=RES, img_channels=CH, label_dim=0,
         model_channels=32, num_blocks_per_level=1, d_state=16,
         use_fp16=False, sigma_data=0.5).eval()
+    n_act = activate_output_layers(net)
+    print(f"   activated {n_act} zero-init output layers so the scan reaches "
+          f"the network output")
 
     x = torch.randn(2, CH, RES, RES)
     sig = torch.tensor([1.3, 0.4])
@@ -92,10 +114,16 @@ def main():
     assert sdiff < 10 * TOL * max(1.0, sscale), "sampling parity FAILED"
     assert torch.isfinite(s_kern).all()
 
+    import platform
+
     import numpy as np
+    # Report the host rather than asserting one. This line used to hardcode
+    # "x86 scalar backend", which printed verbatim on an aarch64 NEON CI
+    # runner — a wrong label in output that could end up quoted as a result.
     print(f"3. per-NFE: torch-ref {np.median(t_ref)*1e3:.0f} ms vs "
-          f"arm_scan {np.median(t_kern)*1e3:.0f} ms (x86 scalar backend; "
-          f"informational)")
+          f"arm_scan {np.median(t_kern)*1e3:.0f} ms "
+          f"({platform.machine()}, {torch.get_num_threads()} torch threads; "
+          f"informational — a parity run, not a benchmark)")
     print("\nPHASE C GATE: PASS — full sampling on CPU through arm_scan, "
           "parity verified")
 

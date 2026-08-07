@@ -15,8 +15,13 @@ Locked recipe (MRI_DIFFUSION_IMPLEMENTATION_PLAN.md §3.2):
     per block adaLN-style (scale/shift after GroupNorm);
   - img_channels=2 (complex MRI as 2 real channels); real-valued throughout.
 
-The scan itself goes through `scan_fn` (default: the pure-torch reference in
-torch_scan.py). Phase C swaps in arm_scan behind the same signature.
+The scan itself goes through `scan_pair_fn` (default: the pure-torch reference
+in torch_scan.py), driven by `arm_scan.ss2d.ss2d_scan`. Phase C swaps in
+arm_scan behind the same signature. The four cross-scan directions run as two
+traversal-order PAIRS, so the kernel evaluates the direction-independent
+Pass A (discretize + exp, ~85% of its time) twice per block instead of four
+times; `_cross_scan_legacy` retains the older four-forward-scans formulation
+as the correctness oracle.
 
 EDM persistence: decorated when torch_utils.persistence is importable (i.e.
 running inside the EDM/CSI repo context, which training and pickling always
@@ -28,7 +33,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .torch_scan import selective_scan_torch
+from arm_scan.ss2d import ss2d_scan  # repo `python/` is on sys.path via
+from .torch_scan import (selective_scan_pair_torch,  # apps.mri_diffusion
+                         selective_scan_torch)
 
 try:  # inside EDM/CSI repo context
     from torch_utils import persistence
@@ -60,7 +67,15 @@ class SigmaEmbedding(nn.Module):
 
 class SS2DBlock(nn.Module):
     """One SS2D-Mamba residual block: GroupNorm + adaLN sigma conditioning,
-    depthwise local conv, 4-direction cross-scan, SiLU gate, projection."""
+    depthwise local conv, 4-direction cross-scan, SiLU gate, projection.
+
+    The cross-scan runs as TWO traversal-order pairs (rows fwd/bwd, cols
+    fwd/bwd) through `arm_scan.ss2d.ss2d_scan`, so the kernel computes the
+    direction-independent Pass A once per pair instead of once per direction.
+    `_cross_scan_legacy` keeps the older four-separate-directions formulation
+    as the parity oracle — it is what `forward` is gated against, and the two
+    are algebraically identical (see `tests/test_ss2d_pair_parity.py`).
+    """
 
     def __init__(self, dim, emb_dim, d_state=16, dt_rank=None, expand=1.5):
         super().__init__()
@@ -81,11 +96,53 @@ class SS2DBlock(nn.Module):
         self.out_proj = nn.Conv2d(inner, dim, 1)
         nn.init.zeros_(self.out_proj.weight)  # identity-at-init residual
         nn.init.zeros_(self.out_proj.bias)
-        self.scan_fn = selective_scan_torch  # Phase-C swap point
+        # Phase-C swap points. `scan_pair_fn` is what forward() uses;
+        # `scan_fn` is retained for the legacy oracle. use_arm_scan() swaps
+        # both together so the two paths always share a backend.
+        self.scan_pair_fn = selective_scan_pair_torch
+        self.scan_fn = selective_scan_torch
+        self.legacy_cross_scan = False  # True -> run the oracle formulation
+
+    def _pre(self, x, emb):
+        """Norm + sigma conditioning + input projection + local mixing."""
+        scale, shift = self.affine(emb).chunk(2, dim=1)
+        y = self.norm(x) * (1 + scale[:, :, None, None]) \
+            + shift[:, :, None, None]
+        s, z = self.in_proj(y).chunk(2, dim=1)
+        return F.silu(self.local(s)), z
+
+    def _post(self, x, merged, z):
+        """SiLU gate + output projection + scaled residual."""
+        return x + np.sqrt(0.5) * self.out_proj(merged * F.silu(z))
+
+    def _project_grid(self, s):
+        """`s: (b, inner, h, w)` -> `(delta, B, C, A)`, all grid-shaped.
+
+        `x_proj`/`dt_proj` are token-wise, so projecting the grid once and
+        reordering afterwards is identical to reordering first and projecting
+        per direction — and costs one pass instead of four.
+        """
+        b, _, h, w = s.shape
+        proj = self.x_proj(s.flatten(2).transpose(1, 2))  # (b, hw, rank+2n)
+        dt, Bm, Cm = torch.split(
+            proj, [self.dt_rank, self.d_state, self.d_state], dim=-1)
+        delta = self.dt_proj(dt).transpose(1, 2).reshape(b, self.inner, h, w)
+        Bg = Bm.transpose(1, 2).reshape(b, self.d_state, h, w)
+        Cg = Cm.transpose(1, 2).reshape(b, self.d_state, h, w)
+        return delta, Bg, Cg, -torch.exp(self.A_log)
+
+    def _cross_scan(self, s):
+        """4-direction cross-scan as two traversal-order PAIRS.
+
+        Each pair is one kernel call that shares Pass A (discretize + exp,
+        ~85% of kernel time) between its two directions.
+        """
+        delta, Bg, Cg, A = self._project_grid(s)
+        return ss2d_scan(s, delta, A, Bg, Cg, D=self.D, delta_softplus=True,
+                         merge="sum", scan_pair=self.scan_pair_fn)
 
     def _scan_dir(self, seq):
-        """seq: (b, inner, L) -> scanned (b, inner, L)."""
-        b, c, length = seq.shape
+        """seq: (b, inner, L) -> scanned (b, inner, L). Legacy oracle path."""
         proj = self.x_proj(seq.transpose(1, 2))  # (b, L, rank+2n)
         dt, Bm, Cm = torch.split(
             proj, [self.dt_rank, self.d_state, self.d_state], dim=-1)
@@ -95,18 +152,13 @@ class SS2DBlock(nn.Module):
                             Cm.transpose(1, 2), D=self.D,
                             delta_softplus=True)
 
-    def forward(self, x, emb):
-        b, d, h, w = x.shape
-        scale, shift = self.affine(emb).chunk(2, dim=1)
-        y = self.norm(x) * (1 + scale[:, :, None, None]) \
-            + shift[:, :, None, None]
-        xz = self.in_proj(y)
-        s, z = xz.chunk(2, dim=1)
-        s = F.silu(self.local(s))
-
-        # P0-1 (SS2D_REPOSITIONING_PLAN §5): all 4 directions in ONE scan
-        # call — 4x the rayon rows, 1/4 the FFI crossings. x_proj/dt_proj
-        # are shared across directions, so batching them is exact.
+    def _cross_scan_legacy(self, s):
+        """The P0-1 formulation: four directions stacked into ONE forward
+        call. Kept as the correctness oracle for `_cross_scan` — NOT the
+        shipping path, because it recomputes Pass A four times and flips a
+        full-size tensor four times per block.
+        """
+        b, _, h, w = s.shape
         rows = s.flatten(2)                                   # row-major
         cols = s.transpose(2, 3).flatten(2)                   # col-major
         seqs = torch.cat(
@@ -114,11 +166,14 @@ class SS2DBlock(nn.Module):
         o1, o2, o3, o4 = self._scan_dir(seqs).chunk(4, dim=0)
         out = o1 + o2.flip(-1)
         oc = o3 + o4.flip(-1)
-        merged = (out.view(b, self.inner, h, w)
-                  + oc.view(b, self.inner, w, h).transpose(2, 3))
+        return (out.view(b, self.inner, h, w)
+                + oc.view(b, self.inner, w, h).transpose(2, 3))
 
-        gated = merged * F.silu(z)
-        return x + np.sqrt(0.5) * self.out_proj(gated)
+    def forward(self, x, emb):
+        s, z = self._pre(x, emb)
+        merged = (self._cross_scan_legacy(s) if self.legacy_cross_scan
+                  else self._cross_scan(s))
+        return self._post(x, merged, z)
 
 
 @_persist
