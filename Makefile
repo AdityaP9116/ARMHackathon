@@ -30,8 +30,21 @@ build:
 # typecheck, not a build (no linker involved).
 #
 #   rustup target add aarch64-unknown-linux-gnu   # one-off
+#
+# Skips (loudly) when the target is not installed, so `make test` still works on
+# a fresh clone and on CI runners that do not have it. Skipping is safe here in
+# a way that "CI silently stopped running" was not: the arm64 and macOS-arm64
+# jobs compile this same code NATIVELY, so the coverage exists either way. This
+# target only moves the discovery earlier for someone working on x86.
 check-cross:
-	cd kernel && cargo check --target aarch64-unknown-linux-gnu --all-targets
+	@if rustup target list --installed 2>/dev/null | grep -q '^aarch64-unknown-linux-gnu$$'; then \
+	  echo "check-cross: typechecking the aarch64-only paths"; \
+	  cd kernel && cargo check --target aarch64-unknown-linux-gnu --all-targets; \
+	else \
+	  echo "check-cross: SKIPPED - aarch64-unknown-linux-gnu not installed."; \
+	  echo "             Install it with: rustup target add aarch64-unknown-linux-gnu"; \
+	  echo "             (the arm64 CI jobs compile these paths natively regardless)"; \
+	fi
 
 # Kernel correctness: Rust gates, then the goldens replayed through the real
 # C ABI, then both golden sets re-derived by an independent implementation.
