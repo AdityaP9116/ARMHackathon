@@ -194,8 +194,8 @@ recurrence entry point serving the intrinsic-2D generation of models (Mamba2D, V
 2DMamba-style semantics — wavefront parallelism over anti-diagonals is new kernel surface no
 CPU has); (2) a VSSD/NC-SSD comparison study — causal-scan CPU kernel vs. non-causal matmul
 formulations at matched quality; (3) sub-byte paths (BitMamba-2 / FairyFuse-style ternary
-`vbslq` selection) for edge Arm targets; (4) Mamba-3 support as its block structure stabilizes
-in the ecosystem. Each reuses this repo's correctness harness (goldens, parity gates,
+`vbslq` selection) for edge Arm targets; (4) Mamba-3 support — now the headline of
+`MAMBA3_KERNEL_PLAN.md` (its official kernels are GPU-DSL-only, so the CPU slot is open). Each reuses this repo's correctness harness (goldens, parity gates,
 bit-identity threading) unchanged — which is the quiet argument that the harness, not any one
 kernel, is the durable contribution.
 
