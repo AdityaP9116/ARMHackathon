@@ -12,21 +12,59 @@ chat log, not in the code. Start here, then read
 ## The one-line status
 
 The Mamba-1 submission is **complete, measured, and CI-green** — that is the
-floor and it is safe. The live work is an **additive** Mamba-3 kernel, which is
-blocked at **Stage 0** (capture ground truth from the official GPU kernels)
-because that step could not run on the Windows host.
+floor and it is safe. The live work is an **additive** Mamba-3 kernel.
+**Stage 0 is DONE (Aug 6)**; the GPU is no longer needed. Stage 1 (a
+paper-faithful CPU reference, checked against those goldens) is the live task
+and needs nothing but a laptop.
 
-## The immediate task: Stage 0, on Linux
+## Stage 0 — DONE, Aug 6, 2026
+
+`tests/golden/mamba3/` holds **10 golden cases across 7 output shapes**
+(L ∈ {1, 63, 64, 128, 255, 256, 2048}, batch 1–2, d_state 64/128), captured
+from `mamba3_siso_combined` driven by the real `state-spaces/mamba3-siso-187m`
+checkpoint plus an edge-shape sweep, alongside `model_forward.npz` and
+`model_shape.json`. Verified to replay under a Python with **no torch, no
+mamba_ssm, no CUDA** — so the GPU really is never needed again.
+
+### Reproducing the environment (read before touching a GPU box)
 
 ```bash
-bash tools/setup_linux.sh                                   # provision
-python tools/capture_mamba3_goldens.py --out tests/golden/mamba3   # capture
+python3 -m venv ~/venv-arm && source ~/venv-arm/bin/activate
+pip install --upgrade pip wheel setuptools ninja packaging numpy
+pip install torch --index-url https://download.pytorch.org/whl/cu130   # triton comes with it
+MAMBA_SKIP_CUDA_BUILD=TRUE pip install --no-build-isolation \
+    "git+https://github.com/state-spaces/mamba.git@main"
+python tools/capture_mamba3_goldens.py --out tests/golden/mamba3
 ```
 
-**Exit gate:** ≥6 `.npz` golden cases with inputs *and* outputs, plus
-`model_forward.npz` and `model_shape.json`. Commit them. **The GPU is then
-never needed again** — the Rust kernel is developed and validated on CPU
-against those files.
+Three things that are not obvious and cost real time to find:
+
+1. **Install from git, NOT PyPI.** The released wheel `2.3.2.post1`
+   (2026-05-09) fails twice over: `create_block` only accepts
+   `["Mamba1","Mamba2"]` so it **rejects every published Mamba-3 checkpoint**,
+   and it predates upstream **PR #997** (merged 2026-07-22) which fixes
+   **silent forward-pass corruption** in `mamba3_siso_fwd_kernel` on Blackwell
+   (SM100/103/120 — `num_stages` 2 or 3 returns wrong output with no error).
+   Ground truth captured through that bug would have validated every downstream
+   Rust kernel against garbage *and looked green doing it*. The capture script
+   now refuses to run without the fix; it inspects the source, because patched
+   and unpatched installs both report version `2.3.2.post1`.
+2. **`MAMBA_SKIP_CUDA_BUILD=TRUE` is required**, and then
+   `import mamba_ssm` fails on `No module named 'selective_scan_cuda'` —
+   that is *Mamba-1's* CUDA extension, hard-imported by `__init__.py` and
+   never used by Mamba-3. Do not install a CUDA toolkit to satisfy it: the
+   system nvcc must be ≥12.8 to emit `sm_120` at all. Write a stub instead,
+   one that **raises on every attribute access** so it can never silently
+   corrupt a capture. (Ours lives in the venv, not the repo:
+   `~/venv-arm/lib/python3.14/site-packages/selective_scan_cuda.py`.)
+3. **The kernel is mixed precision with no flag to change it.**
+   `Q/K/V/Trap/Angles/Z` are cast to bf16 on entry; `ADT/DT` stay fp32 "for
+   stability"; `Q_bias/K_bias/D` stay fp32 as model parameters; the output is
+   bf16. The goldens therefore record inputs **post-cast** — the values the
+   kernel actually consumed, not the ones we handed it. Recording pre-cast
+   fp32 would make a CPU reference diverge by an amount that *compounds over
+   the sequence* and reads as a kernel bug. **Our Rust kernel must mirror this
+   precision split.**
 
 ### Why Stage 0 could not run on Windows
 
@@ -122,18 +160,29 @@ which is pointwise in time and therefore fully vectorisable.
 primitive and bidirectional + SS2D compose on top for free. "All three
 topologies" is **not** 3× the work.
 
-## Stage 0 — Ground truth *(GPU, blocking, ~1 hour)*
+## Stage 0 — Ground truth ✅ DONE (Aug 6, 2026)
 
-Covered above. `tools/capture_mamba3_goldens.py` wraps the official kernel entry
-point — discovered by **searching** `mamba_ssm`, not hardcoded, since the import
-path has moved between releases — records inputs → outputs as `.npz`, saves
-full-model logits for a fixed prompt, and dumps config + parameter shapes.
+`tools/capture_mamba3_goldens.py` wraps the official kernel entry point —
+discovered by **searching** `mamba_ssm`, not hardcoded, since the import path
+has moved between releases — records inputs → outputs as `.npz`, saves a slim
+full-model forward artifact, and dumps config + parameter shapes.
 
-**Risk:** the kernels are CuTe/TileLang and upstream says *"only tested on
-H100."* A 5090 is Blackwell. The SISO path is Triton, which JITs at runtime and
-is the most likely to work. **Fallback:** Colab A100/L4.
+**Delivered:** 10 cases / 7 shapes, `model_forward.npz`, `model_shape.json`;
+19 MB total; replay verified with numpy alone. Exit gate is now checked by the
+script itself, which exits non-zero if unmet — the first run exited `0` having
+met none of it, which is exactly the kind of false green this repo keeps
+finding.
 
-**Exit gate:** ≥6 golden cases with inputs and outputs, plus `model_forward.npz`.
+**The H100-only risk was real but landed well:** Triton JIT compiled and ran
+correctly on sm_120, and TileLang/CuTe imported too. The actual Blackwell
+hazard was not a build failure but PR #997's *silent numerical corruption* —
+see the install notes above. Compiling and running is not computing correctly.
+
+**`model_forward.npz` is deliberately not the raw logits.** Full 128k-vocab
+logits are 58 MB compressed, past GitHub's warning threshold and ~20× every
+other golden in this repo combined. It stores argmax + a seeded 512-id vocab
+subset + logsumexp (0.49 MB) — and the logsumexp still depends on all 128k
+logits, so an error confined to ids outside the subset is still caught.
 
 ## Stage 1 — Paper-faithful reference *(CPU, ~½ day)*
 
@@ -150,7 +199,18 @@ Three outcomes:
   inputs *and* outputs, so the coefficients are recoverable by fitting on a
   short sequence. **Budget +1 day if this happens.**
 
-**Exit gate:** reference reproduces every golden to < 1e-4 at f64.
+**Exit gate — CORRECTED Aug 6.** The original wording, "reference reproduces
+every golden to < 1e-4 at f64", **cannot be satisfied and must not be used**:
+the kernel emits **bf16**, whose relative epsilon is ~0.4% — four orders of
+magnitude above 1e-4. Chasing that gate would mean hunting a bug that does not
+exist. The honest gate, which is *tighter* than a loose absolute bound:
+
+> Round the f64 reference output to bf16 and require agreement with the golden
+> to ~1 ULP of bf16, on every case.
+
+The goldens make this achievable because inputs are recorded **post-cast**, so
+the reference is fed exactly the values the kernel consumed. `manifest.json`
+carries the true per-tensor dtype for every case — never guess it.
 
 ## Stage 2 — Scalar Rust *(~1 day)*
 
@@ -280,7 +340,10 @@ succeeds on the first try and Stage 1 finds a matching recurrence.
 1. **No dedicated-Arm numbers at all.** Every figure in the repo is x86 or a
    shared 4-core CI runner. **The Graviton session is still unbooked.** This is
    the existential gap — a Cloud AI track submission with no Graviton numbers.
-2. **Stage 0 blocked** (above).
+   It is now the *only* item on this list that cannot be done from a laptop,
+   and the schedule below puts it on day 7. That is the wrong order: nothing
+   else here is unrecoverable, and this is.
+2. ~~Stage 0 blocked~~ — **done Aug 6.** Stage 1 is live and needs no GPU.
 3. **Phase D quality gate has never passed.** Fully diagnosed in
    `docs/archive/PHASE_D_DIAGNOSIS.md` — **read it before touching the sampler.**
    An oracle denoiser reconstructs to 151 dB, so the sampler/FFT/mask/DC are

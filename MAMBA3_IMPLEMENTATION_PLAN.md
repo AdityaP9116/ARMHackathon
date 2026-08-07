@@ -37,7 +37,21 @@ and training. SISO inference only.
 
 ---
 
-## Stage 0 — Ground truth *(GPU, blocking, ~1 hour)*
+## Stage 0 — Ground truth ✅ **DONE (Aug 6, 2026)**
+
+> **Delivered:** 10 cases across 7 output shapes (L ∈ {1, 63, 64, 128, 255,
+> 256, 2048}, batch 1–2, d_state 64/128) in `tests/golden/mamba3/`, plus
+> `model_forward.npz` and `model_shape.json`; 19 MB; replay verified with
+> numpy alone on a machine with no torch/mamba_ssm/CUDA.
+>
+> **Two findings that change later stages.** (a) `mamba-ssm` must be installed
+> **from git main, not PyPI** — the release both rejects the published Mamba-3
+> checkpoints and predates PR #997, which fixes *silent* forward-pass
+> corruption on Blackwell. (b) The kernel is **mixed precision with no flag**:
+> `Q/K/V/Trap/Angles/Z` → bf16, `ADT/DT` fp32 "for stability",
+> `Q_bias/K_bias/D` fp32 as parameters, output bf16. Stages 2–3 must mirror
+> that split, and Stage 1's tolerance follows from it (below). Full detail in
+> [`HANDOFF.md`](HANDOFF.md).
 
 Nothing downstream can start without a trustworthy oracle, and **we do not have
 one**. `mamba_ssm/modules/mamba3.py` has no CPU path, and the community
@@ -74,7 +88,17 @@ Three outcomes:
   inputs *and* outputs, so the coefficients are recoverable by fitting on a
   short sequence. Budget +1 day if this happens.
 
-**Exit gate:** reference reproduces every golden to < 1e-4, at f64.
+**Exit gate — CORRECTED Aug 6, 2026.** The original "< 1e-4 at f64" is
+**unsatisfiable**: the kernel emits bf16 (~0.4% relative epsilon), four orders
+of magnitude above that bound. Holding to it would mean hunting a bug that does
+not exist. The replacement is *tighter* than a loose absolute tolerance:
+
+> Round the f64 reference output to bf16; require agreement with the golden to
+> ~1 ULP of bf16, on every case.
+
+Achievable because Stage 0 records inputs **post-cast**, so the reference is fed
+exactly what the kernel consumed. Per-tensor true dtypes are in
+`tests/golden/mamba3/manifest.json`.
 
 ---
 
