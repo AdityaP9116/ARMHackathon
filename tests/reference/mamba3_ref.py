@@ -61,38 +61,48 @@ the honest comparison is `bf16(reference)` against the golden to ~1 ULP — NOT
 `< 1e-4`, which bf16's ~0.4% relative epsilon can never satisfy. See
 `verify_golden_mamba3.py`.
 
-STATUS — Stage 1 in progress, structure settled, numerics not yet
-----------------------------------------------------------------
-Measured against the Stage-0 goldens (`verify_golden_mamba3.py`):
+STATUS — structure CONFIRMED against the kernel's own buffers; one open gap
+--------------------------------------------------------------------------
+Verified by running the kernel with `store_states_adt_outv=True`, which makes
+it dump its internal buffers, and diffing term by term (far more decisive than
+comparing final outputs — see the `_rope` note for how output-only comparison
+actively misled us):
 
-* **golden _04 (L=1) passes at 1.00 bf16 ULP, 97.1% bit-exact.** L=1 exercises
-  only the diagonal term, so bias, RoPE-invariance, `gamma = dt*sigmoid(Trap)`,
-  the D-skip and the silu(Z) gate are all confirmed correct.
-* Multi-step cases sit at a few percent, and the per-timestep error **grows
-  monotonically with t** (3.2e-4 at t=0 -> ~3e-2 by t=48 on golden _06). That
-  is the signature of a small per-step discrepancy accumulating, NOT a
-  structural error — a wrong term would already be badly wrong at t=1.
+* `Gamma_store`  vs `dt*sigmoid(Trap)`         -> **3.4e-8  EXACT**
+* `Scale_store`  vs `gamma + shifted`          -> **3.4e-8  EXACT**
+* `Q_store`      vs `rope(Q + Q_bias, Angles)` -> 3.5e-3 (bf16 level)
+* `K_store`      vs `rope(K + K_bias)*scale`   -> 2.3e-3 (bf16 level)
+* `QK_store`     vs `(q.k)*gamma`              -> 2.8e-4
+* `DA_CS`        -> differs by exactly 1/log2(e); the kernel stores decay in
+  log2 units and uses exp2. Mathematically identical, not an error.
 
-The likely cause, and it is not fixable by this file: **the kernel is bf16
-internally**. It stores the rotated Q/K back into bf16 buffers, folds `scale`
-into K in bf16, and forms the Gram matrix in bf16. An f64 reference cannot
-reproduce a bf16-rounded intermediate chain, so some residual is structural to
-the comparison rather than to the maths.
+**`Scale_store` matching exactly is the decisive result of Stage 1.** It is
+direct evidence from the kernel's own memory that the trapezoid is
+`scale = dt*lam + dt_next*(1 - lam_next)`, which is only consistent with the
+PAPER's recurrence (decay carried on the previous term). The community
+formulation is ruled out — not by argument, by measurement.
 
-**Consequence for the plan, and it is a real one.** Mamba-1's oracle is an f64
-reference, which is why its goldens gate at 1e-4. Mamba-3's only authoritative
-source is a bf16-internal GPU kernel, so it is a *coarser* oracle and cannot
-serve the same role. The workable split:
+**The open gap.** This reference reproduces the kernel's *debug* path
+(`store_states_adt_outv=True`) to ~2.5e-3 — bf16 level, i.e. correct — but the
+*production* path disagrees with that debug path by 1.6e-1 on the same inputs,
+and the goldens were captured through production. Established facts:
 
-  - use the captured goldens to settle **structure** (which recurrence) — the
-    candidate forms differ by ~100%, so a few-percent agreement discriminates
-    decisively;
-  - then treat THIS f64 reference as the tight oracle the Rust kernel is gated
-    against, exactly as `selective_scan_ref.py` is for Mamba-1.
+  - `mamba3_siso_combined(inputs, chunk_size=64)` reproduces golden _06
+    **exactly (rel = 0.0)**, so the Stage-0 artifacts are sound and perfectly
+    reproducible;
+  - the debug path returns materially different numbers for those same inputs.
 
-Remaining known-unknown: the exact angle accumulation (see `theta` below) and
-whether the kernel's `sigmoid_approx`/`cos_approx`/`sin_approx` polynomials
-contribute materially. Both are measurable; neither changes the structure.
+So the discrepancy is INSIDE upstream, between two paths of the same kernel —
+not in this file's algebra. Next step is to find which of the two is
+authoritative for the published checkpoints (production is what the model
+actually runs, so it wins by default) and what production does differently.
+A prime suspect is Triton autotune config selection differing between the two
+constexpr variants; note PR #997 exists precisely because some configs are
+silently wrong on Blackwell, and issue #990 (consumer-Blackwell shared memory)
+already bites here at chunk_size >= 128.
+
+Do NOT "fix" this by tuning constants until the numbers agree. The structure is
+confirmed; what remains is identifying an upstream behavioural difference.
 """
 
 import torch
@@ -167,15 +177,16 @@ def mamba3_siso_ref(Q, K, V, ADT, DT, Trap, Q_bias, K_bias, Angles,
     # broadcast the group axis out to heads before adding.
     q = Q[:, :, 0, :].unsqueeze(2) + Q_bias.view(1, 1, h, dqk)   # (b,l,h,dqk)
     k = K[:, :, 0, :].unsqueeze(2) + K_bias.view(1, 1, h, dqk)
-    # The rotation angle ACCUMULATES with dt: theta_t = cumsum(angle_t * dt_t).
-    # `Angles` as captured is the per-step increment, not the absolute angle.
-    # Measured on golden _06 (L=64): raw angles 1.64e-1 relative error,
-    # cumsum(angle) 3.81e-1, angle*dt 1.00e-1, cumsum(angle*dt) 7.13e-2 — the
-    # accumulated-with-dt form is the only one that improves on applying no
-    # rotation at all, which is the tell.
-    theta = torch.cumsum(Angles * DT.permute(0, 2, 1).unsqueeze(-1), dim=1)
-    q = _rope(q, theta)
-    k = _rope(k, theta)
+    # Angles are used RAW — not accumulated. Established by diffing against the
+    # kernel's own `Q_store` buffer: raw gives 3.5e-3 (bf16 level, i.e. exact),
+    # while cumsum(angle*dt) gives 1.02 and cumsum(angle) gives 1.62.
+    #
+    # An end-to-end sweep had earlier favoured cumsum(angle*dt), which was a
+    # trap: two errors were partially cancelling. Diffing the kernel's INTERNAL
+    # buffers instead of its final output is what broke the tie, and is the
+    # technique to reach for first next time.
+    q = _rope(q, Angles)
+    k = _rope(k, Angles)
 
     out = torch.zeros(b, l, h, dv, dtype=dtype)
     S = torch.zeros(b, h, dv, dqk, dtype=dtype)
