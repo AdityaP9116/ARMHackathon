@@ -340,3 +340,47 @@ fn mamba3_tiled_handles_ragged_dqk() {
         );
     }
 }
+
+/// Explicit NEON-vs-naive parity, aarch64 only.
+///
+/// `mamba3_tiled_matches_naive` already covers this incidentally, because
+/// `Backend::Auto` resolves to NEON here — but a gate that only works by
+/// accident of dispatch is a gate that stops working when dispatch changes.
+/// This one names the backend.
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn mamba3_neon_matches_naive() {
+    for &(b, h, dv, dqk, l) in SHAPES {
+        let c = make(0x1234, b, h, dv, dqk, l);
+        for reverse in [false, true] {
+            let naive = c.run_with(Backend::Scalar, reverse, Threading::Sequential);
+            let neon = c.run_with(Backend::Neon, reverse, Threading::Sequential);
+            let scale = naive.iter().fold(0.0f32, |m, &x| m.max(x.abs())).max(1e-6);
+            let worst = naive
+                .iter()
+                .zip(neon.iter())
+                .fold(0.0f32, |m, (a, n)| m.max((a - n).abs()));
+            assert!(
+                worst / scale < 1e-5,
+                "shape {b}x{h}x{dv}x{dqk}x{l} reverse={reverse}: NEON deviates \
+                 from the scalar oracle by {:.3e} relative",
+                worst / scale
+            );
+        }
+    }
+}
+
+/// NEON must be bit-identical across thread counts too — vectorisation must not
+/// have introduced any cross-head sharing.
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn mamba3_neon_parallel_bit_identical() {
+    for &(b, h, dv, dqk, l) in SHAPES {
+        let c = make(0x5678, b, h, dv, dqk, l);
+        let seq = c.run_with(Backend::Neon, false, Threading::Sequential);
+        let par = c.run_with(Backend::Neon, false, Threading::Rayon);
+        for (i, (a, b2)) in seq.iter().zip(par.iter()).enumerate() {
+            assert_eq!(a.to_bits(), b2.to_bits(), "element {i}: {a} vs {b2}");
+        }
+    }
+}

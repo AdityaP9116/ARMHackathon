@@ -75,6 +75,9 @@
 mod scalar;
 mod tiled;
 
+#[cfg(target_arch = "aarch64")]
+pub(crate) use tiled::TILE;
+
 use crate::{Backend, Float, ScanError, ScanOptions};
 
 /// Which Mamba-3 block variant to run. `Mimo` is reserved so adding it later is
@@ -251,8 +254,8 @@ pub fn mamba3_scan_with_options<T: Float>(
     dims: &Mamba3Dims,
     input: &Mamba3Input<'_, T>,
     out: &mut [T],
-    last_state: Option<&mut [T]>,
-    last_bx: Option<&mut [T]>,
+    #[cfg_attr(not(target_arch = "aarch64"), allow(unused_mut))] mut last_state: Option<&mut [T]>,
+    #[cfg_attr(not(target_arch = "aarch64"), allow(unused_mut))] mut last_bx: Option<&mut [T]>,
     opts: ScanOptions,
 ) -> Result<(), Mamba3Error> {
     validate(dims, input, out, last_state.as_deref(), last_bx.as_deref())?;
@@ -274,9 +277,88 @@ pub fn mamba3_scan_with_options<T: Float>(
             Ok(())
         }
         Backend::Auto => {
+            #[cfg(target_arch = "aarch64")]
+            if try_neon(
+                dims,
+                input,
+                out,
+                &mut last_state,
+                &mut last_bx,
+                opts.threading,
+            ) {
+                return Ok(());
+            }
+            // Non-aarch64, or f64 (the NEON path is f32-only): the blocked
+            // portable kernel, which is the same algorithm.
             tiled::scan(dims, input, out, last_state, last_bx, opts.threading);
             Ok(())
         }
-        Backend::Neon => Err(ScanError::BackendUnavailable(Backend::Neon)),
+        Backend::Neon => {
+            #[cfg(target_arch = "aarch64")]
+            if try_neon(
+                dims,
+                input,
+                out,
+                &mut last_state,
+                &mut last_bx,
+                opts.threading,
+            ) {
+                return Ok(());
+            }
+            Err(ScanError::BackendUnavailable(Backend::Neon))
+        }
     }
+}
+
+/// Dispatch the f32 NEON kernel, or report that it does not apply.
+///
+/// The public API is generic over `Float` so tests can run the whole kernel in
+/// f64, but NEON is f32-only. Mirrors `crate::try_neon` for the Mamba-1 path:
+/// verify the type identity, then reinterpret the slices — same pointer, same
+/// length, no copy.
+#[cfg(target_arch = "aarch64")]
+fn try_neon<T: Float>(
+    dims: &Mamba3Dims,
+    input: &Mamba3Input<'_, T>,
+    out: &mut [T],
+    last_state: &mut Option<&mut [T]>,
+    last_bx: &mut Option<&mut [T]>,
+    threading: crate::Threading,
+) -> bool {
+    use core::any::TypeId;
+    if TypeId::of::<T>() != TypeId::of::<f32>() {
+        return false;
+    }
+    fn cast<T: 'static>(s: &[T]) -> &[f32] {
+        // SAFETY: caller verified T == f32; same pointer, same length.
+        unsafe { core::slice::from_raw_parts(s.as_ptr().cast::<f32>(), s.len()) }
+    }
+    fn cast_mut<T: 'static>(s: &mut [T]) -> &mut [f32] {
+        // SAFETY: as above.
+        unsafe { core::slice::from_raw_parts_mut(s.as_mut_ptr().cast::<f32>(), s.len()) }
+    }
+    let input_f32 = Mamba3Input {
+        q: cast(input.q),
+        k: cast(input.k),
+        v: cast(input.v),
+        adt: cast(input.adt),
+        dt: cast(input.dt),
+        trap: cast(input.trap),
+        q_bias: cast(input.q_bias),
+        k_bias: cast(input.k_bias),
+        cos: cast(input.cos),
+        sin: cast(input.sin),
+        d_skip: input.d_skip.map(cast),
+        z: input.z.map(cast),
+        reverse: input.reverse,
+    };
+    crate::neon::mamba3::scan(
+        dims,
+        &input_f32,
+        cast_mut(out),
+        last_state.as_mut().map(|s| cast_mut(s)),
+        last_bx.as_mut().map(|s| cast_mut(s)),
+        threading,
+    );
+    true
 }
