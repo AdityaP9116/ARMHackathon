@@ -449,6 +449,10 @@ fn try_neon<T: Float>(
         d_skip: input.d_skip.map(cast),
         z: input.z.map(cast),
         reverse: input.reverse,
+        // Always None here: dispatch routes MIMO to `mimo::scan` before the
+        // backend match ever runs, so the NEON path only ever sees SISO. If a
+        // NEON MIMO kernel lands, this is one of the two places to change.
+        mimo: None,
     };
     crate::neon::mamba3::scan(
         dims,

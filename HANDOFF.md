@@ -68,6 +68,12 @@ file does and why.
   how many elements to read, so a short buffer is an out-of-bounds read, not an
   error — it surfaces as NaN much later. The Python layer owns shape
   correctness; see `_check_shapes` in `python/arm_scan/mamba3.py`.
+- **x86 does not compile the aarch64 code at all.** `try_neon` and everything
+  under `neon/` are `#[cfg(target_arch = "aarch64")]`, so a field added to a
+  shared struct passes every local check and breaks only on the Arm runners.
+  It cost a red CI run when `Mamba3Input` gained `mimo`. `make check-cross`
+  typechecks the Arm path from an x86 box in about a second — no Arm hardware,
+  no linker. `make test` now depends on it.
 - **Mamba-3 is not resumable and no carry can make it so.** `scale_t` depends on
   `dt_{t+1}`, so the trapezoid looks *forward*. Mamba-1's `h0` contract does not
   transfer. `last_bx` exists but is diagnostic only.

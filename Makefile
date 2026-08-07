@@ -20,9 +20,22 @@ RES   ?= 128
 build:
 	cd kernel && cargo build --release -p arm-scan-ffi
 
+# Typecheck the aarch64-only code from an x86 dev box.
+#
+# `try_neon` and everything under `neon/` are `#[cfg(target_arch = "aarch64")]`,
+# so `cargo build` on x86 does not compile them AT ALL. A field added to a
+# shared struct can therefore pass every local check and break only on the Arm
+# CI runners -- which is exactly what happened when `Mamba3Input` gained `mimo`.
+# This catches it in about a second, and needs no Arm hardware: it is a
+# typecheck, not a build (no linker involved).
+#
+#   rustup target add aarch64-unknown-linux-gnu   # one-off
+check-cross:
+	cd kernel && cargo check --target aarch64-unknown-linux-gnu --all-targets
+
 # Kernel correctness: Rust gates, then the goldens replayed through the real
 # C ABI, then both golden sets re-derived by an independent implementation.
-test: build
+test: build check-cross
 	cd kernel && cargo test --release
 	$(PY) tests/check_ffi.py
 	$(PY) tests/verify_golden.py
