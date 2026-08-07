@@ -103,6 +103,10 @@ impl Case {
     }
 
     fn run(&self, reverse: bool, threading: Threading) -> Vec<f32> {
+        self.run_with(Backend::Scalar, reverse, threading)
+    }
+
+    fn run_with(&self, backend: Backend, reverse: bool, threading: Threading) -> Vec<f32> {
         let d = self.dims;
         let mut out = vec![0.0f32; d.batch * d.heads * d.len * d.dv];
         mamba3_scan_with_options(
@@ -111,10 +115,7 @@ impl Case {
             &mut out,
             None,
             None,
-            ScanOptions {
-                backend: Backend::Scalar,
-                threading,
-            },
+            ScanOptions { backend, threading },
         )
         .expect("scan");
         out
@@ -284,4 +285,58 @@ fn mamba3_validation_rejects_bad_shapes() {
         ScanOptions::default()
     )
     .is_err());
+}
+
+/// The blocked kernel (`Backend::Auto`, `mamba3/tiled.rs`) must agree with the
+/// naive oracle (`Backend::Scalar`, `mamba3/scalar.rs`).
+///
+/// Not bit-identical, and it should not be: tiling splits each `q . S_row` dot
+/// product across tiles, so the summation order differs and f32 rounding
+/// follows. What must hold is agreement to the level that reassociation alone
+/// explains — a genuine ordering bug (reading `S` after its update rather than
+/// before) is off by the trapezoid's shifted term and grows with sequence
+/// length, which is orders of magnitude larger.
+#[test]
+fn mamba3_tiled_matches_naive() {
+    for &(b, h, dv, dqk, l) in SHAPES {
+        let c = make(0xB10C, b, h, dv, dqk, l);
+        for reverse in [false, true] {
+            let naive = c.run_with(Backend::Scalar, reverse, Threading::Sequential);
+            let tiled = c.run_with(Backend::Auto, reverse, Threading::Sequential);
+            let scale = naive.iter().fold(0.0f32, |m, &x| m.max(x.abs())).max(1e-6);
+            let worst = naive
+                .iter()
+                .zip(tiled.iter())
+                .fold(0.0f32, |m, (a, t)| m.max((a - t).abs()));
+            assert!(
+                worst / scale < 1e-5,
+                "shape {b}x{h}x{dv}x{dqk}x{l} reverse={reverse}: tiled deviates \
+                 from naive by {:.3e} relative — too large for reassociation. \
+                 Check that y is read from S BEFORE the update.",
+                worst / scale
+            );
+        }
+    }
+}
+
+/// The tiling must not depend on `dqk` being a multiple of `TILE` — the tail
+/// tile is where an off-by-one lives.
+#[test]
+fn mamba3_tiled_handles_ragged_dqk() {
+    // TILE is 32; 48 gives one full tile plus a 16-wide tail, 34 a 2-wide tail.
+    for &dqk in &[34usize, 48, 66] {
+        let c = make(5, 1, 2, 8, dqk, 9);
+        let naive = c.run_with(Backend::Scalar, false, Threading::Sequential);
+        let tiled = c.run_with(Backend::Auto, false, Threading::Sequential);
+        let scale = naive.iter().fold(0.0f32, |m, &x| m.max(x.abs())).max(1e-6);
+        let worst = naive
+            .iter()
+            .zip(tiled.iter())
+            .fold(0.0f32, |m, (a, t)| m.max((a - t).abs()));
+        assert!(
+            worst / scale < 1e-5,
+            "dqk={dqk}: ragged tail tile deviates by {:.3e}",
+            worst / scale
+        );
+    }
 }

@@ -73,6 +73,7 @@
 //! measured optimisation, not a prerequisite.
 
 mod scalar;
+mod tiled;
 
 use crate::{Backend, Float, ScanError, ScanOptions};
 
@@ -265,8 +266,15 @@ pub fn mamba3_scan_with_options<T: Float>(
     match opts.backend {
         // NEON lands in M4; until then Auto resolves to scalar, which is
         // correct everywhere and is the permanent non-Arm fallback anyway.
-        Backend::Scalar | Backend::Auto => {
+        // The naive scalar path is the oracle; the blocked path is the
+        // structural twin of the NEON kernel and is what `Auto` should use once
+        // NEON lands, so exercise it by default now to keep it honest.
+        Backend::Scalar => {
             scalar::scan(dims, input, out, last_state, last_bx, opts.threading);
+            Ok(())
+        }
+        Backend::Auto => {
+            tiled::scan(dims, input, out, last_state, last_bx, opts.threading);
             Ok(())
         }
         Backend::Neon => Err(ScanError::BackendUnavailable(Backend::Neon)),

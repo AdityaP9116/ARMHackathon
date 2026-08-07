@@ -218,29 +218,34 @@ fn mamba3_golden_cases() {
         cases.len()
     );
     let mut worst = 0.0f64;
-    for path in &cases {
-        let r = run_case(path, Backend::Scalar, Threading::Sequential);
-        let name = path.file_stem().unwrap().to_string_lossy();
-        println!(
-            "  {name:<28} L={:<5} scale={:8.3} {:8.2} bf16 ULP",
-            r.len, r.scale, r.ulps
-        );
-        assert!(
-            r.ulps <= MAX_ULPS,
-            "{name}: {:.2} bf16 ULP exceeds {MAX_ULPS}. Do NOT raise the \
+    // Both the naive oracle and the cache-blocked path (the NEON kernel's
+    // structural twin) must clear the bound on the REAL captured ground truth,
+    // not just on synthetic property-test data.
+    for (backend, label) in [(Backend::Scalar, "naive"), (Backend::Auto, "tiled")] {
+        for path in &cases {
+            let r = run_case(path, backend, Threading::Sequential);
+            let name = format!("{}[{label}]", path.file_stem().unwrap().to_string_lossy());
+            println!(
+                "  {name:<28} L={:<5} scale={:8.3} {:8.2} bf16 ULP",
+                r.len, r.scale, r.ulps
+            );
+            assert!(
+                r.ulps <= MAX_ULPS,
+                "{name}: {:.2} bf16 ULP exceeds {MAX_ULPS}. Do NOT raise the \
              bound to pass — a structurally wrong kernel is off by thousands.",
-            r.ulps
-        );
-        // Guard against a vacuous pass: an all-zero or constant output would
-        // sail through a tolerance check on some cases.
-        assert!(
-            r.out.iter().any(|&x| x != 0.0) && r.out.iter().all(|x| x.is_finite()),
-            "{name}: output is all zeros or non-finite"
-        );
-        worst = worst.max(r.ulps);
+                r.ulps
+            );
+            // Guard against a vacuous pass: an all-zero or constant output would
+            // sail through a tolerance check on some cases.
+            assert!(
+                r.out.iter().any(|&x| x != 0.0) && r.out.iter().all(|x| x.is_finite()),
+                "{name}: output is all zeros or non-finite"
+            );
+            worst = worst.max(r.ulps);
+        }
     }
     println!(
-        "  worst across {} goldens: {worst:.2} bf16 ULP",
+        "  worst across {} goldens x 2 backends: {worst:.2} bf16 ULP",
         cases.len()
     );
 }
