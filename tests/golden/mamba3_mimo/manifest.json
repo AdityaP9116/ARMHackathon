@@ -1,0 +1,1163 @@
+{
+  "device": "NVIDIA GeForce RTX 5090",
+  "torch": "2.13.0+cu130",
+  "capture_dtype": "bfloat16",
+  "family": "mimo",
+  "shared_mem_per_block_optin": 101376,
+  "mamba_ssm": "2.3.2.post1",
+  "blackwell_fix_997": true,
+  "cases": [
+    {
+      "name": "mamba3_mimo_combined_00",
+      "kernel": "mamba_ssm.modules.mamba3.mamba3_mimo_combined",
+      "arrays": {
+        "kw_Q": [
+          1,
+          256,
+          4,
+          1,
+          128
+        ],
+        "kw_K": [
+          1,
+          256,
+          4,
+          1,
+          128
+        ],
+        "kw_V": [
+          1,
+          256,
+          24,
+          64
+        ],
+        "kw_ADT": [
+          1,
+          24,
+          256
+        ],
+        "kw_DT": [
+          1,
+          24,
+          256
+        ],
+        "kw_Trap": [
+          1,
+          24,
+          256
+        ],
+        "kw_Q_bias": [
+          24,
+          4,
+          128
+        ],
+        "kw_K_bias": [
+          24,
+          4,
+          128
+        ],
+        "kw_MIMO_V": [
+          24,
+          4,
+          64
+        ],
+        "kw_MIMO_Z": [
+          24,
+          4,
+          64
+        ],
+        "kw_MIMO_Out": [
+          24,
+          4,
+          64
+        ],
+        "kw_Angles": [
+          1,
+          256,
+          24,
+          32
+        ],
+        "kw_D": [
+          24
+        ],
+        "kw_Z": [
+          1,
+          256,
+          24,
+          64
+        ],
+        "out": [
+          1,
+          256,
+          24,
+          64
+        ]
+      },
+      "dtypes": {
+        "kw_Q": "bfloat16",
+        "kw_K": "bfloat16",
+        "kw_V": "bfloat16",
+        "kw_ADT": "float32",
+        "kw_DT": "float32",
+        "kw_Trap": "bfloat16",
+        "kw_Q_bias": "float32",
+        "kw_K_bias": "float32",
+        "kw_MIMO_V": "float32",
+        "kw_MIMO_Z": "float32",
+        "kw_MIMO_Out": "float32",
+        "kw_Angles": "float32",
+        "kw_D": "float32",
+        "kw_Z": "bfloat16",
+        "out": "bfloat16"
+      }
+    },
+    {
+      "name": "mamba3_mimo_combined_01",
+      "kernel": "mamba_ssm.modules.mamba3.mamba3_mimo_combined",
+      "arrays": {
+        "kw_Q": [
+          1,
+          256,
+          4,
+          1,
+          128
+        ],
+        "kw_K": [
+          1,
+          256,
+          4,
+          1,
+          128
+        ],
+        "kw_V": [
+          1,
+          256,
+          24,
+          64
+        ],
+        "kw_ADT": [
+          1,
+          24,
+          256
+        ],
+        "kw_DT": [
+          1,
+          24,
+          256
+        ],
+        "kw_Trap": [
+          1,
+          24,
+          256
+        ],
+        "kw_Q_bias": [
+          24,
+          4,
+          128
+        ],
+        "kw_K_bias": [
+          24,
+          4,
+          128
+        ],
+        "kw_MIMO_V": [
+          24,
+          4,
+          64
+        ],
+        "kw_MIMO_Z": [
+          24,
+          4,
+          64
+        ],
+        "kw_MIMO_Out": [
+          24,
+          4,
+          64
+        ],
+        "kw_Angles": [
+          1,
+          256,
+          24,
+          32
+        ],
+        "kw_D": [
+          24
+        ],
+        "kw_Z": [
+          1,
+          256,
+          24,
+          64
+        ],
+        "out": [
+          1,
+          256,
+          24,
+          64
+        ]
+      },
+      "dtypes": {
+        "kw_Q": "bfloat16",
+        "kw_K": "bfloat16",
+        "kw_V": "bfloat16",
+        "kw_ADT": "float32",
+        "kw_DT": "float32",
+        "kw_Trap": "bfloat16",
+        "kw_Q_bias": "float32",
+        "kw_K_bias": "float32",
+        "kw_MIMO_V": "float32",
+        "kw_MIMO_Z": "float32",
+        "kw_MIMO_Out": "float32",
+        "kw_Angles": "float32",
+        "kw_D": "float32",
+        "kw_Z": "bfloat16",
+        "out": "bfloat16"
+      }
+    },
+    {
+      "name": "mamba3_mimo_combined_02",
+      "kernel": "mamba_ssm.modules.mamba3.mamba3_mimo_combined",
+      "arrays": {
+        "kw_Q": [
+          1,
+          256,
+          4,
+          1,
+          128
+        ],
+        "kw_K": [
+          1,
+          256,
+          4,
+          1,
+          128
+        ],
+        "kw_V": [
+          1,
+          256,
+          24,
+          64
+        ],
+        "kw_ADT": [
+          1,
+          24,
+          256
+        ],
+        "kw_DT": [
+          1,
+          24,
+          256
+        ],
+        "kw_Trap": [
+          1,
+          24,
+          256
+        ],
+        "kw_Q_bias": [
+          24,
+          4,
+          128
+        ],
+        "kw_K_bias": [
+          24,
+          4,
+          128
+        ],
+        "kw_MIMO_V": [
+          24,
+          4,
+          64
+        ],
+        "kw_MIMO_Z": [
+          24,
+          4,
+          64
+        ],
+        "kw_MIMO_Out": [
+          24,
+          4,
+          64
+        ],
+        "kw_Angles": [
+          1,
+          256,
+          24,
+          32
+        ],
+        "kw_D": [
+          24
+        ],
+        "kw_Z": [
+          1,
+          256,
+          24,
+          64
+        ],
+        "out": [
+          1,
+          256,
+          24,
+          64
+        ]
+      },
+      "dtypes": {
+        "kw_Q": "bfloat16",
+        "kw_K": "bfloat16",
+        "kw_V": "bfloat16",
+        "kw_ADT": "float32",
+        "kw_DT": "float32",
+        "kw_Trap": "bfloat16",
+        "kw_Q_bias": "float32",
+        "kw_K_bias": "float32",
+        "kw_MIMO_V": "float32",
+        "kw_MIMO_Z": "float32",
+        "kw_MIMO_Out": "float32",
+        "kw_Angles": "float32",
+        "kw_D": "float32",
+        "kw_Z": "bfloat16",
+        "out": "bfloat16"
+      }
+    },
+    {
+      "name": "mamba3_mimo_combined_03",
+      "kernel": "mamba_ssm.modules.mamba3.mamba3_mimo_combined",
+      "arrays": {
+        "kw_Q": [
+          1,
+          256,
+          4,
+          1,
+          128
+        ],
+        "kw_K": [
+          1,
+          256,
+          4,
+          1,
+          128
+        ],
+        "kw_V": [
+          1,
+          256,
+          24,
+          64
+        ],
+        "kw_ADT": [
+          1,
+          24,
+          256
+        ],
+        "kw_DT": [
+          1,
+          24,
+          256
+        ],
+        "kw_Trap": [
+          1,
+          24,
+          256
+        ],
+        "kw_Q_bias": [
+          24,
+          4,
+          128
+        ],
+        "kw_K_bias": [
+          24,
+          4,
+          128
+        ],
+        "kw_MIMO_V": [
+          24,
+          4,
+          64
+        ],
+        "kw_MIMO_Z": [
+          24,
+          4,
+          64
+        ],
+        "kw_MIMO_Out": [
+          24,
+          4,
+          64
+        ],
+        "kw_Angles": [
+          1,
+          256,
+          24,
+          32
+        ],
+        "kw_D": [
+          24
+        ],
+        "kw_Z": [
+          1,
+          256,
+          24,
+          64
+        ],
+        "out": [
+          1,
+          256,
+          24,
+          64
+        ]
+      },
+      "dtypes": {
+        "kw_Q": "bfloat16",
+        "kw_K": "bfloat16",
+        "kw_V": "bfloat16",
+        "kw_ADT": "float32",
+        "kw_DT": "float32",
+        "kw_Trap": "bfloat16",
+        "kw_Q_bias": "float32",
+        "kw_K_bias": "float32",
+        "kw_MIMO_V": "float32",
+        "kw_MIMO_Z": "float32",
+        "kw_MIMO_Out": "float32",
+        "kw_Angles": "float32",
+        "kw_D": "float32",
+        "kw_Z": "bfloat16",
+        "out": "bfloat16"
+      }
+    },
+    {
+      "name": "mamba3_mimo_combined_04",
+      "kernel": "mamba_ssm.modules.mamba3.mamba3_mimo_combined",
+      "arrays": {
+        "kw_Q": [
+          1,
+          128,
+          4,
+          1,
+          128
+        ],
+        "kw_K": [
+          1,
+          128,
+          4,
+          1,
+          128
+        ],
+        "kw_V": [
+          1,
+          128,
+          24,
+          64
+        ],
+        "kw_ADT": [
+          1,
+          24,
+          128
+        ],
+        "kw_DT": [
+          1,
+          24,
+          128
+        ],
+        "kw_Trap": [
+          1,
+          24,
+          128
+        ],
+        "kw_Q_bias": [
+          24,
+          4,
+          128
+        ],
+        "kw_K_bias": [
+          24,
+          4,
+          128
+        ],
+        "kw_MIMO_V": [
+          24,
+          4,
+          64
+        ],
+        "kw_MIMO_Z": [
+          24,
+          4,
+          64
+        ],
+        "kw_MIMO_Out": [
+          24,
+          4,
+          64
+        ],
+        "kw_Angles": [
+          1,
+          128,
+          24,
+          32
+        ],
+        "kw_D": [
+          24
+        ],
+        "kw_Z": [
+          1,
+          128,
+          24,
+          64
+        ],
+        "out": [
+          1,
+          128,
+          24,
+          64
+        ]
+      },
+      "dtypes": {
+        "kw_Q": "bfloat16",
+        "kw_K": "bfloat16",
+        "kw_V": "bfloat16",
+        "kw_ADT": "float32",
+        "kw_DT": "float32",
+        "kw_Trap": "bfloat16",
+        "kw_Q_bias": "float32",
+        "kw_K_bias": "float32",
+        "kw_MIMO_V": "float32",
+        "kw_MIMO_Z": "float32",
+        "kw_MIMO_Out": "float32",
+        "kw_Angles": "float32",
+        "kw_D": "float32",
+        "kw_Z": "bfloat16",
+        "out": "bfloat16"
+      }
+    },
+    {
+      "name": "mamba3_mimo_combined_05",
+      "kernel": "mamba_ssm.modules.mamba3.mamba3_mimo_combined",
+      "arrays": {
+        "kw_Q": [
+          1,
+          64,
+          4,
+          1,
+          128
+        ],
+        "kw_K": [
+          1,
+          64,
+          4,
+          1,
+          128
+        ],
+        "kw_V": [
+          1,
+          64,
+          24,
+          64
+        ],
+        "kw_ADT": [
+          1,
+          24,
+          64
+        ],
+        "kw_DT": [
+          1,
+          24,
+          64
+        ],
+        "kw_Trap": [
+          1,
+          24,
+          64
+        ],
+        "kw_Q_bias": [
+          24,
+          4,
+          128
+        ],
+        "kw_K_bias": [
+          24,
+          4,
+          128
+        ],
+        "kw_MIMO_V": [
+          24,
+          4,
+          64
+        ],
+        "kw_MIMO_Z": [
+          24,
+          4,
+          64
+        ],
+        "kw_MIMO_Out": [
+          24,
+          4,
+          64
+        ],
+        "kw_Angles": [
+          1,
+          64,
+          24,
+          32
+        ],
+        "kw_D": [
+          24
+        ],
+        "kw_Z": [
+          1,
+          64,
+          24,
+          64
+        ],
+        "out": [
+          1,
+          64,
+          24,
+          64
+        ]
+      },
+      "dtypes": {
+        "kw_Q": "bfloat16",
+        "kw_K": "bfloat16",
+        "kw_V": "bfloat16",
+        "kw_ADT": "float32",
+        "kw_DT": "float32",
+        "kw_Trap": "bfloat16",
+        "kw_Q_bias": "float32",
+        "kw_K_bias": "float32",
+        "kw_MIMO_V": "float32",
+        "kw_MIMO_Z": "float32",
+        "kw_MIMO_Out": "float32",
+        "kw_Angles": "float32",
+        "kw_D": "float32",
+        "kw_Z": "bfloat16",
+        "out": "bfloat16"
+      }
+    },
+    {
+      "name": "mamba3_mimo_combined_06",
+      "kernel": "mamba_ssm.modules.mamba3.mamba3_mimo_combined",
+      "arrays": {
+        "kw_Q": [
+          1,
+          63,
+          4,
+          1,
+          128
+        ],
+        "kw_K": [
+          1,
+          63,
+          4,
+          1,
+          128
+        ],
+        "kw_V": [
+          1,
+          63,
+          24,
+          64
+        ],
+        "kw_ADT": [
+          1,
+          24,
+          63
+        ],
+        "kw_DT": [
+          1,
+          24,
+          63
+        ],
+        "kw_Trap": [
+          1,
+          24,
+          63
+        ],
+        "kw_Q_bias": [
+          24,
+          4,
+          128
+        ],
+        "kw_K_bias": [
+          24,
+          4,
+          128
+        ],
+        "kw_MIMO_V": [
+          24,
+          4,
+          64
+        ],
+        "kw_MIMO_Z": [
+          24,
+          4,
+          64
+        ],
+        "kw_MIMO_Out": [
+          24,
+          4,
+          64
+        ],
+        "kw_Angles": [
+          1,
+          63,
+          24,
+          32
+        ],
+        "kw_D": [
+          24
+        ],
+        "kw_Z": [
+          1,
+          63,
+          24,
+          64
+        ],
+        "out": [
+          1,
+          63,
+          24,
+          64
+        ]
+      },
+      "dtypes": {
+        "kw_Q": "bfloat16",
+        "kw_K": "bfloat16",
+        "kw_V": "bfloat16",
+        "kw_ADT": "float32",
+        "kw_DT": "float32",
+        "kw_Trap": "bfloat16",
+        "kw_Q_bias": "float32",
+        "kw_K_bias": "float32",
+        "kw_MIMO_V": "float32",
+        "kw_MIMO_Z": "float32",
+        "kw_MIMO_Out": "float32",
+        "kw_Angles": "float32",
+        "kw_D": "float32",
+        "kw_Z": "bfloat16",
+        "out": "bfloat16"
+      }
+    },
+    {
+      "name": "mamba3_mimo_combined_07",
+      "kernel": "mamba_ssm.modules.mamba3.mamba3_mimo_combined",
+      "arrays": {
+        "kw_Q": [
+          2,
+          128,
+          4,
+          1,
+          128
+        ],
+        "kw_K": [
+          2,
+          128,
+          4,
+          1,
+          128
+        ],
+        "kw_V": [
+          2,
+          128,
+          24,
+          64
+        ],
+        "kw_ADT": [
+          2,
+          24,
+          128
+        ],
+        "kw_DT": [
+          2,
+          24,
+          128
+        ],
+        "kw_Trap": [
+          2,
+          24,
+          128
+        ],
+        "kw_Q_bias": [
+          24,
+          4,
+          128
+        ],
+        "kw_K_bias": [
+          24,
+          4,
+          128
+        ],
+        "kw_MIMO_V": [
+          24,
+          4,
+          64
+        ],
+        "kw_MIMO_Z": [
+          24,
+          4,
+          64
+        ],
+        "kw_MIMO_Out": [
+          24,
+          4,
+          64
+        ],
+        "kw_Angles": [
+          2,
+          128,
+          24,
+          32
+        ],
+        "kw_D": [
+          24
+        ],
+        "kw_Z": [
+          2,
+          128,
+          24,
+          64
+        ],
+        "out": [
+          2,
+          128,
+          24,
+          64
+        ]
+      },
+      "dtypes": {
+        "kw_Q": "bfloat16",
+        "kw_K": "bfloat16",
+        "kw_V": "bfloat16",
+        "kw_ADT": "float32",
+        "kw_DT": "float32",
+        "kw_Trap": "bfloat16",
+        "kw_Q_bias": "float32",
+        "kw_K_bias": "float32",
+        "kw_MIMO_V": "float32",
+        "kw_MIMO_Z": "float32",
+        "kw_MIMO_Out": "float32",
+        "kw_Angles": "float32",
+        "kw_D": "float32",
+        "kw_Z": "bfloat16",
+        "out": "bfloat16"
+      }
+    },
+    {
+      "name": "mamba3_mimo_combined_08",
+      "kernel": "mamba_ssm.modules.mamba3.mamba3_mimo_combined",
+      "arrays": {
+        "kw_Q": [
+          1,
+          128,
+          2,
+          1,
+          128
+        ],
+        "kw_K": [
+          1,
+          128,
+          2,
+          1,
+          128
+        ],
+        "kw_V": [
+          1,
+          128,
+          24,
+          64
+        ],
+        "kw_ADT": [
+          1,
+          24,
+          128
+        ],
+        "kw_DT": [
+          1,
+          24,
+          128
+        ],
+        "kw_Trap": [
+          1,
+          24,
+          128
+        ],
+        "kw_Q_bias": [
+          24,
+          2,
+          128
+        ],
+        "kw_K_bias": [
+          24,
+          2,
+          128
+        ],
+        "kw_MIMO_V": [
+          24,
+          2,
+          64
+        ],
+        "kw_MIMO_Z": [
+          24,
+          2,
+          64
+        ],
+        "kw_MIMO_Out": [
+          24,
+          2,
+          64
+        ],
+        "kw_Angles": [
+          1,
+          128,
+          24,
+          32
+        ],
+        "kw_D": [
+          24
+        ],
+        "kw_Z": [
+          1,
+          128,
+          24,
+          64
+        ],
+        "out": [
+          1,
+          128,
+          24,
+          64
+        ]
+      },
+      "dtypes": {
+        "kw_Q": "bfloat16",
+        "kw_K": "bfloat16",
+        "kw_V": "bfloat16",
+        "kw_ADT": "float32",
+        "kw_DT": "float32",
+        "kw_Trap": "bfloat16",
+        "kw_Q_bias": "float32",
+        "kw_K_bias": "float32",
+        "kw_MIMO_V": "float32",
+        "kw_MIMO_Z": "float32",
+        "kw_MIMO_Out": "float32",
+        "kw_Angles": "float32",
+        "kw_D": "float32",
+        "kw_Z": "bfloat16",
+        "out": "bfloat16"
+      }
+    },
+    {
+      "name": "mamba3_mimo_combined_09",
+      "kernel": "mamba_ssm.modules.mamba3.mamba3_mimo_combined",
+      "arrays": {
+        "kw_Q": [
+          1,
+          128,
+          4,
+          1,
+          64
+        ],
+        "kw_K": [
+          1,
+          128,
+          4,
+          1,
+          64
+        ],
+        "kw_V": [
+          1,
+          128,
+          16,
+          32
+        ],
+        "kw_ADT": [
+          1,
+          16,
+          128
+        ],
+        "kw_DT": [
+          1,
+          16,
+          128
+        ],
+        "kw_Trap": [
+          1,
+          16,
+          128
+        ],
+        "kw_Q_bias": [
+          16,
+          4,
+          64
+        ],
+        "kw_K_bias": [
+          16,
+          4,
+          64
+        ],
+        "kw_MIMO_V": [
+          16,
+          4,
+          32
+        ],
+        "kw_MIMO_Z": [
+          16,
+          4,
+          32
+        ],
+        "kw_MIMO_Out": [
+          16,
+          4,
+          32
+        ],
+        "kw_Angles": [
+          1,
+          128,
+          16,
+          16
+        ],
+        "kw_D": [
+          16
+        ],
+        "kw_Z": [
+          1,
+          128,
+          16,
+          32
+        ],
+        "out": [
+          1,
+          128,
+          16,
+          32
+        ]
+      },
+      "dtypes": {
+        "kw_Q": "bfloat16",
+        "kw_K": "bfloat16",
+        "kw_V": "bfloat16",
+        "kw_ADT": "float32",
+        "kw_DT": "float32",
+        "kw_Trap": "bfloat16",
+        "kw_Q_bias": "float32",
+        "kw_K_bias": "float32",
+        "kw_MIMO_V": "float32",
+        "kw_MIMO_Z": "float32",
+        "kw_MIMO_Out": "float32",
+        "kw_Angles": "float32",
+        "kw_D": "float32",
+        "kw_Z": "bfloat16",
+        "out": "bfloat16"
+      }
+    }
+  ],
+  "model": "state-spaces/mamba3-mimo-187m",
+  "reference_self_consistency": {
+    "within_process_bit_identical": true,
+    "note": "within-process: two forwards in ONE run. across-process: this run vs the previously captured model_forward.npz. The second is the real reproducibility floor; see the docstring for why they differ (triton.autotune picks by timing).",
+    "across_process_argmax_agreement": 0.953125,
+    "across_process_argmax_disagreements": 12,
+    "positions": 256,
+    "across_process_max_abs_logit_delta": 0.3818359375,
+    "across_process_max_rel_logit_delta": 0.009917816147208214,
+    "logit_subset_range": 38.5
+  },
+  "model_forward": {
+    "seq": 256,
+    "vocab": 128256,
+    "subset_size": 512,
+    "subset_seed": 0,
+    "stored": [
+      "input_ids",
+      "argmax",
+      "vocab_subset",
+      "logits_subset",
+      "logsumexp"
+    ],
+    "note": "full logits deliberately not stored; see save_model_forward"
+  },
+  "n_parameters": 182,
+  "sweep": [
+    {
+      "name": "mimo_pub_L128",
+      "batch": 1,
+      "seqlen": 128,
+      "d_model": 768,
+      "d_state": 128,
+      "headdim": 64,
+      "status": "ok",
+      "mimo_rank": 4,
+      "chunk_size": 16
+    },
+    {
+      "name": "mimo_pub_L64",
+      "batch": 1,
+      "seqlen": 64,
+      "d_model": 768,
+      "d_state": 128,
+      "headdim": 64,
+      "status": "ok",
+      "mimo_rank": 4,
+      "chunk_size": 16
+    },
+    {
+      "name": "mimo_odd_L63",
+      "batch": 1,
+      "seqlen": 63,
+      "d_model": 768,
+      "d_state": 128,
+      "headdim": 64,
+      "status": "ok",
+      "mimo_rank": 4,
+      "chunk_size": 16
+    },
+    {
+      "name": "mimo_batch2",
+      "batch": 2,
+      "seqlen": 128,
+      "d_model": 768,
+      "d_state": 128,
+      "headdim": 64,
+      "status": "ok",
+      "mimo_rank": 4,
+      "chunk_size": 16
+    },
+    {
+      "name": "mimo_rank2",
+      "batch": 1,
+      "seqlen": 128,
+      "d_model": 768,
+      "d_state": 128,
+      "headdim": 64,
+      "status": "ok",
+      "mimo_rank": 2,
+      "chunk_size": 16
+    },
+    {
+      "name": "mimo_small",
+      "batch": 1,
+      "seqlen": 128,
+      "d_model": 256,
+      "d_state": 64,
+      "headdim": 32,
+      "status": "ok",
+      "mimo_rank": 4,
+      "chunk_size": 16
+    },
+    {
+      "name": "mimo_L1",
+      "batch": 1,
+      "seqlen": 1,
+      "d_model": 768,
+      "d_state": 128,
+      "headdim": 64,
+      "status": "FAILED: RuntimeError: kernel mamba_mimo_fwd_kernel input DA_CS strides[2] expected 1, but got 24"
+    },
+    {
+      "name": "mimo_over_shmem",
+      "batch": 1,
+      "seqlen": 128,
+      "d_model": 768,
+      "d_state": 128,
+      "headdim": 64,
+      "status": "FAILED: InternalError: Failed to set the allowed dynamic shared memory size to 184576"
+    }
+  ]
+}

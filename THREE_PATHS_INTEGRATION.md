@@ -173,17 +173,73 @@ to perform very little arithmetic. MIMO does `r`× the work on the same load (~4
 intensity), which is precisely the regime where a CPU is weakest. It is the Mamba-3 change most
 likely to *help* us rather than merely be ported. And its weights already exist.
 
-### Step B0 — capture probe *(1 hour, hard go/no-go, do this first)*
+### Step B0 — capture probe ✅ **GREEN** *(done Aug 7)*
 
-MIMO runs on **TileLang**, not Triton, and this box is consumer Blackwell. Open upstream issues:
-**#994** (TileLang contiguity for MIMO), **#985** (MIMO fails at `seqlen=1`), **#990**
-(consumer-Blackwell shared memory — already bit us once at `chunk_size ≥ 128`).
+**Result: MIMO ground truth is capturable, at the published configuration, unmodified.**
+`tests/golden/mamba3_mimo/` holds 10 cases across 6 output shapes, captured from the real
+`state-spaces/mamba3-mimo-187m`. Path B is unblocked.
 
-Probe: drive `mamba3_mimo_combined` at two shapes and capture inputs→outputs.
-**If it does not run, Path B stops here** and the effort moves to Path C. Do not begin kernel
-work on the assumption that ground truth will be available.
+Getting there needed a toolchain fix, not a workaround, and the distinction matters — the
+blocker was never "MIMO is broken on Blackwell":
 
-### Steps B1–B4 *(≈2.5 days, only if B0 is green)*
+| Blocker | Why | Fix |
+|---|---|---|
+| `nvcc fatal: 'sm_120a' is not defined` | System nvcc was **12.4**, whose newest arch is `compute_90`. `sm_120a` needs ≥ 12.8 | Standalone nvcc redistributable |
+| `cospi`/`sinpi`/`rsqrt` redeclared | CUDA 12.9 headers collide with **glibc ≥ 2.41**, which added those as C23 | CUDA **13.0** headers |
+| `cicc: not found` | CUDA 13 split `cicc` out of `cuda_nvcc` into **libnvvm** | Install libnvvm too |
+| `unsupported GNU version` | nvcc 13 refuses host gcc > 13; box has gcc 15 | gcc-13 shim |
+
+All four are scripted in **[`tools/setup_cuda_toolchain.sh`](tools/setup_cuda_toolchain.sh)**
+(no sudo, no full toolkit, ~80 MB). Note the pip wheel `nvidia-cuda-nvcc-cu12` does *not*
+solve this — it ships `ptxas` and headers but not the `nvcc` driver binary.
+
+**Why SISO captured fine on the same box:** Triton compiles PTX itself with a bundled `ptxas`
+and never invokes `nvcc`. TileLang shells out to it. Nothing about the GPU differed.
+
+### What B0 established beyond "it runs"
+
+**bf16 is a hard requirement here, not a precision preference.** The TileLang kernel *types its
+shared tiles on the caller's dtype* (accumulation is separately fp32), so fp32 doubles every
+tile. Measured on this card — 101,376 B of opt-in shared memory against datacenter Blackwell's
+~227 KB:
+
+| dtype | `chunk_size` | result |
+|---|---|---|
+| **bf16** | **16** *(the checkpoint's own value)* | ✅ runs |
+| fp32 | 16 | ✗ wants 168,128 B |
+| bf16 / fp32 | 8 | ✅ runs |
+
+So the capture runs the published configuration **unmodified** — strictly better than re-tiling
+the model to fit, which was the original plan.
+
+**`chunk_size` is pure tiling, verified rather than assumed.** Measured on SISO at the real
+187M checkpoint: 64→32 moves logits by 5.3e-3 relative (99.61% argmax), 64→16 by 6.8e-3
+(99.22%) — the same magnitude as the autotune noise floor. In MIMO, bf16 at `chunk_size` 16 vs
+8 gave *identical* argmax. It reassociates floating-point sums; it does not change the model.
+
+**Two upstream issues confirmed on our hardware, and now recorded in the manifest:**
+
+- **#985** — MIMO at `seqlen=1` fails (`DA_CS strides[2] expected 1`). The decode edge case is
+  genuinely unavailable, so a MIMO decode golden cannot be captured here.
+- **#990** — the shared-memory ceiling. `MIMO_SWEEP` deliberately includes one shape that
+  exceeds it, so the limit is recorded evidence rather than folk knowledge.
+
+**MIMO's ground truth is noisier than SISO's.** Across-process reference-vs-itself agreement
+measured **93.4%** and **95.3%** on two separate runs (17/256 and 12/256 argmax positions,
+~9.3–9.9e-3 relative) against SISO's 98.8%. Note the floor is itself a distribution, not a
+constant — quote it as a range. B1–B4 gates must be set against *this* band, not SISO's, and
+the per-run figure is recorded in the manifest's `reference_self_consistency`.
+
+**A capture-correctness trap worth keeping.** SISO's Triton kernel hardcodes
+`.to(torch.bfloat16)` on Q/K/V/Trap/Angles/Z, so the capture pre-casts to match. **MIMO does
+not** — applying SISO's list would have downcast `Angles`, which the module deliberately casts
+*up* to fp32, and silently corrupted the goldens. `Capture` now takes the cast list per entry
+point.
+
+Block-level MIMO goldens are deliberately **not** captured yet (they were 15.6 MB of 34 MB and
+serve B4, which is not scoped). Regenerate with `--max-blocks 2` when B4 starts.
+
+### Steps B1–B4 *(≈2.5 days — B0 is green, so these are live)*
 
 | | Work |
 |---|---|
@@ -194,6 +250,14 @@ work on the assumption that ground truth will be available.
 
 **Gates:** `r=1` bit-identical to SISO; MIMO goldens at the bf16 bound; NEON↔scalar parity;
 thread bit-identity; logits vs a MIMO `model_forward.npz`.
+
+**Set the model-level gate against ~93–95%, not SISO's ~99%.** MIMO's across-process reference
+floor is measurably worse *and* variable (recorded per run in
+`tests/golden/mamba3_mimo/manifest.json` under `reference_self_consistency`). Prefer the
+"every disagreement is explained by the measured drift" test that `check_mamba3_model.py`
+already uses over a bare rate — with a floor this wide, a rate threshold is close to
+meaningless. And note `seqlen=1` is unavailable upstream (#985), so B2's decode path has no
+authoritative oracle — validate it against our own reference and say so.
 
 ---
 
@@ -253,9 +317,9 @@ its authors intended. This must appear in the writeup, not be buried.
 | Order | Item | Why here |
 |---|---|---|
 | ~~1~~ | ~~**Path A**~~ | ✅ **done Aug 7** — the only accuracy evidence the project can produce |
-| 2 | **B0 capture probe** | 1 hour, hard go/no-go, and it needs the GPU box — settle it before planning around it |
+| ~~2~~ | ~~**B0 capture probe**~~ | ✅ **GREEN Aug 7** — MIMO goldens captured at the published config |
 | 3 | **C1 causal 2D** | Smallest item, zero new kernel code, unblocks the headline claim |
-| 4 | **B1–B4** *(if B0 green)* | Second real-weights path |
+| 4 | **B1–B4** | Second real-weights path — now unblocked |
 | 5 | **C2 non-causal** | Highest novelty, thinnest moat — last |
 
 **Not sequenced here, and still the largest gap: dedicated-hardware numbers.** Every timing in

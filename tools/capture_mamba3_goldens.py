@@ -179,13 +179,29 @@ def _cast_list_still_matches():
 
 
 class Capture:
-    """Wrap a kernel entry point and record every call's tensors."""
+    """Wrap a kernel entry point and record every call's tensors.
 
-    def __init__(self, fn, limit=64):
+    `bf16_inputs` is the set of kwargs to pre-cast so that "recorded input" and
+    "consumed input" are the same tensor. It is entry-point specific and MUST
+    be empty for MIMO:
+
+      SISO  (Triton)   hardcodes `.to(torch.bfloat16)` on Q/K/V/Trap/Angles/Z
+                       regardless of what it was handed, so the capture mirrors
+                       that or records inputs the kernel never saw.
+      MIMO  (TileLang) does NOT. Its tiles are *typed* on a `dtype` argument
+                       that `Mamba3.forward` fills from `x.dtype`, so the
+                       tensors it consumes are exactly the ones passed in.
+                       Applying SISO's list here would downcast `Angles` --
+                       which the module deliberately casts UP to fp32 -- and
+                       silently corrupt the ground truth.
+    """
+
+    def __init__(self, fn, limit=64, bf16_inputs=_BF16_INPUTS):
         self.fn, self.limit, self.calls = fn, limit, []
+        self.bf16_inputs = tuple(bf16_inputs)
 
     def __call__(self, *args, **kwargs):
-        for k in _BF16_INPUTS:
+        for k in self.bf16_inputs:
             if k in kwargs and torch.is_tensor(kwargs[k]):
                 kwargs[k] = kwargs[k].to(torch.bfloat16)
         if args:
@@ -470,8 +486,33 @@ SWEEP = [
     ("long_L2048",     1, 2048, 256,  64, 32),   # the PR#997 Blackwell regime
 ]
 
+# MIMO edge shapes: (name, batch, len, d_model, d_state, headdim, rank, chunk)
+#
+# Sized against a MEASURED constraint, not a guess. The TileLang MIMO kernel
+# types its shared tiles on the caller's dtype, so tile bytes scale with
+# rank x chunk_size x d_state x itemsize, and this card allows 101376 B of
+# opt-in dynamic shared memory (datacenter Blackwell allows ~227 KB). At bf16
+# the published configuration -- d_state 128, headdim 64, rank 4, chunk 16 --
+# fits; the same thing in fp32 asks for 168128 B and is rejected. Two shapes
+# are deliberately included that DO exceed the limit, so the manifest records
+# where the ceiling is rather than leaving it folk knowledge.
+#
+# rank=2 with chunk_size=8 is omitted: it trips a TileLang warp-decomposition
+# assertion (m_warp * n_warp == num_warps), which is a tiling limitation
+# unrelated to shared memory and not something a golden would illuminate.
+MIMO_SWEEP = [
+    ("mimo_pub_L128",   1,  128, 768, 128, 64, 4, 16),  # published config
+    ("mimo_pub_L64",    1,   64, 768, 128, 64, 4, 16),  # exactly 4 chunks
+    ("mimo_odd_L63",    1,   63, 768, 128, 64, 4, 16),  # chunk tail
+    ("mimo_batch2",     2,  128, 768, 128, 64, 4, 16),  # batch > 1
+    ("mimo_rank2",      1,  128, 768, 128, 64, 2, 16),  # a different rank
+    ("mimo_small",      1,  128, 256,  64, 32, 4, 16),  # narrow
+    ("mimo_L1",         1,    1, 768, 128, 64, 4, 16),  # decode edge (#985)
+    ("mimo_over_shmem", 1,  128, 768, 128, 64, 4, 32),  # EXPECTED to fail
+]
 
-def sweep_shapes(caps, dtype, manifest):
+
+def sweep_shapes(caps, dtype, manifest, mimo=False):
     """Drive fresh Mamba3 blocks across edge shapes.
 
     Each case is independently guarded: a shape that upstream cannot handle
@@ -489,21 +530,44 @@ def sweep_shapes(caps, dtype, manifest):
     """
     from mamba_ssm.modules.mamba3 import Mamba3
     manifest["sweep"] = []
-    for name, b, L, d_model, d_state, headdim in SWEEP:
+    table = MIMO_SWEEP if mimo else SWEEP
+    for row in table:
+        name, b, L, d_model, d_state, headdim = row[:6]
+        rank, cs = (row[6], row[7]) if mimo else (1, None)
         before = sum(len(c.calls) for _, _, c in caps)
+        extra = dict(is_mimo=True, mimo_rank=rank, chunk_size=cs) if mimo \
+            else dict(is_mimo=False)
         try:
             torch.manual_seed(case_seed(name))
+            # Construct AT the dtype, then move. Two things are load-bearing:
+            #
+            #   dtype= (not `.to(dtype)`)  a blanket cast overrides the module's
+            #       own per-parameter dtype choices -- `B_bias`/`C_bias` are
+            #       pinned to float32 in Mamba3.__init__ -- and the MIMO kernel
+            #       then rejects the call with "input Q_BIAS dtype expected
+            #       float32".
+            #   NO device= here, .cuda() after   passing device="cuda" makes
+            #       initialisation draw from the CUDA RNG stream instead of the
+            #       CPU one. Same seed, different generator, completely
+            #       different weights -- measured at ~1.0-2.7 RELATIVE change
+            #       in the goldens, i.e. different data, not noise. The CPU
+            #       stream is also the portable one, which is the whole point
+            #       of seeding from case_seed.
             blk = Mamba3(d_model=d_model, d_state=d_state, headdim=headdim,
-                         is_mimo=False).to(dtype).cuda().eval()
+                         dtype=dtype, **extra).cuda().eval()
             with torch.no_grad():
                 blk(torch.randn(b, L, d_model, device="cuda", dtype=dtype))
             gained = sum(len(c.calls) for _, _, c in caps) - before
             status = "ok" if gained else "no kernel call recorded"
             print(f"  sweep {name:14s} b{b} L{L:<5d} d{d_model} "
-                  f"n{d_state} h{headdim}: {status}")
-            manifest["sweep"].append(
-                {"name": name, "batch": b, "seqlen": L, "d_model": d_model,
-                 "d_state": d_state, "headdim": headdim, "status": status})
+                  f"n{d_state} h{headdim}"
+                  f"{f' r{rank} cs{cs}' if mimo else ''}: {status}")
+            row_meta = {"name": name, "batch": b, "seqlen": L,
+                        "d_model": d_model, "d_state": d_state,
+                        "headdim": headdim, "status": status}
+            if mimo:
+                row_meta.update(mimo_rank=rank, chunk_size=cs)
+            manifest["sweep"].append(row_meta)
         except Exception as exc:  # noqa: BLE001
             print(f"  sweep {name:14s} FAILED: {type(exc).__name__}: "
                   f"{str(exc)[:70]}")
@@ -541,7 +605,31 @@ def main():
     ap.add_argument("--vocab-subset", type=int, default=512,
                     help="vocab ids kept in model_forward.npz (see "
                          "save_model_forward for why not all of them)")
+    ap.add_argument("--mimo", action="store_true",
+                    help="capture the MIMO family instead of SISO. Switches "
+                         "the model, the sweep table, the output directory "
+                         "and the default dtype to bfloat16 -- see the "
+                         "--dtype help for why that last one is not optional "
+                         "on consumer Blackwell. Requires a TileLang-capable "
+                         "nvcc: run tools/setup_cuda_toolchain.sh first")
     args = ap.parse_args()
+
+    # MIMO defaults, applied only where the user did not choose explicitly.
+    if args.mimo:
+        if args.model == "state-spaces/mamba3-siso-187m":
+            args.model = "state-spaces/mamba3-mimo-187m"
+        if args.out == "tests/golden/mamba3":
+            args.out = "tests/golden/mamba3_mimo"
+        if args.dtype == "float32":
+            # NOT a precision preference -- a hard constraint. The TileLang
+            # MIMO kernel types its shared tiles on this dtype, so fp32 doubles
+            # every tile: the published configuration then needs 168128 B
+            # against this class of card's 101376 B limit and is rejected. bf16
+            # runs the checkpoint's own chunk_size=16 unmodified, which is
+            # strictly better ground truth than re-tiling the model to fit.
+            print("--mimo: defaulting to bfloat16 (fp32 exceeds consumer-"
+                  "Blackwell shared memory at the published config)")
+            args.dtype = "bfloat16"
     dtype = getattr(torch, args.dtype)
 
     if not torch.cuda.is_available():
@@ -562,20 +650,32 @@ def main():
     for mod, attr, _ in found:
         print(f"  {mod}.{attr}")
 
-    ok, cast = _cast_list_still_matches()
-    print(f"\nkernel downcasts to bf16: {cast}")
-    if not ok:
-        raise SystemExit(
-            f"REFUSING TO CAPTURE. Upstream's bf16 downcast set is {cast}, but "
-            f"this script mirrors {sorted(_BF16_INPUTS)}. Recorded inputs would "
-            "not be the ones the kernel consumed, so the goldens would be "
-            "quietly wrong. Update _BF16_INPUTS to match, then re-run.")
+    # The bf16 pre-cast guard is about SISO's hardcoded downcast list, so it is
+    # only meaningful when capturing SISO. MIMO consumes what it is handed.
+    if args.mimo:
+        cast = []
+        print("\nMIMO: no bf16 pre-cast (TileLang types its tiles on the "
+              "caller's dtype, so recorded inputs ARE the consumed inputs)")
+    else:
+        ok, cast = _cast_list_still_matches()
+        print(f"\nkernel downcasts to bf16: {cast}")
+        if not ok:
+            raise SystemExit(
+                f"REFUSING TO CAPTURE. Upstream's bf16 downcast set is {cast}, "
+                f"but this script mirrors {sorted(_BF16_INPUTS)}. Recorded "
+                "inputs would not be the ones the kernel consumed, so the "
+                "goldens would be quietly wrong. Update _BF16_INPUTS to "
+                "match, then re-run.")
 
     outdir = Path(args.out)
     outdir.mkdir(parents=True, exist_ok=True)
     manifest = {"device": torch.cuda.get_device_name(0),
                 "torch": torch.__version__,
                 "capture_dtype": args.dtype,
+                "family": "mimo" if args.mimo else "siso",
+                "shared_mem_per_block_optin": getattr(
+                    torch.cuda.get_device_properties(0),
+                    "shared_memory_per_block_optin", None),
                 "mamba_ssm": getattr(
                     __import__("mamba_ssm"), "__version__", "unknown"),
                 "blackwell_fix_997": _has_blackwell_fix(),
@@ -594,11 +694,22 @@ def main():
     # --- capture at the kernel boundary --------------------------------
     import importlib
     caps = []
+    want = "mamba3_mimo_combined" if args.mimo else "mamba3_siso_combined"
     for mod, attr, fn in found:
+        # Wrap only the family being captured. Wrapping both would leave the
+        # other's Capture installed and empty, which then writes a zero-case
+        # entry and muddies the manifest.
+        if attr != want:
+            continue
         m = importlib.import_module(mod)
-        cap = Capture(fn, limit=args.max_calls)
+        cap = Capture(fn, limit=args.max_calls,
+                      bf16_inputs=() if args.mimo else _BF16_INPUTS)
         setattr(m, attr, cap)
         caps.append((mod, attr, cap))
+    if not caps:
+        raise SystemExit(
+            f"Found no entry point named {want}. Available: "
+            f"{sorted({a for _, a, _ in found})}")
 
     # --- drive it with the real model ----------------------------------
     if not args.skip_model:
@@ -652,10 +763,11 @@ def main():
     if not args.no_sweep:
         # --max-calls bounds the MODEL layers; the sweep needs headroom beyond
         # it or the shapes it exists to capture would be silently dropped.
+        n_sweep = len(MIMO_SWEEP if args.mimo else SWEEP)
         for _, _, cap in caps:
-            cap.limit = len(cap.calls) + len(SWEEP) + 2
+            cap.limit = len(cap.calls) + n_sweep + 2
         print("\nedge-shape sweep:")
-        sweep_shapes(caps, dtype, manifest)
+        sweep_shapes(caps, dtype, manifest, mimo=args.mimo)
 
     # --- write the goldens ---------------------------------------------
     n = 0

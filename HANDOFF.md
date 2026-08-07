@@ -24,8 +24,14 @@ What is left is not kernel work:
    machinery is recurrence-agnostic, but its `scan_pair` seam still speaks
    Mamba-1's parameter list. This is the smallest item and it unblocks the
    headline claim.
-3. **MIMO is unprobed.** Path B is gated on a 1-hour capture probe (B0) that has
-   not been run; do not start its kernel work assuming ground truth exists.
+3. **MIMO kernel work (B1–B4) has not started**, but it is unblocked: the B0
+   capture probe came back **green** and `tests/golden/mamba3_mimo/` now holds
+   ground truth from the real `mamba3-mimo-187m` at its published config.
+   Capturing it needs `tools/setup_cuda_toolchain.sh` first (TileLang shells out
+   to `nvcc`; the system one was too old for Blackwell), and MIMO **must** be
+   captured at bf16. Set B1–B4's model gate against MIMO's own across-process
+   floor — measured at 93.4% and 95.3% on two runs, so it is a band, not a
+   number — rather than SISO's ~99%.
    *(Stage 6 — running the real 187M checkpoint end to end — is now **done**:
    see `apps/mamba3_lm/` and `THREE_PATHS_INTEGRATION.md` Path A.)*
 4. **Performance is untuned.** `TILE = 32` in the blocked kernel has never been

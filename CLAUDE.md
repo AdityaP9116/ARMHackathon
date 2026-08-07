@@ -55,7 +55,11 @@ Not done, in priority order:
    runner. This is the existential gap for a Cloud-track entry and no kernel work substitutes.
 2. **2D cross-scan not yet wired to the Mamba-3 primitive.** `ss2d_scan`'s machinery is
    recurrence-agnostic; the `scan_pair` seam still speaks Mamba-1's parameter list.
-3. **MIMO is unprobed** — Path B is gated on a 1-hour capture probe that has not been run.
+3. **MIMO kernel work (B1–B4) not started.** The B0 probe is **green**: ground truth is
+   captured in `tests/golden/mamba3_mimo/` from the real `mamba3-mimo-187m` at its published
+   configuration. Capturing it needs a TileLang-capable nvcc — see
+   `tools/setup_cuda_toolchain.sh`, and note MIMO **must** be captured at bf16 (fp32 doubles
+   the TileLang shared tiles past consumer Blackwell's limit).
 4. **Performance is unmeasured and untuned.** `TILE = 32` in the blocked kernel is a placeholder
    that has never been swept, and there is no phase profile for Mamba-3.
 
@@ -154,9 +158,17 @@ python bench/bench_mamba3_lm.py [--quick]  # the real 187M LM vs the PyTorch rec
 ```
 
 **Regenerating the Mamba-3 goldens needs a GPU box and `~/venv-arm`** (the CUDA env with
-`mamba_ssm`); everything else runs on the CPU-only system python:
-`~/venv-arm/bin/python tools/capture_mamba3_goldens.py`. It refuses to run without upstream
-PR #997 and self-checks its exit gate.
+`mamba_ssm`); everything else runs on the CPU-only system python. It refuses to run without
+upstream PR #997 and self-checks its exit gate.
+
+```bash
+~/venv-arm/bin/python tools/capture_mamba3_goldens.py              # SISO, fp32
+eval "$(bash tools/setup_cuda_toolchain.sh --env-only)"            # MIMO needs this first
+~/venv-arm/bin/python tools/capture_mamba3_goldens.py --mimo       # MIMO, bf16 (forced)
+```
+
+MIMO runs on **TileLang**, which shells out to `nvcc`; SISO runs on Triton, which compiles PTX
+itself and never does. That is the whole reason SISO captures on a stock box and MIMO does not.
 
 Run correctness under multiple thread counts (`RAYON_NUM_THREADS ∈ {1,2,8}`) — parallel output must be bit-identical to sequential.
 
