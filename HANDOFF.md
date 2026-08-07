@@ -20,10 +20,12 @@ What is left is not kernel work:
 
 1. **No dedicated-hardware numbers, for anything.** Every timing in this repo is
    x86 or a shared 4-core runner. Existential for a Cloud-track entry.
-2. **2D cross-scan is not wired** to the Mamba-3 primitive — `ss2d_scan`'s
-   machinery is recurrence-agnostic, but its `scan_pair` seam still speaks
-   Mamba-1's parameter list. This is the smallest item and it unblocks the
-   headline claim.
+2. **2D non-causal (C2) has not started.** The *causal* half is done:
+   `arm_scan.ss2d_scan_mamba3` runs the four-direction cross-scan on
+   `mamba3_scan_pair` as pure layout, with no new Rust. Note the trap it is
+   built around — the RoPE angle pre-pass must run on the traversal **views**,
+   not the grid, or both orderings silently share the row-major `theta`. C2 is
+   a second, GEMM-shaped kernel with a deliberately thin moat.
 3. **MIMO kernel work (B1–B4) has not started**, but it is unblocked: the B0
    capture probe came back **green** and `tests/golden/mamba3_mimo/` now holds
    ground truth from the real `mamba3-mimo-187m` at its published config.

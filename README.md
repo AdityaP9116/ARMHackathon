@@ -123,7 +123,15 @@ timing in this repository comes from an x86 box or a shared 4-core CI runner, wh
 project's own rules classify as provisional. A Graviton session is the outstanding work, and no
 amount of kernel engineering substitutes for it.
 
-Also outstanding: wiring the 2D cross-scan to the Mamba-3 primitive, and the MIMO capture probe.
+Also here, and as far as we can tell the first CPU implementation of any 2D Mamba-3:
+`arm_scan.ss2d_scan_mamba3` runs the four-direction cross-scan on the Mamba-3 recurrence as pure
+layout over `mamba3_scan_pair` — **no new kernel code**. Measured 14–38× over the PyTorch
+recurrence and 1.9× over `torch.compile` at vision grid sizes. **Correctness and throughput
+only**: no 2D Mamba-3 weights have ever been published, so no accuracy claim is available, and
+we do not make one.
+
+Still outstanding: the non-causal 2D formulation (the causal-vs-non-causal comparison is the
+novel result), and the MIMO kernel work now that its ground truth is captured.
 
 ## Where to look
 

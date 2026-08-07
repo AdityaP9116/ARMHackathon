@@ -148,7 +148,7 @@ def _rope(vec, angles):
 
 
 def mamba3_siso_ref(Q, K, V, ADT, DT, Trap, Q_bias, K_bias, Angles,
-                    D=None, Z=None, dtype=torch.float64):
+                    D=None, Z=None, dtype=torch.float64, reverse=False):
     """Sequential Mamba-3 SISO scan. Tensor names match the official kernel.
 
     Q, K      (b, l, ngroups, dqk)   ngroups=1 for SISO; shared across heads
@@ -159,6 +159,11 @@ def mamba3_siso_ref(Q, K, V, ADT, DT, Trap, Q_bias, K_bias, Angles,
     K_bias
     Angles    (b, l, h, r)           r <= dqk//2; zero-padded to dqk//2
     D         (h,)                   skip connection
+    reverse   walk the recurrence backward over the SAME sequence (each token
+              keeps its own position's rotation). This is what the second half
+              of a traversal pair is, and what the 2D cross-scan's backward
+              directions need — see the block comment at the flip below for why
+              the order of operations is not interchangeable.
     returns   (b, l, h, dv)
     """
     Q, K, V = Q.to(dtype), K.to(dtype), V.to(dtype)
@@ -182,15 +187,6 @@ def mamba3_siso_ref(Q, K, V, ADT, DT, Trap, Q_bias, K_bias, Angles,
         raise ValueError(
             f"Angles has {Angles.shape[-1]} entries but only {dqk // 2} "
             f"rotation pairs exist for headdim {dqk}.")
-
-    lam = torch.sigmoid(Trap)                      # (b, h, l)
-    gamma = DT * lam
-    # shifted_gamma_t = dt_{t+1} * (1 - lam_{t+1}); the last step has no
-    # successor, so it contributes nothing (the kernel masks it to 0.0).
-    shifted = torch.zeros_like(gamma)
-    shifted[..., :-1] = DT[..., 1:] * (1.0 - lam[..., 1:])
-    scale = gamma + shifted
-    a = torch.exp(ADT)                             # (b, h, l), ADT <= 0
 
     # Bias is per-head while Q/K are shared across heads (ngroups=1), so
     # broadcast the group axis out to heads before adding.
@@ -217,6 +213,35 @@ def mamba3_siso_ref(Q, K, V, ADT, DT, Trap, Q_bias, K_bias, Angles,
     q = _rope(q, theta)
     k = _rope(k, theta)
 
+    # REVERSE TRAVERSAL, and the ORDER OF OPERATIONS here is the whole subtlety.
+    #
+    # `reverse` means "walk the recurrence backward over the same sequence",
+    # NOT "encode the reversed sequence". So the rotation must be applied on the
+    # forward order first — each token keeps its own position's theta — and only
+    # then is the time axis flipped. This mirrors the kernel exactly, and
+    # tests/check_mamba3_op.py pins the equivalence at rel 0.
+    #
+    # The flip has to happen BEFORE lam/gamma/scale are built, because `scale`
+    # reads dt_{t+1}: the trapezoid looks FORWARD one step, so in a backward
+    # traversal its neighbour is the other one. Flipping a `scale` computed on
+    # the forward order would silently use the wrong neighbour — an error of
+    # exactly one shifted term, which looks like noise rather than a bug.
+    if reverse:
+        def _fl(t, d):
+            return None if t is None else torch.flip(t, dims=[d])
+        q, k, V = _fl(q, 1), _fl(k, 1), _fl(V, 1)
+        Z = _fl(Z, 1)
+        ADT, DT, Trap = _fl(ADT, 2), _fl(DT, 2), _fl(Trap, 2)
+
+    lam = torch.sigmoid(Trap)                      # (b, h, l)
+    gamma = DT * lam
+    # shifted_gamma_t = dt_{t+1} * (1 - lam_{t+1}); the last step has no
+    # successor, so it contributes nothing (the kernel masks it to 0.0).
+    shifted = torch.zeros_like(gamma)
+    shifted[..., :-1] = DT[..., 1:] * (1.0 - lam[..., 1:])
+    scale = gamma + shifted
+    a = torch.exp(ADT)                             # (b, h, l), ADT <= 0
+
     out = torch.zeros(b, l, h, dv, dtype=dtype)
     S = torch.zeros(b, h, dv, dqk, dtype=dtype)
     for t in range(l):
@@ -236,4 +261,7 @@ def mamba3_siso_ref(Q, K, V, ADT, DT, Trap, Q_bias, K_bias, Angles,
     if Z is not None:
         z = Z.to(dtype)
         out = out * (z * torch.sigmoid(z))                       # silu
-    return out
+    # Gate first, then unflip: Z was flipped alongside V, so both are in
+    # traversal order here and the gate pairs the right token with the right
+    # output.
+    return torch.flip(out, dims=[1]) if reverse else out

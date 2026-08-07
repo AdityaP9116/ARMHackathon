@@ -13,6 +13,8 @@ Bidirectional: arm_scan.bidirectional_scan(...)  (both time directions, merged)
 Mamba-3:  arm_scan.mamba3_scan(q, k, v, adt, dt, trap, q_bias, k_bias,
     angles=...)  -- SISO; mamba3_scan_pair(...) gives both traversal
     directions, which is what the bidirectional and 2D topologies build on
+2D Mamba-3: arm_scan.ss2d_scan_mamba3(...)  (grid-shaped inputs, four
+    directions as two pairs -- no CPU implementation of this exists elsewhere)
 NumPy-only: arm_scan.selective_scan_numpy(...)  (no torch required)
 """
 
@@ -28,6 +30,7 @@ __all__ = [
     "use_arm_scan",
     "mamba3_scan",
     "mamba3_scan_pair",
+    "ss2d_scan_mamba3",
     "angles_to_cos_sin",
     "patch",
     "unpatch",
@@ -50,6 +53,9 @@ def __getattr__(name):
         return getattr(importlib.import_module(".ss2d", __name__), name)
     if name in ("mamba3_scan", "mamba3_scan_pair", "angles_to_cos_sin"):
         return getattr(importlib.import_module(".mamba3", __name__), name)
+    if name == "ss2d_scan_mamba3":
+        return importlib.import_module(
+            ".ss2d_mamba3", __name__).ss2d_scan_mamba3
     if name in ("patch", "unpatch", "stats"):
         return getattr(importlib.import_module(".patch", __name__), name)
     raise AttributeError(f"module 'arm_scan' has no attribute '{name}'")

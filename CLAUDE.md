@@ -53,8 +53,9 @@ Not done, in priority order:
 
 1. **No dedicated-hardware numbers, for anything.** Every timing is x86 or a shared 4-core
    runner. This is the existential gap for a Cloud-track entry and no kernel work substitutes.
-2. **2D cross-scan not yet wired to the Mamba-3 primitive.** `ss2d_scan`'s machinery is
-   recurrence-agnostic; the `scan_pair` seam still speaks Mamba-1's parameter list.
+2. **2D non-causal (C2) not started.** The *causal* 2D cross-scan is done —
+   `arm_scan.ss2d_scan_mamba3`, pure layout over `mamba3_scan_pair`, no new kernel code, gated
+   by `tests/check_ss2d_mamba3.py` at 2.0e-07. C2 is the second, GEMM-shaped kernel.
 3. **MIMO kernel work (B1–B4) not started.** The B0 probe is **green**: ground truth is
    captured in `tests/golden/mamba3_mimo/` from the real `mamba3-mimo-187m` at its published
    configuration. Capturing it needs a TileLang-capable nvcc — see

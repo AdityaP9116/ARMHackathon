@@ -279,19 +279,64 @@ against task performance. So we can ship everything except an accuracy number.
 | **Causal vs non-causal comparison** | ✅ — **the novel result** |
 | "Same accuracy, faster" / "we ran a real vision model" | ❌ |
 
-### C1 — causal cross-scan *(the cheap half)*
+### C1 — causal cross-scan ✅ *(DONE Aug 7 — zero new kernel code, as predicted)*
 
-`ss2d.py`'s `grid_to_views` / `views_to_grid` / merge are **pure layout ops with no recurrence
-knowledge** — the best-designed extension point in the repo. The only change is widening the
-`scan_pair` seam, whose signature is currently Mamba-1's parameter list, to a tensor-bundle
-form (or a parallel `ss2d_scan_mamba3` sharing the same helpers).
+`arm_scan.ss2d_scan_mamba3` (`python/arm_scan/ss2d_mamba3.py`) runs the four-direction cross
+scan on `mamba3_scan_pair`. It is **pure layout** — no Rust changed.
 
-Then `mamba3_scan_pair` — already built — supplies both traversal directions, and the four
-directions are two pairs over `(rows, cols)`. **Zero new kernel code.**
+Built as a **parallel module sharing `ss2d.py`'s helpers** rather than by widening
+`ss2d_scan`'s seam. `ss2d_scan` takes five `(b, d, l)` tensors; Mamba-3 hands the scan eleven
+across **two different layout families**, so one shared seam would be a union type every caller
+has to disambiguate. The layout helpers — where the actual logic lives — are shared.
 
-**Gates:** per-direction 2D goldens (square, non-square, `H`/`W` not multiples of 4) generated
-from our reference and independently re-derived in numpy; pair-vs-oracle parity at
-`RAYON_NUM_THREADS ∈ {1,2,8}`.
+| family | tensors | grid → views |
+|---|---|---|
+| time-major | `q, k, v, z, angles` | `(b,H,W,…)` → `(2b,H·W,…)` |
+| head-major | `adt, dt, trap` | `(b,h,H,W)` → `(2b,h,H·W)` |
+
+**The one real correctness trap:** `theta = cumsum(tanh(angle)·π·dt)` accumulates *along the
+traversal order*, and row-major and column-major are different orders. The pre-pass must run on
+the **views**, not the grid — otherwise both orderings silently get the row-major `theta`.
+Nothing raises. Within a pair, sharing `cos`/`sin` between forward and backward *is* correct:
+`reverse=True` keeps each token's own position while walking the recurrence backward.
+
+Also added: `mamba3_siso_ref` gained `reverse=` — it previously could not express the backward
+direction at all, so no 2D reference could be built. The order of operations there is
+load-bearing and commented: rotate on the forward order, *then* flip, and rebuild `scale`
+**after** the flip, because the trapezoid reads `dt_{t+1}` and a backward traversal has a
+different neighbour.
+
+**Gates** — `tests/check_ss2d_mamba3.py`, seven checks, worst per-direction error **2.0e-07**
+(fp32 kernel vs f64 reference, at the fp32 floor) across square / non-square / odd / wide /
+degenerate `H=1` grids, bit-identical at `RAYON_NUM_THREADS ∈ {1,2,8}`.
+
+**What the negative control taught, and why the gate is shaped this way.** Injecting the
+obvious layout bug — dropping the column view's transpose, so four directions silently become
+two — leaves **kernel-vs-reference passing at 2.4e-07**. Both sides share the layout code, so
+they agree with each other while both being wrong. A correctness comparison *cannot* catch this
+class of bug, and neither could stored goldens (they would be generated through the same broken
+layout). Only structural invariants can, so the gate asserts them directly: the orderings must
+differ, and each ordering's `theta` must equal an independently-built one.
+
+That is also why this deviates from the plan's original "stored goldens re-derived in numpy":
+kernel (Rust) vs reference (PyTorch) already crosses an implementation boundary, so it *is* the
+independent check, and the recurrence itself is already pinned to the official kernels at
+4.47 ULP by the 1D goldens. A third numpy implementation would re-verify the part that is
+already verified and still miss the part that actually broke.
+
+**Throughput** (`bench/bench_ss2d_mamba3.py`, x86, 16 threads — see the caveat below):
+
+| grid | tokens | our kernel | PyTorch eager | speedup | `torch.compile` | vs compiled |
+|---|---|---|---|---|---|---|
+| 14×14 (p16) | 196 | 4.05 ms | 57.60 ms | 14.2× | 7.80 ms | **1.92×** |
+| 28×28 (p8) | 784 | 7.15 ms | 227.98 ms | 31.9× | *(skipped)* | — |
+| 56×56 (stage 1) | 3136 | 24.14 ms | 911.02 ms | 37.8× | *(skipped)* | — |
+
+**These isolate the scan** — unlike Path A's 1.85–3.66×, which timed a whole model where the
+projections dominate and are identical on both sides. Both are honest; they measure different
+things, and the writeup must not present them as comparable. And as everywhere else in this
+repo right now: x86, unquiesced, **scalar path** (NEON is not compiled on x86). Graviton
+remains the gap.
 
 ### C2 — non-causal, VNCT-style *(the expensive half)*
 
@@ -318,7 +363,7 @@ its authors intended. This must appear in the writeup, not be buried.
 |---|---|---|
 | ~~1~~ | ~~**Path A**~~ | ✅ **done Aug 7** — the only accuracy evidence the project can produce |
 | ~~2~~ | ~~**B0 capture probe**~~ | ✅ **GREEN Aug 7** — MIMO goldens captured at the published config |
-| 3 | **C1 causal 2D** | Smallest item, zero new kernel code, unblocks the headline claim |
+| ~~3~~ | ~~**C1 causal 2D**~~ | ✅ **done Aug 7** — `ss2d_scan_mamba3`, zero new kernel code |
 | 4 | **B1–B4** | Second real-weights path — now unblocked |
 | 5 | **C2 non-causal** | Highest novelty, thinnest moat — last |
 
