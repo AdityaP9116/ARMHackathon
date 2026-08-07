@@ -11,10 +11,10 @@
     "has_D": true,
     "has_delta_bias": true,
     "seed": 4255862921,
-    "input_draw": "pcg64-raw/box-muller/v1",
-    "torch_version": "2.13.0+cpu",
-    "numpy_version": "2.4.6",
-    "f32_max_abs_err": 8.672241680329762e-08
+    "input_draw": "pcg64-raw/box-muller/v2",
+    "torch_version": "2.13.0+cu130",
+    "numpy_version": "2.5.1",
+    "f32_max_abs_err": 8.944773544072859e-08
   },
   {
     "name": "small",
@@ -28,10 +28,10 @@
     "has_D": true,
     "has_delta_bias": true,
     "seed": 3146701697,
-    "input_draw": "pcg64-raw/box-muller/v1",
-    "torch_version": "2.13.0+cpu",
-    "numpy_version": "2.4.6",
-    "f32_max_abs_err": 3.232736642821976e-07
+    "input_draw": "pcg64-raw/box-muller/v2",
+    "torch_version": "2.13.0+cu130",
+    "numpy_version": "2.5.1",
+    "f32_max_abs_err": 3.316118968310633e-07
   },
   {
     "name": "medium",
@@ -45,10 +45,10 @@
     "has_D": true,
     "has_delta_bias": true,
     "seed": 1782940352,
-    "input_draw": "pcg64-raw/box-muller/v1",
-    "torch_version": "2.13.0+cpu",
-    "numpy_version": "2.4.6",
-    "f32_max_abs_err": 9.824601079344575e-07
+    "input_draw": "pcg64-raw/box-muller/v2",
+    "torch_version": "2.13.0+cu130",
+    "numpy_version": "2.5.1",
+    "f32_max_abs_err": 9.731749326391537e-07
   },
   {
     "name": "channels",
@@ -62,10 +62,10 @@
     "has_D": true,
     "has_delta_bias": true,
     "seed": 3366584161,
-    "input_draw": "pcg64-raw/box-muller/v1",
-    "torch_version": "2.13.0+cpu",
-    "numpy_version": "2.4.6",
-    "f32_max_abs_err": 8.571856895400742e-07
+    "input_draw": "pcg64-raw/box-muller/v2",
+    "torch_version": "2.13.0+cu130",
+    "numpy_version": "2.5.1",
+    "f32_max_abs_err": 7.919594029459631e-07
   },
   {
     "name": "long_seq",
@@ -79,10 +79,10 @@
     "has_D": true,
     "has_delta_bias": true,
     "seed": 3756315141,
-    "input_draw": "pcg64-raw/box-muller/v1",
-    "torch_version": "2.13.0+cpu",
-    "numpy_version": "2.4.6",
-    "f32_max_abs_err": 1.2640692326204572e-06
+    "input_draw": "pcg64-raw/box-muller/v2",
+    "torch_version": "2.13.0+cu130",
+    "numpy_version": "2.5.1",
+    "f32_max_abs_err": 1.2139841081282299e-06
   },
   {
     "name": "edge_L1",
@@ -96,9 +96,9 @@
     "has_D": true,
     "has_delta_bias": true,
     "seed": 919519481,
-    "input_draw": "pcg64-raw/box-muller/v1",
-    "torch_version": "2.13.0+cpu",
-    "numpy_version": "2.4.6",
+    "input_draw": "pcg64-raw/box-muller/v2",
+    "torch_version": "2.13.0+cu130",
+    "numpy_version": "2.5.1",
     "f32_max_abs_err": 4.2704552338790336e-08
   },
   {
@@ -113,10 +113,10 @@
     "has_D": true,
     "has_delta_bias": true,
     "seed": 1007114971,
-    "input_draw": "pcg64-raw/box-muller/v1",
-    "torch_version": "2.13.0+cpu",
-    "numpy_version": "2.4.6",
-    "f32_max_abs_err": 3.6221551003023933e-07
+    "input_draw": "pcg64-raw/box-muller/v2",
+    "torch_version": "2.13.0+cu130",
+    "numpy_version": "2.5.1",
+    "f32_max_abs_err": 3.629446765351929e-07
   },
   {
     "name": "state8",
@@ -130,10 +130,10 @@
     "has_D": true,
     "has_delta_bias": true,
     "seed": 326564053,
-    "input_draw": "pcg64-raw/box-muller/v1",
-    "torch_version": "2.13.0+cpu",
-    "numpy_version": "2.4.6",
-    "f32_max_abs_err": 7.431750308484197e-07
+    "input_draw": "pcg64-raw/box-muller/v2",
+    "torch_version": "2.13.0+cu130",
+    "numpy_version": "2.5.1",
+    "f32_max_abs_err": 7.289680503674845e-07
   },
   {
     "name": "state13_neon_tail",
@@ -147,10 +147,10 @@
     "has_D": true,
     "has_delta_bias": true,
     "seed": 3139282917,
-    "input_draw": "pcg64-raw/box-muller/v1",
-    "torch_version": "2.13.0+cpu",
-    "numpy_version": "2.4.6",
-    "f32_max_abs_err": 2.375840778001681e-07
+    "input_draw": "pcg64-raw/box-muller/v2",
+    "torch_version": "2.13.0+cu130",
+    "numpy_version": "2.5.1",
+    "f32_max_abs_err": 1.8370381527077484e-07
   },
   {
     "name": "no_z",
@@ -164,10 +164,10 @@
     "has_D": true,
     "has_delta_bias": true,
     "seed": 4202479897,
-    "input_draw": "pcg64-raw/box-muller/v1",
-    "torch_version": "2.13.0+cpu",
-    "numpy_version": "2.4.6",
-    "f32_max_abs_err": 4.843778378393893e-07
+    "input_draw": "pcg64-raw/box-muller/v2",
+    "torch_version": "2.13.0+cu130",
+    "numpy_version": "2.5.1",
+    "f32_max_abs_err": 4.7432424887805524e-07
   },
   {
     "name": "no_D",
@@ -181,10 +181,10 @@
     "has_D": false,
     "has_delta_bias": true,
     "seed": 2284077945,
-    "input_draw": "pcg64-raw/box-muller/v1",
-    "torch_version": "2.13.0+cpu",
-    "numpy_version": "2.4.6",
-    "f32_max_abs_err": 1.590800466355624e-07
+    "input_draw": "pcg64-raw/box-muller/v2",
+    "torch_version": "2.13.0+cu130",
+    "numpy_version": "2.5.1",
+    "f32_max_abs_err": 1.4996714775561415e-07
   },
   {
     "name": "no_bias",
@@ -198,10 +198,10 @@
     "has_D": true,
     "has_delta_bias": false,
     "seed": 3316295544,
-    "input_draw": "pcg64-raw/box-muller/v1",
-    "torch_version": "2.13.0+cpu",
-    "numpy_version": "2.4.6",
-    "f32_max_abs_err": 4.4742987270751655e-07
+    "input_draw": "pcg64-raw/box-muller/v2",
+    "torch_version": "2.13.0+cu130",
+    "numpy_version": "2.5.1",
+    "f32_max_abs_err": 4.4744527372131415e-07
   },
   {
     "name": "no_softplus",
@@ -215,10 +215,10 @@
     "has_D": true,
     "has_delta_bias": false,
     "seed": 754760743,
-    "input_draw": "pcg64-raw/box-muller/v1",
-    "torch_version": "2.13.0+cpu",
-    "numpy_version": "2.4.6",
-    "f32_max_abs_err": 3.9166681586877417e-07
+    "input_draw": "pcg64-raw/box-muller/v2",
+    "torch_version": "2.13.0+cu130",
+    "numpy_version": "2.5.1",
+    "f32_max_abs_err": 3.041247538249081e-07
   },
   {
     "name": "extreme_delta",
@@ -232,10 +232,10 @@
     "has_D": true,
     "has_delta_bias": true,
     "seed": 2638904186,
-    "input_draw": "pcg64-raw/box-muller/v1",
-    "torch_version": "2.13.0+cpu",
-    "numpy_version": "2.4.6",
-    "f32_max_abs_err": 1.7576345626935108e-05
+    "input_draw": "pcg64-raw/box-muller/v2",
+    "torch_version": "2.13.0+cu130",
+    "numpy_version": "2.5.1",
+    "f32_max_abs_err": 1.7716761107067214e-05
   },
   {
     "name": "grouped_BC",
@@ -249,10 +249,10 @@
     "has_D": true,
     "has_delta_bias": true,
     "seed": 1194888616,
-    "input_draw": "pcg64-raw/box-muller/v1",
-    "torch_version": "2.13.0+cpu",
-    "numpy_version": "2.4.6",
-    "f32_max_abs_err": 3.4806099979967087e-07
+    "input_draw": "pcg64-raw/box-muller/v2",
+    "torch_version": "2.13.0+cu130",
+    "numpy_version": "2.5.1",
+    "f32_max_abs_err": 3.3238122831846795e-07
   },
   {
     "name": "hf_mixer_layer0",

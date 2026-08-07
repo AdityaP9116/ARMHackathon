@@ -14,7 +14,8 @@ from pathlib import Path
 # 3: `h0` (initial state) and `reverse` (backward traversal) landed on separate
 #    branches, each claiming 3. Reconciled at merge -> both are in ABI 4.
 # 5: fused bidirectional entry point (arm_scan_selective_scan_bidirectional_f32).
-ABI_VERSION = 5
+# 6: Mamba-3 SISO entry point (arm_scan_mamba3_scan_f32) + its own dims struct.
+ABI_VERSION = 6
 
 _LIB_NAMES = {
     "win32": ["arm_scan_ffi.dll"],
@@ -41,6 +42,19 @@ class ArmScanDims(ctypes.Structure):
         ("len", ctypes.c_size_t),
         ("state", ctypes.c_size_t),
         ("groups", ctypes.c_size_t),
+    ]
+
+
+class ArmMamba3Dims(ctypes.Structure):
+    """Mamba-3's dims. Separate from ArmScanDims because the state is a
+    (dv, dqk) matrix per head, not a vector per channel."""
+
+    _fields_ = [
+        ("batch", ctypes.c_size_t),
+        ("heads", ctypes.c_size_t),
+        ("dv", ctypes.c_size_t),
+        ("dqk", ctypes.c_size_t),
+        ("len", ctypes.c_size_t),
     ]
 
 
@@ -102,6 +116,18 @@ def load():
                 ctypes.c_void_p,  # last_fwd
                 ctypes.c_void_p,  # last_bwd
             ]
+            lib.arm_scan_mamba3_scan_f32.restype = ctypes.c_int
+            lib.arm_scan_mamba3_scan_f32.argtypes = [
+                ctypes.POINTER(ArmMamba3Dims),
+                # q k v adt dt trap q_bias k_bias cos sin d_skip z
+                *([ctypes.c_void_p] * 12),
+                ctypes.c_int,  # reverse
+                ctypes.c_int,  # backend
+                ctypes.c_int,  # threading
+                ctypes.c_void_p,  # out
+                ctypes.c_void_p,  # last_state
+                ctypes.c_void_p,  # last_bx
+            ]
             _lib, _lib_path = lib, path
             return lib
     raise OSError(
@@ -161,3 +187,26 @@ def scan_bidir_raw(dims, ptr_u, ptr_delta, ptr_a, ptr_b, ptr_c, ptr_d_skip,
             f"arm_scan kernel error {code}: "
             f"{ERROR_NAMES.get(code, 'unknown')}"
         )
+
+
+def mamba3_raw(dims, ptrs, reverse, backend, threading, ptr_out,
+               ptr_last_state, ptr_last_bx):
+    """Call the Mamba-3 entry point.
+
+    `ptrs` is the 12 input pointers in signature order:
+    q, k, v, adt, dt, trap, q_bias, k_bias, cos, sin, d_skip, z
+    (the last two nullable). `last_state` and `last_bx` are nullable but must
+    be supplied together — the C side rejects half a carry rather than
+    defaulting, since resuming from one without the other is silently wrong.
+    """
+    lib = load()
+    if len(ptrs) != 12:
+        raise ValueError(f"expected 12 input pointers, got {len(ptrs)}")
+    rc = lib.arm_scan_mamba3_scan_f32(
+        ctypes.byref(dims), *ptrs,
+        ctypes.c_int(reverse), ctypes.c_int(backend), ctypes.c_int(threading),
+        ptr_out, ptr_last_state, ptr_last_bx,
+    )
+    if rc != 0:
+        raise RuntimeError(
+            f"arm_scan_mamba3_scan_f32 failed: {ERROR_NAMES.get(rc, rc)}")

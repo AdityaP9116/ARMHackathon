@@ -44,7 +44,10 @@ _TWO_POW_M53 = 2.0 ** -53
 # Recorded per case in golden/manifest.json. Bump it if the draws below ever
 # change, so a stale golden set fails with that fact rather than with an
 # unexplained bit mismatch.
-INPUT_DRAW_SPEC = "pcg64-raw/box-muller/v1"
+#
+# v2: `A` now takes its exp in float64. v1 took it in float32, which numpy
+#     dispatches to per-architecture SIMD, so v1 goldens do not redraw on Arm.
+INPUT_DRAW_SPEC = "pcg64-raw/box-muller/v2"
 
 
 def case_seed(name: str) -> int:
@@ -64,8 +67,17 @@ class Draw:
         return ((raw >> np.uint64(11)).astype(np.float64) + 1.0) * _TWO_POW_M53
 
     def uniform(self, lo: float, hi: float, *shape) -> np.ndarray:
+        return self.uniform64(lo, hi, *shape).astype(np.float32)
+
+    def uniform64(self, lo: float, hi: float, *shape) -> np.ndarray:
+        """As `uniform`, but left in float64.
+
+        Exists so callers that feed the result to a transcendental can do that
+        in float64 — see `draw_inputs`'s `A`, and the note there on why the
+        dtype of a ufunc's *input* decides whether the draw is portable.
+        """
         n = int(np.prod(shape)) if shape else 1
-        return (lo + (hi - lo) * self._u01(n)).reshape(shape).astype(np.float32)
+        return (lo + (hi - lo) * self._u01(n)).reshape(shape)
 
     def randn(self, *shape) -> np.ndarray:
         """Standard normals by Box-Muller, two per pair of uniforms."""
@@ -88,7 +100,21 @@ def draw_inputs(name, B, D, L, N, *, groups=None, with_z=True, with_D=True,
     u = g.randn(B, D, L)
     # A: negative, magnitudes spanning the trained-Mamba range (init is
     # -[1..N] per channel; training spreads it out).
-    A = -np.exp(g.uniform(np.log(0.5), np.log(16.0), D, N))
+    # Log-uniform over [0.5, 16], computed in float64 and cast at the end.
+    #
+    # This used to run `np.exp` on the float32 array `uniform` returns, and that
+    # was NOT portable: numpy dispatches float32 transcendentals to
+    # architecture-specific SIMD (AVX on x86, NEON on aarch64), so the two
+    # disagree in the last bit. The determinism check passed on the x86 dev box
+    # and failed on both Arm CI platforms — 22 cases, every one of them on `A`
+    # and on nothing else, because every other field goes through Box-Muller,
+    # whose log/cos/sin already operate in float64.
+    #
+    # Bounds are written as literals rather than `np.log(0.5)` / `np.log(16.0)`
+    # so that not even the endpoints depend on a library's scalar log.
+    _LOG_HALF = -0.6931471805599453  # ln(0.5)
+    _LOG_16 = 2.772588722239781  # ln(16)
+    A = (-np.exp(g.uniform64(_LOG_HALF, _LOG_16, D, N))).astype(np.float32)
 
     if softplus:
         # raw (pre-softplus) delta; bias chosen so softplus(delta+bias)
