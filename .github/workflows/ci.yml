@@ -192,8 +192,8 @@ jobs:
   # The SS2D + diffusion surface the submission is actually pitched on. Until
   # this job existed, CI gated the 1D kernel only and every app-level "gate"
   # was a manual run on one developer's laptop.
-  mri-app:
-    name: mri-app (linux-arm64)
+  app-and-mamba3:
+    name: app-and-mamba3 (linux-arm64)
     needs: test
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30

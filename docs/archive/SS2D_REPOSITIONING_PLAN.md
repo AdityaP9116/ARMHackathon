@@ -153,7 +153,7 @@ L-dimension Blelloch scan (§4.3 — the chunked two-pass already recovers most 
 
 ## 7. Sequencing to Aug 14 (submit Aug 12–13)
 
-> **Superseded (Aug 4, 2026)** by [`SUBMISSION_ENDGAME_PLAN.md`](../../SUBMISSION_ENDGAME_PLAN.md),
+> **Superseded (Aug 4, 2026)** by [`SUBMISSION_ENDGAME_PLAN.md`](SUBMISSION_ENDGAME_PLAN.md),
 > which is the single live schedule. The table that stood here assumed the Jul 20 / Jul 27
 > weeks were executed; they were not.
 >

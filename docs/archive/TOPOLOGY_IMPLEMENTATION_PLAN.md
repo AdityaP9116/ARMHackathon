@@ -1,6 +1,6 @@
 # TOPOLOGY_IMPLEMENTATION_PLAN — 1D bidirectional & 2D cross-scan (SS2D)
 
-**Status:** the plan. Written Jul 14, 2026. Companion to [`APPLICATIONS.md`](../../APPLICATIONS.md) (which topology feeds which showcase app) and [`INTEGRATION_PLAN.md`](INTEGRATION_PLAN.md) (Phases 0–6, already landed).
+**Status:** the plan. Written Jul 14, 2026. Companion to [`APPLICATIONS.md`](APPLICATIONS.md) (which topology feeds which showcase app) and [`INTEGRATION_PLAN.md`](INTEGRATION_PLAN.md) (Phases 0–6, already landed).
 
 > **Execution is tracked in per-topology logs** — what has actually been built against this plan, what it is verified against, and what broke on the way. This file stays the plan; the logs are the record.
 > - §2 (1D bidirectional) → [`BIDIRECTIONAL_LOG.md`](BIDIRECTIONAL_LOG.md). **§2.1 is landed and verified on Arm. §2.2 was measured and REJECTED** — the flip copies cost ~2%, not enough to fuse. Read that before touching §2.2.

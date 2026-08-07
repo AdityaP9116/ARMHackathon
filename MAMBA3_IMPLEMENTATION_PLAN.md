@@ -2,7 +2,7 @@
 
 **Rewritten Aug 6, 2026**, after a prior-art sweep that materially changed the
 plan. Supersedes the previous revision and the Mamba-3 sections of
-[`SUBMISSION_ENDGAME_PLAN.md`](SUBMISSION_ENDGAME_PLAN.md). Every external claim
+[`SUBMISSION_ENDGAME_PLAN.md`](docs/archive/SUBMISSION_ENDGAME_PLAN.md). Every external claim
 below was verified the same day against the actual repositories and APIs, not
 against summaries — three claims from a research digest failed that check, and
 two pieces of prior art nobody had spotted turned up.

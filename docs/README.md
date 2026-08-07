@@ -8,6 +8,11 @@ several of these documents record measurements that superseded an earlier belief
 
 | Document | What it is | Status |
 |---|---|---|
+| `SUBMISSION_ENDGAME_PLAN.md` | The Aug 4 ten-day plan, built around the MRI application and a Graviton session | **Superseded** by the Mamba-3 pivot (Aug 6). Its Part 1 "holes" analysis and the measurement-hygiene note are still worth reading |
+| `ROADMAP.md` | Week-by-week schedule and the free-tier compute strategy | **Superseded twice.** The compute-tier table (§1) is still accurate and still the plan for hardware |
+| `APPLICATIONS.md` | The brainstorm that chose one demo per scan topology | **Decision made.** Superseded by `MAMBA3_IMPLEMENTATION_PLAN.md` §0 |
+| `MRI_DIFFUSION_IMPLEMENTATION_PLAN.md` | The SS2D-Mamba diffusion MRI application, component by component | **Demoted, not abandoned.** The code still lives in `apps/mri_diffusion/` and is still CI-gated; it is simply not on the current critical path |
+| `SPIKE_FINDINGS.md` | Timeboxed feasibility check of three candidate demos | **Findings absorbed** into `MAMBA3_IMPLEMENTATION_PLAN.md`'s prior-art table. Notable for catching `mamba-rs` and for the SEMamba "outer bidirectional" result |
 | `INTEGRATION_PLAN.md` | The original build plan, Phases 0–6 | **Landed.** Goldens → scalar → NEON → rayon → C ABI → torch op → wheels → CI |
 | `TOPOLOGY_IMPLEMENTATION_PLAN.md` | How 1D bidirectional and SS2D were to be built | §2 landed (fused bidirectional). §3.1 landed (SS2D via pairs). §3.2 (fused `selective_scan_2d`) **cut by measurement** |
 | `BIDIRECTIONAL_LOG.md` | Build log for the fused bidirectional kernel | The exp-sharing result (1.58–1.75×) that SS2D is now built on |

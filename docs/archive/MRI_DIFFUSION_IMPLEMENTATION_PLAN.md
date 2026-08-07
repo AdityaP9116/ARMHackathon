@@ -3,13 +3,13 @@
 **Status: planning only — no code written or modified.** Written Jul 16, 2026.
 
 The **strategy** and the case for this direction live in
-[`MAMBA_DIFFUSION_MRI_PLAN.md`](docs/archive/MAMBA_DIFFUSION_MRI_PLAN.md). This document is the **engineering
+[`MAMBA_DIFFUSION_MRI_PLAN.md`](MAMBA_DIFFUSION_MRI_PLAN.md). This document is the **engineering
 plan**: the concrete interfaces, file-level changes, data flow, and milestone sequence needed to
 build an Arm-CPU Mamba-diffusion MRI reconstructor. It is grounded in the actual source of the three
 things it composes:
 
 - **`arm_scan`** — this repo's kernel (`selective_scan` 1D done; SS2D per
-  [`TOPOLOGY_IMPLEMENTATION_PLAN.md`](docs/archive/TOPOLOGY_IMPLEMENTATION_PLAN.md) §3).
+  [`TOPOLOGY_IMPLEMENTATION_PLAN.md`](TOPOLOGY_IMPLEMENTATION_PLAN.md) §3).
 - **NVIDIA EDM** (`NVlabs/edm`) — `EDMPrecond`, the network interface, `EDMLoss`, the Heun sampler.
 - **UT CSI Lab** (`utcsilab/ambient-diffusion-mri`, a fork of `giannisdaras/ambient-diffusion`,
   itself a fork of `NVlabs/edm`) — the MRI data pipeline, multi-coil forward operator, and the
@@ -150,7 +150,7 @@ surgical insertion point — one dispatch branch.
 ## 4. Component 2 — kernel integration (the hot path)
 
 The backbone's cross-scan calls `arm_scan`, staged exactly as
-[`TOPOLOGY_IMPLEMENTATION_PLAN.md`](docs/archive/TOPOLOGY_IMPLEMENTATION_PLAN.md) §3 sequences it:
+[`TOPOLOGY_IMPLEMENTATION_PLAN.md`](TOPOLOGY_IMPLEMENTATION_PLAN.md) §3 sequences it:
 
 **Stage 1 — unfused `ss2d.py` (ship first, no new Rust).** Given the block's `(B, D, H, W)` grid,
 build the four permuted/flipped views, stack along batch → `4B`, **one** `selective_scan` call, split
@@ -262,7 +262,7 @@ sequential recurrence.
 
 **No public Mamba-backbone EDM MRI checkpoint exists.** This decides whether the project is a Week-4
 demo or a research campaign. Routes, cheapest first (detail in
-[`MAMBA_DIFFUSION_MRI_PLAN.md`](docs/archive/MAMBA_DIFFUSION_MRI_PLAN.md) §8):
+[`MAMBA_DIFFUSION_MRI_PLAN.md`](MAMBA_DIFFUSION_MRI_PLAN.md) §8):
 
 - **Route A (recommended) — distill CSI's U-Net EDM prior into the Mamba backbone.** Their 9
   checkpoints (FastMRI brain, incl. a supervised R=1 EDM model) are the teacher. Train `MambaSS2DNet`
@@ -284,7 +284,7 @@ the Arm-CPU story.
 ## 9. Correctness & parity gates (same discipline as the kernel)
 
 Layered so a failure localizes to one component — mirroring the kernel's five-layer/four-gate template
-in [`TOPOLOGY_IMPLEMENTATION_PLAN.md`](docs/archive/TOPOLOGY_IMPLEMENTATION_PLAN.md) §1.6:
+in [`TOPOLOGY_IMPLEMENTATION_PLAN.md`](TOPOLOGY_IMPLEMENTATION_PLAN.md) §1.6:
 
 1. **Kernel level (exists):** golden-vs-f64 `< 1e-4`, NEON-vs-scalar, rayon bit-identity — already
    enforced for 1D; extended to SS2D per the topology plan.
@@ -430,8 +430,8 @@ reproducibility; `make validate`; Devpost writeup; reconcile `PROJECT_CONCEPT.md
 - **Mamba-MRI baselines (for comparison, not backbone):**
   [MambaRecon](https://github.com/yilmazkorkmaz1/MambaRecon) (WACV 2025) ·
   [DH-Mamba](https://github.com/XiaoMengLiLiLi/DH-Mamba).
-- **In-repo:** [`MAMBA_DIFFUSION_MRI_PLAN.md`](docs/archive/MAMBA_DIFFUSION_MRI_PLAN.md) (strategy) ·
-  [`TOPOLOGY_IMPLEMENTATION_PLAN.md`](docs/archive/TOPOLOGY_IMPLEMENTATION_PLAN.md) §3 (SS2D kernel) ·
-  [`PROJECT_CONCEPT.md`](PROJECT_CONCEPT.md) (decision log to amend) ·
-  [`BASELINE_TEST_PLAN.md`](docs/archive/BASELINE_TEST_PLAN.md) (benchmark surfaces).
+- **In-repo:** [`MAMBA_DIFFUSION_MRI_PLAN.md`](MAMBA_DIFFUSION_MRI_PLAN.md) (strategy) ·
+  [`TOPOLOGY_IMPLEMENTATION_PLAN.md`](TOPOLOGY_IMPLEMENTATION_PLAN.md) §3 (SS2D kernel) ·
+  [`PROJECT_CONCEPT.md`](../../PROJECT_CONCEPT.md) (decision log to amend) ·
+  [`BASELINE_TEST_PLAN.md`](BASELINE_TEST_PLAN.md) (benchmark surfaces).
 ```

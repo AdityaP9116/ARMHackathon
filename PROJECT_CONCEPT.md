@@ -5,11 +5,50 @@
 **Track:** Cloud AI
 
 > This document is the **decision log** — what we chose, what we rejected, and why.
-> For the pitch and deliverables see [`README.md`](./README.md); for the build/test plan and schedule see [`ROADMAP.md`](./ROADMAP.md). This file avoids duplicating those.
+> For the pitch and deliverables see [`README.md`](./README.md); for the build/test plan and schedule see [`ROADMAP.md`](docs/archive/ROADMAP.md). This file avoids duplicating those.
 
 ---
 
-## Final scope (Aug 4, 2026) — three topologies, three demos
+## AMENDED Aug 6–7, 2026 — the Mamba-3 pivot happened
+
+**This supersedes the Aug 4 scope below, including its "Rejected" row on Mamba-3.**
+That row said pivoting "trades a measured submission for an unmeasured one" and left the
+door open with: *"a half-day spike may show our existing scan can serve the Mamba-3 SISO
+recurrence with only a 2-tap change to Pass A."*
+
+The spike happened, and it was **half right in a way worth recording**. The 2-tap is indeed
+one extra term and Pass B's *equation* is unchanged — but Mamba-1's state is 16 floats living
+in four NEON registers, which is the entire reason that kernel is fast, while Mamba-3's is a
+`dv x dqk` **matrix** (8–32 KB). It could not be a flag on the existing scan; it needed its
+own kernel family. See `MAMBA3_KERNEL_WORKPLAN.md` §14.2.
+
+**What changed the decision:** a prior-art sweep (verified repo by repo, Aug 6) moved two of
+the three demo slots.
+
+| Slot | Aug 4 plan | What the sweep found | Now |
+|---|---|---|---|
+| 1D bidirectional | Speech enhancement (SEMamba) | SEMamba is *outer* bidirectional — separate weights per direction — so our fused kernel **cannot help it**. VideoMamba later turned out identical. And `burn-mamba` already ships bidirectional Mamba-3 | **No novelty claim.** Kept as a near-free capability |
+| 2D cross-scan | Diffusion MRI | The app's quality gate has never passed and there is no trained prior. Meanwhile **no CPU implementation of any 2D Mamba-3 exists anywhere** | **2D Mamba-3 is the headline.** MRI **demoted, not deleted** — still CI-gated as the only end-to-end SS2D exercise |
+| 1D unidirectional | Long context | Unchanged, and now stronger: Mamba-3 has published weights *and* an authoritative oracle | **The evidence track** |
+
+**Locked as of Aug 7:** two kernel families in one library (Mamba-1 shipped and measured;
+Mamba-3 shipped and gated to 4.47 bf16 ULP against ground truth captured from the official
+GPU kernels). They are **not** cross-compatible — Mamba-1 uses a per-state-element decay
+vector, Mamba-3 a scalar decay per head.
+
+**Also rejected on the way, with reasons:** the Mamba-2/SSD substrate route (target Mamba-3
+directly instead — the substrate detour buys correctness gates we already have); MIMO and the
+chunked dual form (the dual form is GEMM-shaped and would trade away the sequential-recurrence
+moat); and a resumable Mamba-3 decode path, which is **structurally impossible via a carry** —
+`scale_t` depends on `dt_{t+1}`, so the trapezoid looks forward.
+
+**Standing caution:** three separate research digests handed to this project asserted Mamba-3
+connections that did not exist (MFil-Mamba, Akasha 2, a VNCT code release). Verify against the
+repo or the paper before a claim enters a document.
+
+---
+
+## Superseded — Final scope (Aug 4, 2026) — three topologies, three demos
 
 **This supersedes the paragraph below**, which locked MRI as *the* single application. It
 does not change the kernel work or the claims; it changes what we demonstrate them on.
