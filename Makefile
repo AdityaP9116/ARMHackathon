@@ -41,6 +41,7 @@ test-app: build
 # tier that way) nor of `validate` (the judge path is the Mamba-1 submission).
 test-mamba3:
 	$(PY) tests/verify_golden_mamba3.py
+	$(PY) tests/check_mamba3_op.py
 
 # The minutes-long ones: in-process prior training. CI and pre-release only.
 test-app-slow: build

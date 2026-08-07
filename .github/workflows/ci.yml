@@ -241,7 +241,11 @@ jobs:
       # the official GPU kernels (tests/golden/mamba3/). Runs in ~1s and needs
       # no GPU -- capturing was the only step that did. Guards against a
       # regression in the reference that every later Mamba-3 stage is gated on.
-      - name: Mamba-3 reference vs official-kernel goldens
+      # Two gates: the CPU reference vs the captured official-kernel ground
+      # truth, and the torch op end to end (angle pre-pass, the head-major ->
+      # time-major permute, pointer marshalling, and torch.compile
+      # composability -- none of which the Rust or FFI tests cover).
+      - name: Mamba-3 reference + torch op vs official-kernel goldens
         working-directory: .
         run: make test-mamba3 PY=python3
       # The fastMRI loader on synthetic files shaped like the real ones. The
