@@ -116,6 +116,7 @@ checkpoint end to end.
 | | |
 |---|---|
 | [`MAMBA3_IMPLEMENTATION_PLAN.md`](./MAMBA3_IMPLEMENTATION_PLAN.md) | Current plan: stages, prior art, claims policy |
+| [`THREE_PATHS_INTEGRATION.md`](./THREE_PATHS_INTEGRATION.md) | The three demonstrations, scoped: what each can and cannot claim |
 | [`MAMBA3_KERNEL_WORKPLAN.md`](./MAMBA3_KERNEL_WORKPLAN.md) | File-by-file execution, and the audit of the existing kernel |
 | [`PROJECT_CONCEPT.md`](./PROJECT_CONCEPT.md) | Decision log — what was chosen, what was rejected, why |
 | [`docs/`](./docs/README.md) | The working record: superseded plans, measurement logs, diagnoses |

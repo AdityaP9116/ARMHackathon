@@ -9,6 +9,11 @@ two pieces of prior art nobody had spotted turned up.
 
 ---
 
+> **Execution plan for the three paths:
+> [`THREE_PATHS_INTEGRATION.md`](THREE_PATHS_INTEGRATION.md)** (Aug 7) — written after the
+> kernel itself was finished, and grounded in the real checkpoint's parameter table rather
+> than in estimates.
+
 ## 0. The shape of the project, in one paragraph
 
 An **Arm-optimised Mamba-3 kernel in Rust** (NEON + chunked scan + rayon),

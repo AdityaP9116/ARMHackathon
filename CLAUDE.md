@@ -111,7 +111,8 @@ bench/                   bench_op.py, bench_e2e.py, bench_ss2d.py, bench_mamba3.
 Docs live in three places — **root is judge-facing and current only**:
 
 - **root** — `README.md` (pitch), `PROJECT_CONCEPT.md` (decision log),
-  `MAMBA3_IMPLEMENTATION_PLAN.md` (the plan), `MAMBA3_KERNEL_WORKPLAN.md` (execution),
+  `MAMBA3_IMPLEMENTATION_PLAN.md` (the plan), `MAMBA3_KERNEL_WORKPLAN.md` (kernel execution),
+  `THREE_PATHS_INTEGRATION.md` (the three demonstrations),
   `HANDOFF.md` (session state).
 - **`docs/archive/`** — the working record: superseded plans, build logs, measurement history,
   diagnoses. Kept because how a decision was reached is itself evidence. **Not** judge-facing,
