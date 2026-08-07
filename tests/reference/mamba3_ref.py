@@ -168,6 +168,21 @@ def mamba3_siso_ref(Q, K, V, ADT, DT, Trap, Q_bias, K_bias, Angles,
     b, l, _, dv = V.shape
     h, dqk = Q_bias.shape
 
+    # SISO means one B/C group shared across all heads. We index group 0 below,
+    # so a multi-group input would be silently truncated — the exact
+    # "wrong but green" failure this repo keeps catching. Fail loudly instead.
+    if Q.shape[2] != 1 or K.shape[2] != 1:
+        raise NotImplementedError(
+            f"SISO reference expects a single B/C group, got Q group axis "
+            f"{Q.shape[2]} and K {K.shape[2]}. Multi-group (ngroups>1) and "
+            f"MIMO (rank>1) are out of scope — see MAMBA3_IMPLEMENTATION_PLAN "
+            f"section 0. Extending this needs a per-group gather, not a "
+            f"broadcast.")
+    if Angles.shape[-1] > dqk // 2:
+        raise ValueError(
+            f"Angles has {Angles.shape[-1]} entries but only {dqk // 2} "
+            f"rotation pairs exist for headdim {dqk}.")
+
     lam = torch.sigmoid(Trap)                      # (b, h, l)
     gamma = DT * lam
     # shifted_gamma_t = dt_{t+1} * (1 - lam_{t+1}); the last step has no

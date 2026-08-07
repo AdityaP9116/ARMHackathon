@@ -237,6 +237,13 @@ jobs:
       - name: Phase D pipeline gate (no trained prior required)
         working-directory: .
         run: python3 apps/mri_diffusion/tests/test_phase_d_pipeline.py
+      # Mamba-3 Stage-1 gate: the CPU reference vs ground truth captured from
+      # the official GPU kernels (tests/golden/mamba3/). Runs in ~1s and needs
+      # no GPU -- capturing was the only step that did. Guards against a
+      # regression in the reference that every later Mamba-3 stage is gated on.
+      - name: Mamba-3 reference vs official-kernel goldens
+        working-directory: .
+        run: make test-mamba3 PY=python3
       # The fastMRI loader on synthetic files shaped like the real ones. The
       # dataset cannot be committed (Data Sharing Agreement), so this is the
       # only way to keep that path from rotting.

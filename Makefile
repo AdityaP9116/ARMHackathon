@@ -13,8 +13,9 @@ CACHE ?= data/knee_128.pt
 PRIOR ?= data/prior.pt
 RES   ?= 128
 
-.PHONY: validate build test test-app test-app-slow bench demo goldens \
-        goldens-2d prepare-data calibrate train validate-prior train-session
+.PHONY: validate build test test-app test-app-slow test-mamba3 bench demo \
+        goldens goldens-2d prepare-data calibrate train validate-prior \
+        train-session
 
 build:
 	cd kernel && cargo build --release -p arm-scan-ffi
@@ -32,6 +33,14 @@ test-app: build
 	$(PY) apps/mri_diffusion/tests/test_ss2d_pair_parity.py
 	$(PY) apps/mri_diffusion/tests/test_phase_c_parity.py
 	$(PY) apps/mri_diffusion/tests/test_phase_d_pipeline.py
+
+# Mamba-3 (post-submission track, feature/mamba3 work): does the CPU reference
+# still reproduce the official kernel's captured ground truth? Needs torch but
+# NOT a GPU -- that is the whole point of Stage 0. Deliberately NOT part of
+# `test` (which must stay torch-free; a previous change broke CI's torch-free
+# tier that way) nor of `validate` (the judge path is the Mamba-1 submission).
+test-mamba3:
+	$(PY) tests/verify_golden_mamba3.py
 
 # The minutes-long ones: in-process prior training. CI and pre-release only.
 test-app-slow: build
