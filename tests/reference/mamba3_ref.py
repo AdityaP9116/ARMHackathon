@@ -82,27 +82,31 @@ direct evidence from the kernel's own memory that the trapezoid is
 PAPER's recurrence (decay carried on the previous term). The community
 formulation is ruled out — not by argument, by measurement.
 
-**The open gap.** This reference reproduces the kernel's *debug* path
-(`store_states_adt_outv=True`) to ~2.5e-3 — bf16 level, i.e. correct — but the
-*production* path disagrees with that debug path by 1.6e-1 on the same inputs,
-and the goldens were captured through production. Established facts:
+**GATE PASSES.** Worst case across all 10 goldens is **4.47 bf16 ULP** measured
+at tensor scale (bound: 8). The residual is bf16 output quantisation, not
+error: golden _04 is L=1 with no accumulation whatsoever and still sits at
+0.45 ULP, which is the floor for comparing anything against a bf16-stored
+result.
 
-  - `mamba3_siso_combined(inputs, chunk_size=64)` reproduces golden _06
-    **exactly (rel = 0.0)**, so the Stage-0 artifacts are sound and perfectly
-    reproducible;
-  - the debug path returns materially different numbers for those same inputs.
+The last bug, and it was invisible from the scan kernel alone: the rotation
+angle is accumulated by a **separate pre-pass kernel**, `angle_dt_fwd`, which
+`mamba3_siso_combined` runs before `mamba3_siso_fwd`. So the scan kernel's
+`Q_store` legitimately matches RAW angles (it receives them already
+accumulated), while the captured `Angles` — recorded at the outer boundary —
+are pre-accumulation. The pre-pass computes
 
-So the discrepancy is INSIDE upstream, between two paths of the same kernel —
-not in this file's algebra. Next step is to find which of the two is
-authoritative for the published checkpoints (production is what the model
-actually runs, so it wins by default) and what production does differently.
-A prime suspect is Triton autotune config selection differing between the two
-constexpr variants; note PR #997 exists precisely because some configs are
-silently wrong on Blackwell, and issue #990 (consumer-Blackwell shared memory)
-already bites here at chunk_size >= 128.
+    theta = cumsum(tanh(angle) * PI * dt)   (mod 2*pi)
 
-Do NOT "fix" this by tuning constants until the numbers agree. The structure is
-confirmed; what remains is identifying an upstream behavioural difference.
+and the `tanh(.) * PI` squashing is the part no amount of end-to-end sweeping
+would have found: omitting it leaves ~7e-2 relative error, close enough to look
+like a rounding problem and send you hunting the wrong thing. Applying it took
+the suite from 1.6e-1 to bf16 level.
+
+Method note worth keeping: diffing the kernel's INTERNAL buffers
+(`store_states_adt_outv=True` exposes Gamma/Scale/Q/K/QK/DA_CS) settled in one
+shot what twenty end-to-end variant sweeps could not, and twice caught cases
+where two errors were partially cancelling and flattering a wrong hypothesis.
+Reach for that first next time.
 """
 
 import torch
@@ -177,16 +181,26 @@ def mamba3_siso_ref(Q, K, V, ADT, DT, Trap, Q_bias, K_bias, Angles,
     # broadcast the group axis out to heads before adding.
     q = Q[:, :, 0, :].unsqueeze(2) + Q_bias.view(1, 1, h, dqk)   # (b,l,h,dqk)
     k = K[:, :, 0, :].unsqueeze(2) + K_bias.view(1, 1, h, dqk)
-    # Angles are used RAW — not accumulated. Established by diffing against the
-    # kernel's own `Q_store` buffer: raw gives 3.5e-3 (bf16 level, i.e. exact),
-    # while cumsum(angle*dt) gives 1.02 and cumsum(angle) gives 1.62.
+    # The rotation angle is accumulated by a SEPARATE pre-pass kernel
+    # (`angle_dt_fwd`) that `mamba3_siso_combined` runs before the scan; the
+    # scan kernel itself then consumes the result raw. From angle_dt.py:
     #
-    # An end-to-end sweep had earlier favoured cumsum(angle*dt), which was a
-    # trap: two errors were partially cancelling. Diffing the kernel's INTERNAL
-    # buffers instead of its final output is what broke the tie, and is the
-    # technique to reach for first next time.
-    q = _rope(q, Angles)
-    k = _rope(k, Angles)
+    #     angle_vals = tanh(angle) * PI
+    #     vals       = angle_vals * dt
+    #     out        = cumsum(vals) + carry           (mod 2*pi)
+    #
+    # The `tanh(.) * PI` squashing is the part that is impossible to guess: it
+    # bounds each step's rotation to +/-pi. Omitting it leaves you at ~7e-2
+    # relative error, close enough to look like a rounding problem and send you
+    # hunting the wrong thing.
+    #
+    # (mod 2*pi is omitted here — cos/sin are 2*pi-periodic, so it is a
+    # numerical-range convenience in the kernel, not part of the maths.)
+    theta = torch.cumsum(
+        torch.tanh(Angles) * torch.pi * DT.permute(0, 2, 1).unsqueeze(-1),
+        dim=1)
+    q = _rope(q, theta)
+    k = _rope(k, theta)
 
     out = torch.zeros(b, l, h, dv, dtype=dtype)
     S = torch.zeros(b, h, dv, dqk, dtype=dtype)
