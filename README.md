@@ -92,7 +92,14 @@ against it. Patched HF mamba-130m produces **token-identical** greedy output.
 ```bash
 git clone https://github.com/AdityaP9116/ARMHackathon && cd ARMHackathon
 make validate      # kernel + SS2D + diffusion gates, ~5 min, no data, no AWS account
-make test-mamba3   # Mamba-3 reference + torch op vs the captured official-kernel truth
+make test-mamba3   # Mamba-3 reference + torch op + Path A mixer vs official-kernel truth
+```
+
+Running the real 187M model on your CPU (downloads ~357 MB):
+
+```bash
+make test-mamba3-model    # logits vs the official GPU model
+python bench/bench_mamba3_lm.py --quick
 ```
 
 Runs on AWS Graviton, Oracle Ampere, Raspberry Pi 5 and Apple Silicon. Correctness validation
@@ -100,16 +107,23 @@ never needs credentials.
 
 ## Status — honestly
 
-**Done:** both kernels, every correctness gate, the PyTorch integration, wheels, and CI across
-three platforms.
+**Done:** both kernels, every correctness gate, the PyTorch integration, wheels, CI across three
+platforms — and **the real 187M Mamba-3 running end to end on CPU** (`apps/mamba3_lm/`). The
+mixer matches the official block to 1.36 bf16 ULP; the logits agree on 98.05% of argmax
+positions, against a *measured* reference-vs-itself floor of 98.83%.
+
+That floor is worth a sentence, because it surprised us: the official kernel is
+`triton.autotune`d, so it picks its config by timing candidates at first call. Two runs of the
+**official model** on the same GPU with the same seed disagree on up to 5/256 tokens, while two
+forward passes inside one process are bit-identical. Our agreement sits inside that band, so
+the gate is written against the measured floor rather than an unreachable 100%.
 
 **Not done, and it is the gap that matters: there are no dedicated-hardware numbers.** Every
 timing in this repository comes from an x86 box or a shared 4-core CI runner, which this
 project's own rules classify as provisional. A Graviton session is the outstanding work, and no
 amount of kernel engineering substitutes for it.
 
-Also outstanding: wiring the 2D cross-scan to the Mamba-3 primitive, and running the real 187M
-checkpoint end to end.
+Also outstanding: wiring the 2D cross-scan to the Mamba-3 primitive, and the MIMO capture probe.
 
 ## Where to look
 

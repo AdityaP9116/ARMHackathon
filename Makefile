@@ -42,6 +42,15 @@ test-app: build
 test-mamba3:
 	$(PY) tests/verify_golden_mamba3.py
 	$(PY) tests/check_mamba3_op.py
+	$(PY) tests/check_mamba3_block.py
+
+# Path A end to end: the published 187M checkpoint, on CPU, through our kernel.
+# Kept OUT of `test-mamba3` because it downloads ~357 MB, which no CI job
+# should do on every push. `check_mamba3_block` is the cheap proxy that runs
+# there instead: it carries the real layer-0/1 weights inside the golden, so it
+# catches the same plumbing bugs without the download.
+test-mamba3-model:
+	$(PY) tests/check_mamba3_model.py
 
 # The minutes-long ones: in-process prior training. CI and pre-release only.
 test-app-slow: build

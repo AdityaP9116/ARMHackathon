@@ -22,10 +22,36 @@ within one family rather than three unrelated models: it is the honest maximum.
 
 ---
 
-## Path A — 1D SISO end to end *(Stage 6; ~1.5–2 days)*
+## Path A — 1D SISO end to end ✅ *(Stage 6 — DONE, Aug 7 2026)*
 
 **Goal:** run the real `state-spaces/mamba3-siso-187m` on Arm CPU through our kernel, and
 prove it is the same model by matching logits.
+
+**Status: complete and gated.** The 187M checkpoint loads into `apps/mamba3_lm/` and runs on
+CPU with the recurrence on our kernel.
+
+| Gate | Result |
+|---|---|
+| `tests/check_mamba3_block.py` — mixer vs the real block, real weights | **1.36 bf16 ULP** (bound 16) |
+| `tests/check_mamba3_model.py` — logits vs the real model | **98.05%** argmax, drift 4.5e-3 of logit range |
+| Reference vs **itself**, across processes | **98.83%** — the floor; see below |
+
+Three findings worth carrying forward:
+
+1. **There is no `conv1d` in Mamba-3.** Mamba-1 and Mamba-2 both open the mixer with a short
+   depthwise convolution; Mamba-3 dropped it. The mixer has exactly **8** parameters. Do not
+   add one back by analogy — the checkpoint has no weights for it.
+2. **`A` is data-dependent**, not a learned `A_log`. It comes out of `in_proj` and through
+   `heavy_tail`, so there is no `A` parameter to load.
+3. **Ground truth is not reproducible across processes.** Two invocations of the *official*
+   model disagree on up to 5/256 argmax positions at ~2.9e-3 relative logit drift, while two
+   forwards *within* one process are bit-identical. That localises the cause to
+   `triton.autotune` choosing a config by timing. **Our 98.05% therefore sits inside the
+   reference's own noise band, not below it** — the gate cites the measured floor rather than
+   comparing against an unattainable 100%.
+
+The model gate is deliberately **not** in CI (357 MB download); `check_mamba3_block.py` is the
+cheap proxy that runs on every push, carrying the real layer-0/1 weights inside the golden.
 
 **Why it cannot be done by importing upstream:** `mamba_ssm.modules.mamba3` imports Triton /
 TileLang / CuTe and asserts when they are missing; the package will not even install without
@@ -66,38 +92,65 @@ Inside the mixer, in order:
 d_state)` — and must be squeezed to the kernel's `(heads, dqk)`; and the checkpoint calls them
 `B_bias`/`C_bias` while the kernel signature calls them `Q_bias`/`K_bias`.
 
-### Files
+### Files *(all written)*
 
 ```
 apps/mamba3_lm/block.py     the Mamba3 mixer in plain PyTorch, scan -> arm_scan
 apps/mamba3_lm/model.py     embedding, layers, RMSNorm, gated MLP, tied head
 apps/mamba3_lm/load.py      checkpoint -> our modules, driven by model_shape.json
-tests/check_mamba3_model.py the gate
+tests/check_mamba3_block.py the mixer gate (cheap, in CI)
+tests/check_mamba3_model.py the logits gate (needs the checkpoint)
 bench/bench_mamba3_lm.py    prefill / long-context, vs eager and torch.compile
 ```
 
-### Gates
+### Gates, and why they are shaped this way
 
-- **Logits match `model_forward.npz`** — argmax exact, subset logits and logsumexp within fp32
-  tolerance. This is the "we run *the real model*" proof and the only accuracy claim the
-  project can make.
-- Layer-0 mixer output matches a captured golden before the full model is attempted, so a
-  plumbing bug localises to one block instead of twelve.
+- **Mixer vs the real block first.** An end-to-end logits mismatch says "something is wrong
+  somewhere in twelve identical layers"; this says *which of the eight parameters or six steps*
+  is wrong, on layer 0, in one forward. Proven to discriminate by negative control — injecting
+  the three most likely bugs (B/C swapped, `Q_bias`/`K_bias` swapped, `heavy_tail` replaced by
+  softplus) moves it from **0.75** ULP to **170.8 / 177.8 / 91.3**, all far outside the bound.
+- **Logits gate on argmax + subset + logsumexp**, not on a raw logit tensor (131 MB).
+- **The argmax test is on *explained* flips, not on a rate.** A bare agreement rate says
+  nothing about whether flipped tokens were coin tosses or confident errors, and 98.05% against
+  a 0.98 threshold is a coin flip away from red. The real test is that every disagreement has a
+  top-2 margin the measured drift can account for: median margin at disagreeing positions is
+  **0.0115** against **0.3809** at agreeing ones — a 33× gap. Unexplained flips: **0**.
 
 ### What it demonstrates
 
-Not "N× faster" — **"this model cannot run on a CPU-only machine at all, and we made it run on
-Arm at constant memory."** Long context is the sharpest form: our memory is flat in `L` while
-the reference materialises intermediates that grow linearly, and `torch.compile`'s compile time
-grows with `L` (measured 59.9 s → 532.8 s from L=256 → 2048 on the Mamba-1 path).
+Not "N× faster" — **"this model cannot run on a CPU-only machine at all, and we made it run."**
+The baseline is not upstream (there is no upstream CPU path); it is the PyTorch recurrence a CPU
+user would have to write, benchmarked **in fp32, not the f64 oracle** — timing an f64 baseline
+against an fp32 kernel would inflate every number here.
+
+First measurements, `bench/bench_mamba3_lm.py`, 187M, 16 threads:
+
+| L | our kernel | PyTorch eager | speedup | `torch.compile` | vs compiled | compile time |
+|---|---|---|---|---|---|---|
+| 128 | 125.7 ms | 341.6 ms | 2.72× | 174.5 ms | 1.39× | 35.5 s |
+| 256 | 253.0 ms | 627.1 ms | 2.48× | 404.1 ms | 1.60× | 60.2 s |
+| 512 | 389.2 ms | 719.7 ms | 1.85× | *(skipped)* | — | — |
+| 1024 | 693.7 ms | 2538.8 ms | 3.66× | *(skipped)* | — | — |
+
+**These are x86 numbers and are not the claim.** This box is not the target, not quiesced, and
+the run-to-run spread (1.85× at L=512 against 3.66× at L=1024) is wide enough that only the
+order of magnitude should be read. They also exercise the **scalar/blocked** path — NEON is not
+compiled on x86 — so they are, if anything, a floor. Graviton is still the gap.
+
+Compile time is itself part of the story and is why the compiled column stops at 256: 35.5 s →
+60.2 s across one doubling of `L`, consistent with the Mamba-1 path's measured 59.9 s → 532.8 s
+from L=256 → 2048. A sequential scan gives `torch.compile` a graph that grows with the sequence.
 
 ### Risks
 
-| Risk | Mitigation |
+All three risks flagged before the work turned out to be resolvable by reading, not guessing:
+
+| Risk | How it actually resolved |
 |---|---|
-| `fused_add_norm` / residual-in-fp32 semantics differ subtly | Compare layer 0 before the stack; both are transcription, not invention |
-| Tied embeddings applied wrongly | `model_shape.json` has no separate `lm_head` — tying is the only consistent reading |
-| Gated-MLP gate/value order flipped | 50/50 guess; check both against layer-0 golden, cheap |
+| `fused_add_norm` / residual-in-fp32 semantics differ subtly | Upstream ships the unfused branch too, and it is the same computation — `layer_norm_fn(..., prenorm=True)` is *defined* as `(norm(h+res), (h+res).float())`. Fusion is a memory optimisation. `residual_in_fp32=True` is kept because that one does change results |
+| Tied embeddings applied wrongly | Not inferred — **verified**: the checkpoint's `lm_head.weight` and `backbone.embedding.weight` are the *same tensor object* (`is` → True). `load.py` refuses to drop the alias if they ever differ |
+| Gated-MLP gate/value order flipped | Not a 50/50 after all — upstream is `y, gate = y.chunk(2, -1)` then `y * silu(gate)`, i.e. **value first**. Read, not guessed |
 
 ---
 
@@ -199,9 +252,9 @@ its authors intended. This must appear in the writeup, not be buried.
 
 | Order | Item | Why here |
 |---|---|---|
-| 1 | **B0 capture probe** | 1 hour, hard go/no-go, and it needs the GPU box — settle it before planning around it |
-| 2 | **C1 causal 2D** | Smallest item, zero new kernel code, unblocks the headline claim |
-| 3 | **Path A** | The only accuracy evidence the project can produce |
+| ~~1~~ | ~~**Path A**~~ | ✅ **done Aug 7** — the only accuracy evidence the project can produce |
+| 2 | **B0 capture probe** | 1 hour, hard go/no-go, and it needs the GPU box — settle it before planning around it |
+| 3 | **C1 causal 2D** | Smallest item, zero new kernel code, unblocks the headline claim |
 | 4 | **B1–B4** *(if B0 green)* | Second real-weights path |
 | 5 | **C2 non-causal** | Highest novelty, thinnest moat — last |
 

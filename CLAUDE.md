@@ -42,13 +42,20 @@ exists. Bidirectional is a near-free capability with **no novelty claim**: `burn
 bidirectional Mamba-3, and both candidate applications (SEMamba, VideoMamba) turned out to use
 *outer* bidirectional — separate weights per direction — which our fused kernel cannot help.
 
+**Path A: complete (Aug 7).** `apps/mamba3_lm/` runs the published `mamba3-siso-187m` on CPU
+with the recurrence on our kernel — the mixer matches the real block to **1.36 bf16 ULP** and
+the logits match to **98.05%** argmax against a measured reference-vs-itself floor of **98.83%**
+(the official kernel is `triton.autotune`d and so is not reproducible across processes; it *is*
+bit-identical within one). First x86 numbers: **1.85–3.66×** over the PyTorch recurrence,
+**1.39–1.60×** over `torch.compile`.
+
 Not done, in priority order:
 
 1. **No dedicated-hardware numbers, for anything.** Every timing is x86 or a shared 4-core
    runner. This is the existential gap for a Cloud-track entry and no kernel work substitutes.
 2. **2D cross-scan not yet wired to the Mamba-3 primitive.** `ss2d_scan`'s machinery is
    recurrence-agnostic; the `scan_pair` seam still speaks Mamba-1's parameter list.
-3. **The real 187M checkpoint has not been run end to end** (Stage 6).
+3. **MIMO is unprobed** — Path B is gated on a 1-hour capture probe that has not been run.
 4. **Performance is unmeasured and untuned.** `TILE = 32` in the blocked kernel is a placeholder
    that has never been swept, and there is no phase profile for Mamba-3.
 
@@ -103,7 +110,9 @@ python/arm_scan/         _ffi.py (ctypes loader), op.py (torch custom_op), patch
 tests/                   golden_inputs.py (torch-free draws + case table), gen_golden.py,
                          verify_golden.py (independent, numpy-only), golden/*.npz,
                          reference/selective_scan_ref.py (vendored ground truth), check_*.py
-bench/                   bench_op.py, bench_e2e.py, bench_ss2d.py, bench_mamba3.py
+apps/mamba3_lm/          Path A: the 187M Mamba-3 SISO LM in plain PyTorch, scan -> our kernel
+bench/                   bench_op.py, bench_e2e.py, bench_ss2d.py, bench_mamba3.py,
+                         bench_mamba3_lm.py
                          (all vs eager AND torch.compile; correctness gates speed)
 .github/workflows/ci.yml arm64 + macOS + x86: fmt, clippy, tests, golden-through-C-ABI, wheels, bench
 ```
@@ -138,7 +147,16 @@ python tests/verify_golden.py            # independent re-derivation of the gold
 python bench/bench_op.py [--quick]       # kernel vs eager vs torch.compile
 python bench/bench_e2e.py                # mamba-130m generate(), patched vs unpatched
 python scripts/build_wheel.py            # platform-tagged wheel
+
+make test-mamba3                         # Mamba-3: reference, torch op, Path A mixer
+make test-mamba3-model                   # Path A end to end (downloads ~357 MB)
+python bench/bench_mamba3_lm.py [--quick]  # the real 187M LM vs the PyTorch recurrence
 ```
+
+**Regenerating the Mamba-3 goldens needs a GPU box and `~/venv-arm`** (the CUDA env with
+`mamba_ssm`); everything else runs on the CPU-only system python:
+`~/venv-arm/bin/python tools/capture_mamba3_goldens.py`. It refuses to run without upstream
+PR #997 and self-checks its exit gate.
 
 Run correctness under multiple thread counts (`RAYON_NUM_THREADS ∈ {1,2,8}`) — parallel output must be bit-identical to sequential.
 

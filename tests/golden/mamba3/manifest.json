@@ -827,6 +827,16 @@
     }
   ],
   "model": "state-spaces/mamba3-siso-187m",
+  "reference_self_consistency": {
+    "within_process_bit_identical": true,
+    "note": "within-process: two forwards in ONE run. across-process: this run vs the previously captured model_forward.npz. The second is the real reproducibility floor; see the docstring for why they differ (triton.autotune picks by timing).",
+    "across_process_argmax_agreement": 0.98828125,
+    "across_process_argmax_disagreements": 3,
+    "positions": 256,
+    "across_process_max_abs_logit_delta": 0.09990644454956055,
+    "across_process_max_rel_logit_delta": 0.002933092415332794,
+    "logit_subset_range": 34.06181335449219
+  },
   "model_forward": {
     "seq": 256,
     "vocab": 128256,
@@ -841,6 +851,124 @@
     ],
     "note": "full logits deliberately not stored; see save_model_forward"
   },
+  "block_io": [
+    {
+      "name": "block_io_00",
+      "layer_idx": 0,
+      "in_dtype": "torch.float32",
+      "out_dtype": "torch.float32",
+      "bf16_params": [
+        "B_bias",
+        "B_norm.weight",
+        "C_bias",
+        "C_norm.weight",
+        "D",
+        "dt_bias",
+        "in_proj.weight",
+        "out_proj.weight"
+      ],
+      "arrays": {
+        "hidden_in": [
+          1,
+          256,
+          768
+        ],
+        "hidden_out": [
+          1,
+          256,
+          768
+        ],
+        "param_dt_bias": [
+          24
+        ],
+        "param_B_bias": [
+          24,
+          1,
+          128
+        ],
+        "param_C_bias": [
+          24,
+          1,
+          128
+        ],
+        "param_D": [
+          24
+        ],
+        "param_in_proj.weight": [
+          3432,
+          768
+        ],
+        "param_B_norm.weight": [
+          128
+        ],
+        "param_C_norm.weight": [
+          128
+        ],
+        "param_out_proj.weight": [
+          768,
+          1536
+        ]
+      }
+    },
+    {
+      "name": "block_io_01",
+      "layer_idx": 1,
+      "in_dtype": "torch.float32",
+      "out_dtype": "torch.float32",
+      "bf16_params": [
+        "B_bias",
+        "B_norm.weight",
+        "C_bias",
+        "C_norm.weight",
+        "D",
+        "dt_bias",
+        "in_proj.weight",
+        "out_proj.weight"
+      ],
+      "arrays": {
+        "hidden_in": [
+          1,
+          256,
+          768
+        ],
+        "hidden_out": [
+          1,
+          256,
+          768
+        ],
+        "param_dt_bias": [
+          24
+        ],
+        "param_B_bias": [
+          24,
+          1,
+          128
+        ],
+        "param_C_bias": [
+          24,
+          1,
+          128
+        ],
+        "param_D": [
+          24
+        ],
+        "param_in_proj.weight": [
+          3432,
+          768
+        ],
+        "param_B_norm.weight": [
+          128
+        ],
+        "param_C_norm.weight": [
+          128
+        ],
+        "param_out_proj.weight": [
+          768,
+          1536
+        ]
+      }
+    }
+  ],
   "n_parameters": 146,
   "sweep": [
     {

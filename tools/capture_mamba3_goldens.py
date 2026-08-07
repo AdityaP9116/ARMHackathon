@@ -93,6 +93,11 @@ from pathlib import Path
 import numpy as np
 import torch
 
+# The sweep seeds itself with the same stable, sha256-derived per-case seed the
+# Mamba-1 goldens draw from, so a sweep case redraws identically on any box.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
+from golden_inputs import case_seed  # noqa: E402
+
 
 def find_scan_fn():
     """Locate the official SISO scan without hardcoding a module path.
@@ -210,20 +215,29 @@ class Capture:
         return out
 
 
-def capture_block_io(model, outdir, manifest, limit=4):
-    """Record every Mamba3 BLOCK's input and output, as a fallback.
+def install_block_hooks(model, limit=2):
+    """Hook every Mamba3 BLOCK to record its input and output tensors.
 
-    If the inner kernel cannot be wrapped — renamed, inlined, or dispatched
-    somewhere we did not find — block-level input/output still lets Stage 6
-    validate a CPU reimplementation end-to-end. It just cannot isolate the
-    scan from the projections around it, so it is the weaker artifact. Capture
-    both when possible.
+    The scan-level goldens isolate the recurrence, which is what the *kernel*
+    is validated against. This records one level out — the whole mixer, from
+    hidden states in to hidden states out — which is what Path A's plain-PyTorch
+    reimplementation is validated against.
+
+    Why both, rather than just the end-to-end logits: a logits mismatch says
+    "something is wrong somewhere in twelve layers". A layer-0 block mismatch
+    says which of `in_proj`, the heavy-tail `A`, the softplus `dt`, the B/C
+    norms, the angle pre-pass or `out_proj` is wrong. That is the difference
+    between an afternoon and a week — the same lesson Stage 1 taught when the
+    RoPE convention was wrong and only a boundary-level oracle localised it.
+
+    Call before the forward pass; pass the result to `save_block_io`. Returns
+    `(recorded, handles)`, and the caller MUST remove the handles.
     """
     try:
         from mamba_ssm.modules.mamba3 import Mamba3
     except Exception as exc:  # noqa: BLE001
         print(f"  (block hook unavailable: {exc})")
-        return 0
+        return [], []
 
     recorded, handles = [], []
 
@@ -233,15 +247,144 @@ def capture_block_io(model, outdir, manifest, limit=4):
         t_in = inp[0] if isinstance(inp, tuple) else inp
         t_out = out[0] if isinstance(out, tuple) else out
         if torch.is_tensor(t_in) and torch.is_tensor(t_out):
-            recorded.append((t_in.detach().float().cpu().numpy(),
-                             t_out.detach().float().cpu().numpy(),
-                             {k: v for k, v in mod.__dict__.items()
-                              if isinstance(v, (int, float, bool, str))}))
+            recorded.append({
+                "hidden_in": t_in.detach().float().cpu().numpy(),
+                "hidden_out": t_out.detach().float().cpu().numpy(),
+                "layer_idx": getattr(mod, "layer_idx", len(recorded)),
+                "in_dtype": str(t_in.dtype),
+                "out_dtype": str(t_out.dtype),
+            })
 
     for m in model.modules():
         if isinstance(m, Mamba3):
             handles.append(m.register_forward_hook(hook))
+    if not handles:
+        print("  (no Mamba3 modules found to hook)")
     return recorded, handles
+
+
+def _pack_param(p):
+    """Store a parameter at its TRUE precision, not the dtype it was loaded at.
+
+    The published checkpoints are bfloat16 on disk; we load them as fp32 so the
+    capture runs in fp32. Writing those upcast fp32 arrays into the golden
+    would double the bytes committed to git forever while adding exactly zero
+    information, and would imply a precision the weights do not have.
+
+    So round-trip through bf16 and keep that when it is exact — which it is for
+    anything that started life as bf16. numpy has no bfloat16, so the bits ride
+    as int16 and `_unpack_param` reverses it. Losslessness is CHECKED rather
+    than assumed: a genuinely-fp32 parameter falls back to fp32.
+    """
+    f32 = p.detach().float().cpu()
+    bf16 = f32.to(torch.bfloat16)
+    if torch.equal(bf16.float(), f32):
+        return bf16.view(torch.int16).numpy(), True
+    return f32.numpy(), False
+
+
+def save_block_io(recorded, model, outdir, manifest):
+    """Write block-level goldens, each with the layer's own weights alongside.
+
+    The weights are stored WITH the activations rather than left to be loaded
+    from the checkpoint separately, so the gate is self-contained: a mismatch
+    cannot be blamed on having loaded the wrong tensor into the wrong slot,
+    which is the single most likely Path A bug. It also keeps the gate runnable
+    in CI without a 357 MB checkpoint download.
+    """
+    if not recorded:
+        return 0
+    blocks = [m for m in model.modules()
+              if type(m).__name__ == "Mamba3"]
+    for i, rec in enumerate(recorded):
+        arrays = {"hidden_in": rec["hidden_in"], "hidden_out": rec["hidden_out"]}
+        bf16_params = []
+        if i < len(blocks):
+            for pname, p in blocks[i].named_parameters(recurse=True):
+                packed, is_bf16 = _pack_param(p)
+                arrays[f"param_{pname}"] = packed
+                if is_bf16:
+                    bf16_params.append(pname)
+        name = f"block_io_{i:02d}"
+        np.savez_compressed(outdir / f"{name}.npz", **arrays)
+        manifest.setdefault("block_io", []).append({
+            "name": name,
+            "layer_idx": int(rec["layer_idx"]),
+            "in_dtype": rec["in_dtype"],
+            "out_dtype": rec["out_dtype"],
+            # Which param_* arrays are int16-encoded bf16 rather than fp32.
+            # The reader needs this; it cannot be inferred from the npz alone.
+            "bf16_params": sorted(bf16_params),
+            "arrays": {k: list(v.shape) for k, v in arrays.items()},
+        })
+        mb = (outdir / f"{name}.npz").stat().st_size / 1e6
+        print(f"  {name}: layer {rec['layer_idx']}, "
+              f"in{list(rec['hidden_in'].shape)} -> "
+              f"out{list(rec['hidden_out'].shape)}, "
+              f"{len(arrays) - 2} params "
+              f"({len(bf16_params)} as bf16), {mb:.2f} MB")
+    return len(recorded)
+
+
+def record_reference_noise(logits, logits_repeat, previous, manifest):
+    """How much does the official GPU model disagree with ITSELF?
+
+    Two questions, and they have different answers — which is the whole point:
+
+      WITHIN one process   two forward passes are BIT-IDENTICAL. So the scan's
+                           reduction order is fixed once chosen, and there are
+                           no non-deterministic atomics.
+      ACROSS processes     they are NOT. Observed between two invocations:
+                           5/256 argmax positions flipped and logits moved by
+                           2.6e-3 relative.
+
+    Taken together those localise the cause: the kernel is `triton.autotune`d,
+    so the config is chosen by TIMING candidate variants at first call. A
+    differently-loaded machine picks a different chunking, which changes the
+    summation order, which moves the last bits. Deterministic within a run,
+    not across them.
+
+    Why this is recorded rather than merely noted: it bounds the accuracy claim
+    upstream of everything else. A CPU reimplementation "disagreeing with
+    ground truth on 4 tokens" reads as a defect right up until you learn that
+    ground truth disagrees with ITSELF on 5. `check_mamba3_model.py` cites this
+    so the gate is set against the achievable floor, not against a 100% that no
+    implementation — including the reference — can reach.
+    """
+    same_proc = np.array_equal(logits, logits_repeat)
+    entry = {
+        "within_process_bit_identical": bool(same_proc),
+        "note": "within-process: two forwards in ONE run. across-process: "
+                "this run vs the previously captured model_forward.npz. The "
+                "second is the real reproducibility floor; see the docstring "
+                "for why they differ (triton.autotune picks by timing).",
+    }
+    print(f"  reference self-consistency (within process): "
+          f"{'bit-identical' if same_proc else 'DIFFERS'}")
+
+    if previous is not None:
+        am_prev = previous["argmax"]
+        am_now = logits.argmax(-1).astype(am_prev.dtype)
+        n_diff = int((am_prev != am_now).sum())
+        sub = logits[..., previous["vocab_subset"]]
+        d = np.abs(sub - previous["logits_subset"])
+        rng = float(np.ptp(previous["logits_subset"]))
+        entry.update({
+            "across_process_argmax_agreement": float((am_prev == am_now).mean()),
+            "across_process_argmax_disagreements": n_diff,
+            "positions": int(am_now.size),
+            "across_process_max_abs_logit_delta": float(d.max()),
+            "across_process_max_rel_logit_delta": float(d.max() / max(rng, 1e-30)),
+            "logit_subset_range": rng,
+        })
+        print(f"  reference self-consistency (across processes): "
+              f"{float((am_prev == am_now).mean()):.4%} argmax "
+              f"({n_diff}/{am_now.size} differ), max rel logit delta "
+              f"{d.max() / max(rng, 1e-30):.2e}")
+    else:
+        print("  (no previous model_forward.npz — across-process floor "
+              "unmeasured this run; re-run to establish it)")
+    manifest["reference_self_consistency"] = entry
 
 
 def dump_model_shape(model, outdir, manifest):
@@ -335,13 +478,21 @@ def sweep_shapes(caps, dtype, manifest):
     (e.g. #985, seqlen=1) must not abort the whole capture — the GPU session is
     the expensive resource. Failures are recorded in the manifest rather than
     swallowed, so a missing shape is visible instead of merely absent.
+
+    Seeding note: this used `abs(hash(name))`, and Python salts `str.__hash__`
+    per process unless PYTHONHASHSEED is set — so every run drew different
+    weights and activations, and re-running produced a numerically different
+    (though self-consistent) golden set. The model-driven cases were unaffected
+    because they load fixed checkpoint weights, which is why only the sweep
+    cases moved. `case_seed` is sha256-based and stable across processes,
+    interpreters and architectures.
     """
     from mamba_ssm.modules.mamba3 import Mamba3
     manifest["sweep"] = []
     for name, b, L, d_model, d_state, headdim in SWEEP:
         before = sum(len(c.calls) for _, _, c in caps)
         try:
-            torch.manual_seed(abs(hash(name)) % (2 ** 31))
+            torch.manual_seed(case_seed(name))
             blk = Mamba3(d_model=d_model, d_state=d_state, headdim=headdim,
                          is_mimo=False).to(dtype).cuda().eval()
             with torch.no_grad():
@@ -376,6 +527,11 @@ def main():
                          "diversity comes from the sweep instead")
     ap.add_argument("--skip-model", action="store_true",
                     help="capture from a freshly-built block only")
+    ap.add_argument("--max-blocks", type=int, default=2,
+                    help="MIXER-boundary goldens to record (see "
+                         "install_block_hooks). Each carries that layer's "
+                         "full parameter set, so these are the largest files "
+                         "here; 2 is enough to catch a layer-dependent bug")
     ap.add_argument("--dtype", default="float32",
                     choices=["float32", "bfloat16", "float16"],
                     help="capture precision. fp32 keeps the downstream <1e-4 "
@@ -454,11 +610,31 @@ def main():
             model.eval()
             torch.manual_seed(0)
             ids = torch.randint(0, 1000, (1, args.seq), device="cuda")
-            with torch.no_grad():
-                logits = model(ids).logits.float().cpu().numpy()
+            # Block-level hooks must be installed BEFORE the forward. They
+            # record the mixer boundary, which is the oracle Path A's
+            # reimplementation is gated against — see install_block_hooks.
+            recorded, handles = install_block_hooks(model, limit=args.max_blocks)
+            try:
+                with torch.no_grad():
+                    logits = model(ids).logits.float().cpu().numpy()
+            finally:
+                for h in handles:
+                    h.remove()
             manifest["model"] = args.model
+            # Read the PREVIOUS capture before overwriting it: comparing this
+            # run against it is the only way to measure the across-process
+            # reproducibility floor, and it is the floor that bounds the
+            # accuracy claim. See record_reference_noise.
+            prev_path = outdir / "model_forward.npz"
+            previous = dict(np.load(prev_path)) if prev_path.is_file() else None
+            with torch.no_grad():
+                logits_repeat = model(ids).logits.float().cpu().numpy()
+            record_reference_noise(logits, logits_repeat, previous, manifest)
             save_model_forward(outdir, ids.cpu().numpy(), logits, manifest,
                                subset=args.vocab_subset)
+            if recorded:
+                print("\nblock-level goldens (mixer boundary, for Path A):")
+                save_block_io(recorded, model, outdir, manifest)
             # Stage 6 has to rebuild this block in plain PyTorch and load the
             # published weights into it; without this file that is guesswork.
             dump_model_shape(model, outdir, manifest)

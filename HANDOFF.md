@@ -24,7 +24,10 @@ What is left is not kernel work:
    machinery is recurrence-agnostic, but its `scan_pair` seam still speaks
    Mamba-1's parameter list. This is the smallest item and it unblocks the
    headline claim.
-3. **The real 187M checkpoint has not been run end to end** (Stage 6).
+3. **MIMO is unprobed.** Path B is gated on a 1-hour capture probe (B0) that has
+   not been run; do not start its kernel work assuming ground truth exists.
+   *(Stage 6 — running the real 187M checkpoint end to end — is now **done**:
+   see `apps/mamba3_lm/` and `THREE_PATHS_INTEGRATION.md` Path A.)*
 4. **Performance is untuned.** `TILE = 32` in the blocked kernel has never been
    swept, and there is no Mamba-3 phase profile. Tuning genuinely needs Arm —
    the blocking exists to fit NEON registers and Arm's L1, and x86 does not even
