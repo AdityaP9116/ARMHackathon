@@ -115,7 +115,8 @@ kernel/arm-scan-core/    Rust kernel: scalar.rs (reference), neon/ (exp, math, c
 kernel/arm-scan-ffi/     cdylib, C ABI, one entry point. All raw-pointer handling.
 python/arm_scan/         _ffi.py (ctypes loader), op.py (torch custom_op), patch.py (HF monkeypatch),
                          numpy_api.py (torch-free path)
-tests/                   gen_golden.py, verify_golden.py (independent), golden/*.npz,
+tests/                   golden_inputs.py (torch-free draws + case table), gen_golden.py,
+                         verify_golden.py (independent, numpy-only), golden/*.npz,
                          reference/selective_scan_ref.py (vendored ground truth), check_*.py
 bench/                   bench_op.py (kernel vs eager vs torch.compile), bench_e2e.py (mamba-130m generate)
 .github/workflows/ci.yml arm64 + macOS + x86: fmt, clippy, tests, golden-through-C-ABI, wheels, bench

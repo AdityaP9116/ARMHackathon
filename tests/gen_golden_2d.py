@@ -25,10 +25,16 @@ multiples of 4 (the transpose/tail paths), plus a d_state that is not a
 multiple of 4 to exercise the NEON general path the way `state13_neon_tail`
 does in 1D.
 
+Determinism: the inputs come from `golden_inputs.draw_inputs_2d`, a torch-free
+draw seeded per case from the case name — the same module and the same reason
+as the 1D set. Torch does not keep its RNG stream stable across releases, so
+the draws this script used to make through `torch.Generator` could not be
+reproduced under a different torch. `verify_golden_2d.py` now redraws every
+case with numpy alone and compares bit-for-bit.
+
 Usage: python tests/gen_golden_2d.py
 """
 
-import hashlib
 import json
 import sys
 from pathlib import Path
@@ -37,48 +43,14 @@ import numpy as np
 import torch
 
 sys.path.insert(0, str(Path(__file__).parent))
+from golden_inputs import (CORE_CASES_2D, INPUT_DRAW_SPEC,  # noqa: E402
+                           case_seed, draw_inputs_2d)
 from reference import selective_scan_ref  # noqa: E402
 
 # Own subdirectory, deliberately: the 1D verifier globs `golden/*.npz` and the
 # two case schemas are different (four direction planes here vs one output
 # there). Keeping them apart means neither script can pick up the other's files.
 GOLDEN_DIR = Path(__file__).parent / "golden" / "2d"
-
-# name, batch, dim, height, width, state
-CASES = [
-    ("grid_square",      1, 4, 8, 8, 16),
-    ("grid_nonsquare",   2, 4, 6, 10, 16),
-    ("grid_odd",         1, 4, 7, 5, 16),   # H, W not multiples of 4
-    ("grid_wide",        1, 8, 4, 12, 16),
-    ("grid_state13",     1, 4, 5, 6, 13),   # state not a multiple of 4
-    ("grid_l1",          1, 4, 1, 9, 16),   # degenerate height
-]
-
-
-def case_seed(name):
-    return int.from_bytes(hashlib.sha256(name.encode()).digest()[:4], "little")
-
-
-def draw(name, b, d, h, w, n):
-    """Grid-shaped inputs with realistic Mamba value distributions."""
-    g = torch.Generator().manual_seed(case_seed(name))
-
-    def randn(*shape):
-        return torch.randn(*shape, generator=g, dtype=torch.float32)
-
-    u = randn(b, d, h, w)
-    # A negative, magnitudes over the trained-Mamba range (init -[1..N]).
-    A = -torch.empty(d, n, dtype=torch.float32).uniform_(
-        0.5, float(n), generator=g)
-    # delta pre-softplus, chosen so softplus(delta) lands in ~[1e-3, 0.1].
-    delta = torch.empty(b, d, h, w, dtype=torch.float32).uniform_(
-        -7.0, -2.0, generator=g)
-    B = randn(b, n, h, w)
-    C = randn(b, n, h, w)
-    D = randn(d)
-    delta_bias = torch.empty(d, dtype=torch.float32).uniform_(
-        -1.0, 1.0, generator=g)
-    return dict(u=u, delta=delta, A=A, B=B, C=C, D=D, delta_bias=delta_bias)
 
 
 def _views(t):
@@ -128,10 +100,13 @@ def cross_scan_reference(inp, dtype):
 def main():
     GOLDEN_DIR.mkdir(parents=True, exist_ok=True)
     manifest = []
-    print(f"torch {torch.__version__}\n")
+    print(f"torch {torch.__version__}, numpy {np.__version__} "
+          f"(inputs: {INPUT_DRAW_SPEC})\n")
 
-    for name, b, d, h, w, n in CASES:
-        inp = draw(name, b, d, h, w, n)
+    for name, b, d, h, w, n in CORE_CASES_2D:
+        # the draws are numpy (torch-free by design); the reference is torch
+        inp = {k: torch.from_numpy(v)
+               for k, v in draw_inputs_2d(name, b, d, h, w, n).items()}
         planes64 = cross_scan_reference(inp, torch.float64)
         planes32 = cross_scan_reference(inp, torch.float32)
 
@@ -149,8 +124,12 @@ def main():
         manifest.append(dict(
             name=name, batch=b, dim=d, height=h, width=w, state=n,
             groups=None, delta_softplus=True, has_D=True,
-            has_delta_bias=True, seed=case_seed(name),
-            torch_version=torch.__version__, f32_max_abs_err=floor))
+            has_delta_bias=True,
+            # `seed` and `input_draw` pin the INPUTS (torch-free, reproducible
+            # anywhere); `torch_version` records only what computed the planes.
+            seed=case_seed(name), input_draw=INPUT_DRAW_SPEC,
+            torch_version=torch.__version__, numpy_version=np.__version__,
+            f32_max_abs_err=floor))
         print(f"{name:16s} b{b} d{d} {h}x{w} n{n}  "
               f"L={h*w:5d}  f32 floor {floor:.3e}")
 

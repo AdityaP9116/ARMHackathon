@@ -1,12 +1,18 @@
 """Independently re-derive the 2D goldens, and replay them through the kernel.
 
-Two jobs, matching what `verify_golden.py` + `check_ffi.py` do for 1D:
+Three jobs, matching what `verify_golden.py` + `check_ffi.py` do for 1D:
 
-  1. VERIFY — recompute every direction plane in plain numpy, from the stored
+  1. REDRAW — regenerate every case's inputs from its name alone and compare
+     them to the stored ones bit-for-bit, so the committed npz files are known
+     to be reproducible rather than merely present. Numpy-only (the draws live
+     in `golden_inputs.py` for exactly that reason), so it runs on every
+     platform including the torch-free tier.
+
+  2. VERIFY — recompute every direction plane in plain numpy, from the stored
      inputs, with no torch and no reference import. The goldens must not rest
      on the strength of one implementation; this is the second one.
 
-  2. REPLAY (optional) — run the same inputs through `arm_scan.ss2d.ss2d_scan`
+  3. REPLAY (optional) — run the same inputs through `arm_scan.ss2d.ss2d_scan`
      (i.e. the real cdylib, via the fused bidirectional C ABI) and check each
      plane against the f64 ground truth at the standing 1e-4 gate, reporting
      each case's recorded f32 floor so a result that is merely "under the
@@ -83,6 +89,53 @@ def cross_scan_numpy(z):
 KEYS = ("row_fwd", "row_bwd", "col_fwd", "col_bwd")
 
 
+def check_determinism(manifest):
+    """Redrawing every case must reproduce the stored inputs bit-for-bit.
+
+    Numpy-only, and it never skips: this set previously had no determinism
+    check at all while drawing through `torch.Generator`, whose stream torch
+    does not hold stable across releases — so `golden/2d/*.npz` could not have
+    been regenerated under a different torch and nothing would have said so.
+    """
+    sys.path.insert(0, str(Path(__file__).parent))
+    from golden_inputs import CORE_CASES_2D, INPUT_DRAW_SPEC, draw_inputs_2d
+
+    ok = True
+    # A manifest entry with a different (or missing) spec was drawn by code
+    # that no longer exists here; say that rather than report a bit mismatch.
+    spec = {m["name"]: m.get("input_draw") for m in manifest}
+    stale = sorted(n for n, v in spec.items() if v != INPUT_DRAW_SPEC)
+    if stale:
+        print(f"   FAIL: {len(stale)} case(s) drawn by a different input spec "
+              f"than {INPUT_DRAW_SPEC}: {', '.join(stale)}")
+        print("   (regenerate with python tests/gen_golden_2d.py)")
+        return False
+
+    known = {name for name, *_ in CORE_CASES_2D}
+    orphans = sorted(set(spec) - known)
+    if orphans:
+        print(f"   FAIL: manifest case(s) absent from CORE_CASES_2D, so their "
+              f"inputs cannot be redrawn: {', '.join(orphans)}")
+        ok = False
+
+    for name, b, d, h, w, n in CORE_CASES_2D:
+        path = GOLDEN_DIR / f"{name}.npz"
+        if not path.exists():
+            print(f"   {name:16s} MISSING {path.name}")
+            ok = False
+            continue
+        z = np.load(path)
+        redrawn = draw_inputs_2d(name, b, d, h, w, n)
+        bad = [k for k, arr in redrawn.items()
+               if k not in z or not np.array_equal(z[k], arr)]
+        ok &= not bad
+        print(f"   {name:16s} {len(redrawn)} arrays  "
+              f"{'PASS' if not bad else 'FAIL differs: ' + ', '.join(bad)}")
+    if ok:
+        print(f"   all redrawn bit-identical ({INPUT_DRAW_SPEC}, no torch)")
+    return ok
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-kernel", action="store_true")
@@ -91,8 +144,10 @@ def main():
     manifest = json.loads((GOLDEN_DIR / "manifest.json").read_text())
     print(f"{len(manifest)} 2D golden cases\n")
 
-    print("1. independent numpy re-derivation vs stored f64 ground truth")
-    ok = True
+    print("1. input determinism — redraw from the case name, numpy only")
+    ok = check_determinism(manifest)
+
+    print("\n2. independent numpy re-derivation vs stored f64 ground truth")
     for case in manifest:
         z = np.load(GOLDEN_DIR / f"{case['name']}.npz")
         planes = cross_scan_numpy(z)
@@ -106,10 +161,11 @@ def main():
               f"{'PASS' if good else 'FAIL'}")
 
     if args.no_kernel:
-        print("\n2. kernel replay SKIPPED (--no-kernel)")
+        print("\n3. kernel replay SKIPPED (--no-kernel)")
+        print("\nRESULT:", "PASS" if ok else "FAIL")
         return 0 if ok else 1
 
-    print("\n2. kernel replay through arm_scan.ss2d (real C ABI)")
+    print("\n3. kernel replay through arm_scan.ss2d (real C ABI)")
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
         import torch
@@ -119,6 +175,7 @@ def main():
     except Exception as exc:  # noqa: BLE001
         print(f"   SKIPPED — arm_scan unavailable: {exc}")
         print("   (build it: cargo build --release -p arm-scan-ffi)")
+        print("\nRESULT:", "PASS" if ok else "FAIL")
         return 0 if ok else 1
 
     for case in manifest:

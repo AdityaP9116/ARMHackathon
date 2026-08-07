@@ -10,8 +10,11 @@ Also checks:
   - stored `last_state_f64` against the naive recurrence's final state,
   - the f32/f64 gap (`out_f32` vs `out_f64`) stays below the kernel
     acceptance tolerance from INTEGRATION_PLAN.md (max_abs < 1e-4),
-  - regenerating a case reproduces the stored inputs bit-for-bit
-    (determinism of gen_golden.py).
+  - regenerating every core case reproduces the stored inputs bit-for-bit
+    (determinism of the draws in golden_inputs.py).
+
+Numpy-only on purpose — including the determinism check, which is why this
+whole file runs in requirements.txt's torch-free tier and in CI's `test` job.
 
 Usage: python tests/verify_golden.py
 """
@@ -120,36 +123,61 @@ def check_case(path):
     return not errs
 
 
-def check_determinism():
-    """Regenerating a case must reproduce stored inputs bit-for-bit.
+def check_determinism(manifest):
+    """Regenerating every core case must reproduce stored inputs bit-for-bit.
 
-    Needs `gen_golden`, which draws with `torch.Generator` and therefore
-    imports torch. Everything ELSE in this file is deliberately numpy-only
-    (requirements.txt's torch-free tier), and CI's `test` job installs numpy
-    alone — so this one check has to degrade instead of taking the whole run
-    down with it. It did not, which is why `make test` failed on all three
-    platforms from Jul 17 onward and, because every other job declares
-    `needs: test`, silently blocked the rest of the pipeline.
+    This runs unconditionally, on every platform, in CI's torch-free `test`
+    job — which is the point. It used to import the draws from `gen_golden`,
+    which pulls in torch, so it had to degrade to a skip rather than take the
+    whole run down with it (an earlier variant did take it down: `make test`
+    failed on all three platforms from Jul 17 onward and, because every other
+    job declares `needs: test`, silently blocked the rest of the pipeline).
+
+    A skip is not a gate, though, and this one hid a real failure: torch does
+    not keep its RNG stream stable across releases, so the goldens drawn under
+    torch 2.11 stopped redrawing bit-for-bit under 2.13 — failing for anyone
+    with the full requirements installed while CI stayed green. The draws now
+    live in `golden_inputs`, which is numpy-only and pinned to an algorithm
+    spelled out in that file, so there is nothing left to skip for.
     """
     sys.path.insert(0, str(Path(__file__).parent))
-    try:
-        from gen_golden import draw_inputs
-    except ImportError as exc:
-        print(f"  determinism check SKIPPED — {exc}")
-        print("  (regeneration needs torch; run in the dev tier: "
-              "pip install -r requirements-dev.txt)")
-        return True
-    data = np.load(GOLDEN_DIR / "small.npz")
-    u, delta, A, B, C, D_skip, z, delta_bias = draw_inputs(
-        "small", 2, 8, 32, 16)
-    pairs = [("u", u), ("delta", delta), ("A", A), ("B", B), ("C", C),
-             ("D_skip", D_skip), ("z", z), ("delta_bias", delta_bias)]
-    for key, tensor in pairs:
-        if not np.array_equal(data[key], tensor.numpy()):
-            print(f"  determinism FAIL: {key} differs on regeneration")
-            return False
-    print("  determinism ok: regenerated inputs are bit-identical")
-    return True
+    from golden_inputs import CORE_CASES, INPUT_DRAW_SPEC, draw_inputs
+
+    # only the cases this file draws — hf_mixer_layer0 is captured from a real
+    # HF forward pass by check_hf_slow_path.py and has no draw spec
+    spec = {m["name"]: m.get("input_draw") for m in manifest}
+    stale = sorted(name for name, *_ in CORE_CASES
+                   if name in spec and spec[name] != INPUT_DRAW_SPEC)
+    if stale:
+        print(f"  determinism FAIL: {len(stale)} case(s) drawn by a different "
+              f"input spec than {INPUT_DRAW_SPEC}: {', '.join(stale)}")
+        print("  (the draws changed; regenerate with python tests/gen_golden.py)")
+        return False
+
+    ok, checked = True, 0
+    keys = ("u", "delta", "A", "B", "C", "D_skip", "z", "delta_bias")
+    for name, B, D, L, N, kw in CORE_CASES:
+        path = GOLDEN_DIR / f"{name}.npz"
+        if not path.exists():          # --large cases are never committed
+            continue
+        data = np.load(path)
+        checked += 1
+        drawn = draw_inputs(name, B, D, L, N, **kw)
+        for key, arr in zip(keys, drawn):
+            stored = data[key] if key in data else None
+            if arr is None or stored is None:
+                if (arr is None) != (stored is None):
+                    print(f"  determinism FAIL: {name}/{key} present in one "
+                          f"of stored/regenerated but not the other")
+                    ok = False
+                continue
+            if not np.array_equal(stored, arr):
+                print(f"  determinism FAIL: {name}/{key} differs on regeneration")
+                ok = False
+    if ok:
+        print(f"  determinism ok: {checked} cases redrawn bit-identical "
+              f"({INPUT_DRAW_SPEC}, no torch)")
+    return ok
 
 
 def main():
@@ -165,7 +193,7 @@ def main():
     print(f"verifying {len(files)} golden cases against independent "
           f"numpy implementation:")
     ok = all([check_case(p) for p in files])
-    ok = check_determinism() and ok
+    ok = check_determinism(manifest) and ok
     if not ok:
         print("\nVERIFICATION FAILED")
         sys.exit(1)
