@@ -49,4 +49,11 @@ The same script is the reusable harness for any future host: pass a
 different tag (`graviton-c7g`, `ci-arm64`, …) and re-run
 `render_results.py` — results group by tag automatically.
 
+Mamba-3: `bench_mamba3.py` runs the Mamba-3 SISO scan against the pure-PyTorch
+reference (eager and `torch.compile`) at the published checkpoints' shapes.
+Correctness gates speed — every shape is diffed against the reference before its
+timing is reported. The scalar -> blocked -> NEON ablation ladder is **not** in
+it yet: that needs a backend selector plumbed through the torch op, and a flag
+that silently benchmarked one backend three times would be worse than none.
+
 SS2D: `bench_ss2d.py` measures the unfused 2D path at the real diffusion shapes and prints the fused-kernel go/no-go (overhead % vs the 15% rule); results land beside the other tagged JSONs.

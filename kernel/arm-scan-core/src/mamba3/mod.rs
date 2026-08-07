@@ -52,8 +52,33 @@
 //!   d_skip          (heads,)
 //!   out             (batch, heads, len, dv)   <-- HEAD-MAJOR, see below
 //!   last_state      (batch, heads, dv, dqk)
-//!   last_bx         (batch, heads, dqk)       the 2-tap carry — new in Mamba-3
+//!   last_bx         (batch, heads, dqk)       see the warning below
 //! ```
+//!
+//! # `last_bx` does NOT make this scan resumable — read this before using it
+//!
+//! It holds `scale_T * k_T` from the final step of the traversal, and it is
+//! written but never read: the recurrence needs no such carry, because
+//! `scale_t` already folds both of `Bx_t`'s contributions into one weight.
+//!
+//! It is **not sufficient to resume a split sequence**, and Mamba-3 cannot be
+//! made resumable by any carry of this shape. The reason is structural:
+//!
+//! ```text
+//!   scale_t = dt_t*lam_t + dt_{t+1}*(1 - lam_{t+1})
+//!                          ^^^^^^^^^^^^^^^^^^^^^^^^ the NEXT timestep
+//! ```
+//!
+//! The trapezoid looks **forward**, so the last step of a segment cannot be
+//! finished without the first step of the segment that follows. A resumable
+//! Mamba-3 needs *lookahead into the next chunk* — an extra input — not a
+//! carry out of the previous one. Mamba-1's `h0`/`last_state` contract does
+//! not transfer.
+//!
+//! The field is kept because the plumbing is already through the C ABI and a
+//! future chunked path will want somewhere to put its carry. Until that path
+//! exists, treat a non-null `last_bx` as diagnostic output only. The Python
+//! layer deliberately does not expose it.
 //!
 //! **`out` is head-major while the inputs are time-major**, and that asymmetry
 //! is deliberate. A head's outputs are strided through a `(batch, len, heads,

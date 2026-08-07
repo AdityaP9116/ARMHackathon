@@ -394,8 +394,14 @@ pub struct ArmMamba3Dims {
 ///   last_bx         (batch, heads, dqk)
 /// ```
 /// Nullable: `d_skip`, `z`, `last_state`, `last_bx`. The last two must be null
-/// together or non-null together — a resumed scan needs both, and silently
-/// dropping one would produce a plausible but wrong continuation.
+/// together or non-null together.
+///
+/// **`last_bx` does NOT make this scan resumable.** It is the final step's
+/// `scale * k`, written but never read, and no carry of that shape can resume
+/// a split Mamba-3 sequence: `scale_t` depends on `dt_{t+1}`/`lam_{t+1}`, so
+/// the trapezoid looks FORWARD and the last step of a segment cannot be
+/// finished without the first step of the next one. Mamba-1's `h0` contract
+/// does not transfer. See `arm_scan_core::mamba3` for the full note.
 ///
 /// # Safety
 /// Same contract as [`arm_scan_selective_scan_f32`]: every non-null pointer

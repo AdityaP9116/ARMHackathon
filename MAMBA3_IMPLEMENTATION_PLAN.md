@@ -142,7 +142,7 @@ truncate); no initial-state support yet — Stage 5 and any decode path need it.
 
 ---
 
-## 5. Stage 2 — Scalar Rust *(~1 day)*
+## 5. Stage 2 — Scalar Rust ✅ **DONE (Aug 7)**
 
 **File:** `kernel/arm-scan-core/src/mamba3.rs`
 
@@ -160,7 +160,7 @@ in-crate oracle and the non-Arm fallback, exactly as `scalar.rs` is today.
 **Gate:** matches the Stage-1 reference within the bf16 bound on all 10
 goldens, replayed via a Rust-side loader.
 
-## 6. Stage 3 — NEON *(~1–1.5 days — the real engineering)*
+## 6. Stage 3 — NEON ✅ **DONE (Aug 7)** — split portable-blocked / intrinsics
 
 **File:** `kernel/arm-scan-core/src/neon/mamba3.rs`
 
@@ -175,7 +175,7 @@ goldens, replayed via a Rust-side loader.
 
 **Gate:** NEON↔scalar parity; rayon bit-identical at `RAYON_NUM_THREADS ∈ {1,2,8}`.
 
-## 7. Stage 4 — FFI + torch op *(~½ day)*
+## 7. Stage 4 — FFI + torch op ✅ **DONE (Aug 7)** — ABI 6
 
 `arm_scan_mamba3_scan_f32`, same discipline as the existing entry point. Bump
 `arm_scan_abi_version()`. `python/arm_scan/mamba3.py` with a registered fake
@@ -186,7 +186,7 @@ contract from §3.2.**
 
 ---
 
-## 8. Stage 5 — The two extra topologies
+## 8. Stage 5 — The two extra topologies ✅ **1D bidirectional DONE; 2D causal wiring pending**
 
 ### 5a. Bidirectional *(~half a day, no novelty claimed)*
 

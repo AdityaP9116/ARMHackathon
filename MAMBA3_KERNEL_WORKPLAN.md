@@ -45,7 +45,7 @@ transposes are needed anywhere**. All row-major, fully contiguous.
 | `d_skip` | `(heads,)` | |
 | `out` | `(batch, len, heads, dv)` | Matches the goldens exactly |
 | `last_state` | `(batch, heads, dv, dqk)` | Per head, a `dv × dqk` matrix |
-| `last_bx` | `(batch, heads, dqk)` | The 2-tap carry — **new**, no Mamba-1 analogue |
+| `last_bx` | `(batch, heads, dqk)` | `scale_T * k_T`. **Not a resume carry** — see §6 |
 
 **Note the difference from Mamba-1**, which is `(batch, dim, len)` — channel-major.
 Mamba-3 is time-major. That is why `for_each_channel` does not fit.
@@ -54,7 +54,7 @@ Mamba-3 is time-major. That is why `for_each_channel` does not fit.
 
 ## 3. Work items, in dependency order
 
-### M0 — Types and validation *(~2h)*
+### M0 — Types and validation ✅ **DONE**
 **New:** `src/mamba3/mod.rs`
 
 ```rust
@@ -80,7 +80,7 @@ Validation mirrors `validate()`: zero dims, exact length checks per tensor,
 
 **Gate:** unit tests for every rejection path.
 
-### M1 — `Float` trait additions *(~1h)*
+### M1 — `Float` trait additions ✅ **DONE**
 **Modify:** `src/float.rs`
 
 Add `sigmoid()` (trapezoid gate) and `tanh()` — both expressible on the existing
@@ -90,7 +90,7 @@ Add `sigmoid()` (trapezoid gate) and `tanh()` — both expressible on the existi
 **Gate:** accuracy sweep against `f64` libm, same shape as the existing
 exp/softplus/silu tests.
 
-### M2 — `for_each_head` *(~2h)*
+### M2 — `for_each_head` ✅ **DONE**
 **Modify:** `src/parallel.rs`
 
 Sibling to `for_each_channel`, chunking by the Mamba-3 shapes:
@@ -112,7 +112,7 @@ Work heuristic recalibrated: the per-step cost is `~3·dv·dqk` FMAs, not
 `RAYON_NUM_THREADS ∈ {1,2,8}`. Holds by construction — heads are disjoint, no
 cross-thread reduction — but assert it, don't assume it.
 
-### M3 — Scalar reference kernel *(~1 day)*
+### M3 — Scalar reference kernel ✅ **DONE**
 **New:** `src/mamba3/scalar.rs`
 
 Direct transcription of `tests/reference/mamba3_ref.py`. Clarity over speed;
@@ -142,7 +142,7 @@ for i in 0..len:
 **Gate:** matches all 10 Stage-0 goldens within the bf16 bound (≤ 8 ULP at
 tensor scale), replayed by a new `tests/golden_mamba3.rs`.
 
-### M4 — NEON kernel *(~2–3 days — the real work)*
+### M4 — NEON kernel ✅ **DONE** (split M4a portable-blocked / M4b intrinsics)
 **New:** `src/neon/mamba3.rs`
 
 Chunked two-pass, same skeleton as `neon/mod.rs`, reusing `chunks_in_scan_order`
@@ -178,14 +178,14 @@ measurement.
 **Gates:** NEON↔scalar parity ≤ 3e-7; goldens at the bf16 bound; rayon
 bit-identity at 1/2/8 threads.
 
-### M5 — Dispatch and public API *(~2h)*
+### M5 — Dispatch and public API ✅ **DONE**
 **Modify:** `src/lib.rs`
 
 `pub fn mamba3_scan(...)` / `..._with_options(...)` / `..._with_state(...)`
 mirroring the Mamba-1 family, with the same `Backend`/`Threading` enums reused
 verbatim. `mod mamba3;` alongside the existing modules.
 
-### M6 — FFI *(~half a day)*
+### M6 — FFI ✅ **DONE** (ABI 6)
 **Modify:** `arm-scan-ffi/src/lib.rs`
 
 Third entry point `arm_scan_mamba3_scan_f32` with `#[repr(C)] Mamba3DimsC`.
@@ -196,7 +196,7 @@ update the Python loader's check.
 **Gate:** goldens replayed through the **real C ABI**, extending
 `tests/check_ffi.py`.
 
-### M7 — Python op + topologies *(~half a day)*
+### M7 — Python op + topologies ✅ **DONE**
 **New:** `python/arm_scan/mamba3.py`
 
 - `_ffi.mamba3_raw` ctypes binding.
@@ -219,12 +219,27 @@ Mamba-1's parameter list — either a tensor-bundle form or a parallel
 pair-vs-oracle parity at 1/2/8 threads — the same shape as the existing SS2D
 gate.
 
-### M8 — Bench + CI *(~2h)*
+### M8 — Bench + CI ✅ **DONE**
 `bench/bench_mamba3.py` on the ladder (scalar → NEON → NEON+rayon) against
 eager and `torch.compile`. Extend the `mri-app` arm64 CI job (which already has
 torch) with the new gates. `make test-mamba3` grows to cover the Rust path.
 
 ---
+
+## 3a. Status — all of M0–M8 complete (Aug 7, 2026)
+
+Verified on x86: 28 Rust tests, `make test`, `make test-mamba3`
+(reference + torch op), fmt and clippy clean on **both** targets, aarch64
+cross-compiles including all test targets. Verified on Arm by CI: the NEON
+gates (`mamba3_neon_matches_naive`, `mamba3_neon_parallel_bit_identical`) pass
+on `linux-arm64` and `macos-arm64`.
+
+Worst deviation from the captured official-kernel ground truth is **4.47 bf16
+ULP** (bound 8) at every layer — Python reference, Rust scalar, Rust blocked,
+and the torch op — which is the floor bf16 output quantisation allows.
+
+**What is NOT done:** no dedicated-hardware numbers. Every timing anywhere in
+this repo, including `bench_mamba3.py`, is x86 or a shared CI runner.
 
 ## 4. Sequencing
 
@@ -252,7 +267,24 @@ parallel with M4.
 | Arithmetic intensity claim doesn't hold | It is a hypothesis, not a result. Measure at M4; publish either way |
 | Scope creep into MIMO / non-causal | Both rejected at validation; non-causal has its own plan |
 
-## 6. Explicitly not doing
+## 6. Found in review: Mamba-3 is not resumable, and cannot be made so by a carry
+
+`last_bx` is plumbed through the core, the C ABI and the dims struct, and it is
+**written but never read**. More importantly it does not do what its name
+suggests: `scale_t = dt_t*lam_t + dt_{t+1}*(1 - lam_{t+1})` depends on the
+*next* timestep, so the trapezoid looks forward and a segment's last step cannot
+be completed without the first step of the segment after it.
+
+Mamba-1's `h0` / `last_state` contract therefore **does not transfer**. A
+resumable Mamba-3 needs lookahead into the following chunk — an extra *input* —
+not a carry out of the preceding one. That is a design item for any future
+decode or chunked path, not a bug to patch.
+
+Documented at all three layers rather than removed, since the plumbing is
+already through the ABI and a chunked path will want the slot. The Python layer
+deliberately does not expose it.
+
+## 7. Explicitly not doing
 
 Chunked dual form (Pass B stays sequential until measured), bf16 storage, fused
 `sin`/`cos`, MIMO, non-causal/VNCT, and any decode-step specialisation. Each is

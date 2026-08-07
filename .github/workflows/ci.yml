@@ -248,6 +248,13 @@ jobs:
       - name: Mamba-3 reference + torch op vs official-kernel goldens
         working-directory: .
         run: make test-mamba3 PY=python3
+      # Smoke only, NOT a measurement: a shared CI runner cannot produce a
+      # number this repo would publish, and --quick keeps it to one shape. The
+      # point is that the bench keeps running at all, and that its correctness
+      # gate (kernel vs reference before any timing) stays green.
+      - name: Mamba-3 bench smoke
+        working-directory: .
+        run: python3 bench/bench_mamba3.py --quick --no-compile
       # The fastMRI loader on synthetic files shaped like the real ones. The
       # dataset cannot be committed (Data Sharing Agreement), so this is the
       # only way to keep that path from rotting.
