@@ -959,6 +959,124 @@ mod tests {
         assert!(last_bx.iter().any(|&x| x != 0.0), "2-tap carry never set");
     }
 
+    /// MIMO runs, and MIMO rejects the carry.
+    ///
+    /// `last_bx` is a single `(dqk,)` vector -- shaped for SISO's one k per
+    /// step. A rank-r step has `r` of them and no vector of that shape
+    /// summarises them, so writing rank 0's slice would be silently wrong.
+    /// Rejecting is the contract; this pins it.
+    #[test]
+    fn ffi_mamba3_mimo_runs_and_rejects_the_carry() {
+        let (b, h, dv, dqk, l, rank) = (1usize, 2usize, 4usize, 8usize, 3usize, 2usize);
+        let dims = ArmMamba3Dims {
+            batch: b,
+            heads: h,
+            dv,
+            dqk,
+            len: l,
+            rank,
+        };
+        let q = vec![0.5f32; b * l * rank * dqk];
+        let v = vec![0.5f32; b * l * h * dv];
+        let gate = vec![0.1f32; b * h * l];
+        let bias = vec![0.25f32; h * rank * dqk];
+        let proj = vec![0.5f32; h * rank * dv];
+        let cs = vec![1.0f32; b * l * h * (dqk / 2)];
+        let sn = vec![0.0f32; b * l * h * (dqk / 2)];
+        let mut out = vec![0.0f32; b * l * h * dv];
+
+        let call = |ls: *mut f32, lb: *mut f32, out: *mut f32| unsafe {
+            arm_scan_mamba3_scan_f32(
+                &dims,
+                q.as_ptr(),
+                q.as_ptr(),
+                v.as_ptr(),
+                gate.as_ptr(),
+                gate.as_ptr(),
+                gate.as_ptr(),
+                bias.as_ptr(),
+                bias.as_ptr(),
+                cs.as_ptr(),
+                sn.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                proj.as_ptr(),
+                proj.as_ptr(),
+                proj.as_ptr(),
+                0,
+                0,
+                1,
+                out,
+                ls,
+                lb,
+            )
+        };
+
+        // Without a carry: runs.
+        assert_eq!(
+            call(std::ptr::null_mut(), std::ptr::null_mut(), out.as_mut_ptr()),
+            ARM_SCAN_OK
+        );
+        assert!(out.iter().all(|x| x.is_finite()));
+        assert!(out.iter().any(|&x| x != 0.0), "MIMO output is all zeros");
+
+        // With one: rejected, not silently half-written.
+        let mut ls = vec![0.0f32; b * h * dv * dqk];
+        let mut lb = vec![0.0f32; b * h * dqk];
+        assert_eq!(
+            call(ls.as_mut_ptr(), lb.as_mut_ptr(), out.as_mut_ptr()),
+            ARM_SCAN_ERR_INVALID_DIMS
+        );
+    }
+
+    /// A rank above 1 without the projections is a caller bug, not a default.
+    #[test]
+    fn ffi_mamba3_rejects_rank_without_projections() {
+        let (b, h, dv, dqk, l, rank) = (1usize, 2usize, 4usize, 8usize, 3usize, 2usize);
+        let dims = ArmMamba3Dims {
+            batch: b,
+            heads: h,
+            dv,
+            dqk,
+            len: l,
+            rank,
+        };
+        let q = vec![0.5f32; b * l * rank * dqk];
+        let v = vec![0.5f32; b * l * h * dv];
+        let gate = vec![0.1f32; b * h * l];
+        let bias = vec![0.25f32; h * rank * dqk];
+        let cs = vec![1.0f32; b * l * h * (dqk / 2)];
+        let sn = vec![0.0f32; b * l * h * (dqk / 2)];
+        let mut out = vec![0.0f32; b * l * h * dv];
+        let rc = unsafe {
+            arm_scan_mamba3_scan_f32(
+                &dims,
+                q.as_ptr(),
+                q.as_ptr(),
+                v.as_ptr(),
+                gate.as_ptr(),
+                gate.as_ptr(),
+                gate.as_ptr(),
+                bias.as_ptr(),
+                bias.as_ptr(),
+                cs.as_ptr(),
+                sn.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+                0,
+                0,
+                1,
+                out.as_mut_ptr(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(rc, ARM_SCAN_ERR_INVALID_DIMS);
+    }
+
     /// `last_state` and `last_bx` must be supplied together. Half a carry would
     /// resume a scan from a state that looks plausible and is wrong.
     #[test]

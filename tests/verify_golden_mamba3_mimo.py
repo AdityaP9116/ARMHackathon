@@ -74,8 +74,15 @@ def check_rank1_collapse(siso_dir="tests/golden/mamba3"):
 
     p = Path(siso_dir) / "mamba3_siso_combined_00.npz"
     if not p.is_file():
-        print(f"\n(skipping r=1 collapse: {p} not found)")
-        return True
+        # A hard failure, not a skip. The SISO goldens are committed, so this
+        # can only mean the tree moved or a file was dropped -- and a check
+        # that quietly returns "pass" when its input vanishes is the exact
+        # shape of the CI-silently-stopped-firing bug this repo already ate
+        # once. Say so and go red.
+        print(f"\nr=1 collapse: CANNOT RUN — {p} is missing. The SISO goldens "
+              f"are committed, so this is a broken tree, not an optional "
+              f"artifact.")
+        return False
     z = np.load(p)
     kw = {k: torch.from_numpy(z[f"kw_{k}"]) for k in
           ("Q", "K", "V", "ADT", "DT", "Trap", "Q_bias", "K_bias", "Angles",

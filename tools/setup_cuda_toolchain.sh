@@ -47,6 +47,15 @@ CUDART_V=13.0.96
 CCCL_V=13.0.85
 NVVM_V=13.0.88
 
+# sha256 from NVIDIA's own redistrib_13.0.2.json manifest. This script fetches
+# COMPILERS and then runs them, so the download is verified rather than
+# trusted: HTTPS authenticates the host, not the bytes you end up executing if
+# a mirror or cache is ever wrong. Any mismatch aborts.
+NVCC_SHA=48e35be3cfbf4b4fbc16828eaec8a7048ee789403049dc409f7b643d6259cf7a
+CUDART_SHA=25b8071951baba827be1580b841d363464f6ee6c39f48d33a81646f90cc95ed1
+CCCL_SHA=ed845eae8c1767706b6ee91e40c608a03f6f633551a849b63f7346d32d73ee60
+NVVM_SHA=17ef1665b63670887eeba7d908da5669fa8c66bb73b5b4c1367f49929c086353
+
 emit_env() {
   echo "export CUDA_HOME=${DEST}"
   echo "export PATH=${DEST}/shim:${DEST}/bin:\$PATH"
@@ -65,19 +74,28 @@ mkdir -p "${DEST}"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 
-fetch() {  # component, version
-  local name="$1" ver="$2"
+fetch() {  # component, version, sha256
+  local name="$1" ver="$2" want="$3"
   local tarball="${name}-linux-x86_64-${ver}-archive.tar.xz"
   echo "  fetching ${name} ${ver}"
   curl -fsSL -o "${tmp}/${tarball}" "${BASE}/${name}/linux-x86_64/${tarball}"
+  local got
+  got="$(sha256sum "${tmp}/${tarball}" | cut -d' ' -f1)"
+  if [ "${got}" != "${want}" ]; then
+    echo "CHECKSUM MISMATCH for ${tarball}" >&2
+    echo "  expected ${want}" >&2
+    echo "  got      ${got}" >&2
+    echo "Refusing to extract. Do not work around this by deleting the check." >&2
+    exit 1
+  fi
   tar -xf "${tmp}/${tarball}" -C "${DEST}" --strip-components=1
 }
 
 echo "assembling CUDA ${NVCC_V%.*} toolchain in ${DEST}"
-fetch cuda_nvcc   "${NVCC_V}"
-fetch cuda_cudart "${CUDART_V}"
-fetch cuda_cccl   "${CCCL_V}"
-fetch libnvvm     "${NVVM_V}"   # <- cicc lives here in CUDA 13, not in cuda_nvcc
+fetch cuda_nvcc   "${NVCC_V}"   "${NVCC_SHA}"
+fetch cuda_cudart "${CUDART_V}" "${CUDART_SHA}"
+fetch cuda_cccl   "${CCCL_V}"   "${CCCL_SHA}"
+fetch libnvvm     "${NVVM_V}"   "${NVVM_SHA}"   # cicc lives here in CUDA 13
 
 # nvcc 13 rejects host gcc > 13. Point it at an older one without touching the
 # system default, which the rest of the box needs.

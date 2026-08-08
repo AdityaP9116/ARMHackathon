@@ -246,6 +246,25 @@ pub(crate) fn validate<T>(
             got: rank,
         });
     }
+    // The `last_bx` carry is a single `(dqk,)` vector -- shaped for SISO's one
+    // k per step. A rank-r step has `r` of them, and no vector of that shape
+    // summarises them. Writing rank 0's slice would be silently wrong rather
+    // than obviously wrong, and `last_state`/`last_bx` must be supplied
+    // together, so the pair is rejected for MIMO instead.
+    //
+    // Nothing is lost: Mamba-3 is not resumable in either variant (the
+    // trapezoid reads dt_{t+1}, so it looks FORWARD), and `last_bx` is
+    // documented as diagnostic-only. If a chunked MIMO path ever lands it will
+    // need a carry of a different shape anyway, and that is a deliberate
+    // design step rather than something to fall into.
+    if input.mimo.is_some() && (last_state.is_some() || last_bx.is_some()) {
+        return Err(ScanError::BadLen {
+            tensor: "MIMO does not define the last_state/last_bx carry \
+                     (last_bx is shaped for one k per step, MIMO has rank)",
+            expected: 0,
+            got: usize::from(last_state.is_some()) + usize::from(last_bx.is_some()),
+        });
+    }
     // RoPE rotates (2i, 2i+1) lane pairs, so an odd head dim has no meaning.
     if dqk % 2 != 0 {
         return Err(ScanError::BadLen {

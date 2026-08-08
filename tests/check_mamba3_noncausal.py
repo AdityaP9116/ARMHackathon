@@ -75,32 +75,24 @@ def check_dense_reproduces_causal():
     implementation that shares no code with it — and by extension validates the
     non-causal mask, which is the same construction run twice.
     """
-    import arm_scan.mamba3_noncausal as nc
-    c = make_1d(dtype=torch.float32)
-    real = nc.noncausal_scan_dense
-
-    # Monkeypatch the reverse half out, leaving a purely causal dense mask.
-    src_half = None
-
-    def causal_only(*a, **kw):
-        return real(*a, **kw)
-
-    # Simpler and less fragile than patching internals: build the causal dense
-    # result directly from the same helper the module uses, by zeroing the
-    # backward mask via a length-1 trick is not possible -- so compare instead
-    # on the identity that dense(non-causal) - dense(causal) is the backward
-    # half. We get the causal dense value from the kernel itself and check the
-    # DIFFERENCE is exactly the backward scan minus the diagonal.
-    from arm_scan.mamba3 import mamba3_scan_pair
-    fwd, bwd = mamba3_scan_pair(
-        c["q"], c["k"], c["v"], c["adt"], c["dt"], c["trap"], c["q_bias"],
-        c["k_bias"], angles=c["angles"], D=c["D"], z=c["z"])
-    diag = nc._diagonal_term(c["q"], c["k"], c["v"], c["dt"], c["trap"],
-                             c["q_bias"], c["k_bias"], c["D"], c["z"])
-    dense = _call(noncausal_scan_dense, c)
-    err = _rel(dense, fwd + bwd - diag)
-    ok = err < 1e-4
-    print(f"  dense mask == fwd + bwd - diag (kernel): rel={err:.3e}  "
+    ok, worst = True, 0.0
+    for i, (b, L, h, dv, dqk) in enumerate([
+        (1, 16, 2, 8, 16), (2, 31, 3, 8, 16), (1, 1, 2, 4, 8),
+    ]):
+        c = make_1d(b, L, h, dv, dqk, seed=100 + i, dtype=torch.float32)
+        dense_causal = noncausal_scan_dense(
+            c["q"], c["k"], c["v"], c["adt"], c["dt"], c["trap"],
+            c["q_bias"], c["k_bias"], angles=c["angles"], D=c["D"], z=c["z"],
+            causal=True)
+        kernel = mamba3_scan(c["q"], c["k"], c["v"], c["adt"], c["dt"],
+                             c["trap"], c["q_bias"], c["k_bias"],
+                             angles=c["angles"], D=c["D"], z=c["z"])
+        e = _rel(dense_causal, kernel)
+        worst = max(worst, e)
+        if e >= 1e-4:
+            ok = False
+        print(f"    b{b} L{L:<3d} h{h} dv{dv} dqk{dqk}: rel={e:.3e}")
+    print(f"  dense CAUSAL mask == the causal kernel: worst {worst:.3e}  "
           f"{'ok' if ok else 'FAIL'}")
     return ok
 

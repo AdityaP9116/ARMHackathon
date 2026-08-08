@@ -55,7 +55,6 @@ struct Scratch<T> {
     x: Vec<T>,   // rank * dv — psi_r * v
     acc: Vec<T>, // rank * dv — per-rank result before the phi reduction
     qk: Vec<T>,  // rank * rank — the rank-by-rank Gram matrix
-    bx: Vec<T>,  // dqk
 }
 
 impl<T: Float> Scratch<T> {
@@ -67,7 +66,6 @@ impl<T: Float> Scratch<T> {
             x: vec![T::ZERO; rank * dv],
             acc: vec![T::ZERO; rank * dv],
             qk: vec![T::ZERO; rank * rank],
-            bx: vec![T::ZERO; dqk],
         }
     }
 }
@@ -137,7 +135,6 @@ pub(crate) fn scan<T: Float>(
             let gate_base = (bi * heads + h) * len;
 
             scratch.s.iter_mut().for_each(|x| *x = T::ZERO);
-            scratch.bx.iter_mut().for_each(|x| *x = T::ZERO);
 
             for i in 0..len {
                 let t = if input.reverse { len - 1 - i } else { i };
@@ -243,9 +240,11 @@ pub(crate) fn scan<T: Float>(
                         *sj = alpha * *sj + scale * upd;
                     }
                 }
-                for (n, bx) in scratch.bx.iter_mut().enumerate() {
-                    *bx = scale * scratch.k[n];
-                }
+                // No `bx` carry here on purpose. SISO stores `scale * k_t`,
+                // one vector per step; a rank-r step has `r` of them and no
+                // `(dqk,)` vector summarises them. Validation rejects the
+                // carry for MIMO rather than letting this write rank 0's slice
+                // and look meaningful. See `validate`.
 
                 // --- gate per rank, then reduce the rank axis --------------
                 let o = t * dv;
@@ -277,9 +276,9 @@ pub(crate) fn scan<T: Float>(
             if let Some(ls) = last_s {
                 ls.copy_from_slice(&scratch.s);
             }
-            if let Some(lb) = last_b {
-                lb.copy_from_slice(&scratch.bx);
-            }
+            // `last_b` is always None here: validation rejects the carry for
+            // MIMO, so there is deliberately nothing to write.
+            debug_assert!(last_b.is_none());
         },
     );
 }

@@ -119,16 +119,24 @@ gate is bf16 ULPs at tensor scale. That is a different instrument, not a relaxed
 ```
 kernel/arm-scan-core/    Rust kernel: scalar.rs (reference), neon/ (exp, math, chunked scan),
                          parallel.rs (rayon over B×D), float.rs (f32/f64 abstraction)
-kernel/arm-scan-ffi/     cdylib, C ABI, one entry point. All raw-pointer handling.
+  src/mamba3/            mod.rs (types, validation, dispatch), scalar.rs (SISO oracle),
+                         tiled.rs (cache-blocked SISO), mimo.rs (rank-r, scalar only)
+kernel/arm-scan-ffi/     cdylib, C ABI at v7. All raw-pointer handling.
 python/arm_scan/         _ffi.py (ctypes loader), op.py (torch custom_op), patch.py (HF monkeypatch),
-                         numpy_api.py (torch-free path)
+                         numpy_api.py (torch-free path), mamba3.py (SISO + MIMO ops),
+                         ss2d_mamba3.py (2D causal), mamba3_noncausal.py (non-causal 1D/2D)
 tests/                   golden_inputs.py (torch-free draws + case table), gen_golden.py,
                          verify_golden.py (independent, numpy-only), golden/*.npz,
-                         reference/selective_scan_ref.py (vendored ground truth), check_*.py
-apps/mamba3_lm/          Path A: the 187M Mamba-3 SISO LM in plain PyTorch, scan -> our kernel
+                         reference/{selective_scan_ref,mamba3_ref}.py, check_*.py
+  golden/mamba3/         SISO ground truth from the official Triton kernels + block-level goldens
+  golden/mamba3_mimo/    MIMO ground truth from the official TileLang kernels (bf16 -- see below)
+apps/mamba3_lm/          Paths A+B: the 187M Mamba-3 LM (SISO *and* MIMO) in plain PyTorch,
+                         scan -> our kernel
 bench/                   bench_op.py, bench_e2e.py, bench_ss2d.py, bench_mamba3.py,
-                         bench_mamba3_lm.py
+                         bench_mamba3_lm.py, bench_ss2d_mamba3.py, bench_mamba3_noncausal.py
                          (all vs eager AND torch.compile; correctness gates speed)
+tools/                   capture_mamba3_goldens.py (GPU-only, --mimo for the MIMO family),
+                         setup_cuda_toolchain.sh (TileLang-capable nvcc; checksum-verified)
 .github/workflows/ci.yml arm64 + macOS + x86: fmt, clippy, tests, golden-through-C-ABI, wheels, bench
 ```
 
@@ -163,9 +171,12 @@ python bench/bench_op.py [--quick]       # kernel vs eager vs torch.compile
 python bench/bench_e2e.py                # mamba-130m generate(), patched vs unpatched
 python scripts/build_wheel.py            # platform-tagged wheel
 
-make test-mamba3                         # Mamba-3: reference, torch op, Path A mixer
-make test-mamba3-model                   # Path A end to end (downloads ~357 MB)
+make test-mamba3                         # all 7 Mamba-3 gates, ~20s, no GPU, no download
+make test-mamba3-model                   # SISO + MIMO end to end (downloads ~357 MB each)
+make check-cross                         # typecheck the aarch64-only paths from x86
 python bench/bench_mamba3_lm.py [--quick]  # the real 187M LM vs the PyTorch recurrence
+python bench/bench_ss2d_mamba3.py          # 2D cross-scan at vision grid sizes
+python bench/bench_mamba3_noncausal.py     # causal vs non-causal, scan vs dense
 ```
 
 **Regenerating the Mamba-3 goldens needs a GPU box and `~/venv-arm`** (the CUDA env with

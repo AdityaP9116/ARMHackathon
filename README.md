@@ -50,7 +50,15 @@ is published so a judge can see the search was done.
 **To the best of our knowledge** this is: (1) the **first Arm/NEON selective scan exposed as a
 PyTorch custom op** — a drop-in for existing checkpoints, no model conversion; (2) the **first
 fast CPU SS2D cross-scan** on any architecture; (3) the **first PyTorch-callable,
-NEON-optimised Mamba-3 scan**.
+NEON-optimised Mamba-3 scan**; and (4) the **first CPU implementation of a 2D Mamba-3**, in both
+causal and non-causal form, plus the **causal-vs-non-causal comparison** — which nobody has
+published for any Mamba generation on any hardware.
+
+Claim (4) carries a caveat we state here rather than in a footnote: **there is no authoritative
+2D oracle.** VNCT's code is unreleased and no 2D Mamba-3 weights exist, so our 2D work is
+validated against our own reading of the operator — two independent algorithms agreeing to
+2.99e-16 — which proves the kernel implements the reference, *not* that the reference implements
+VNCT as its authors intended. **No accuracy claim is available for 2D and none is made.**
 
 **We never claim** "first Mamba on CPU", "first Mamba-3 on CPU", or "first Mamba-3 in Rust" —
 three projects above have those. Nor anything about bidirectional Mamba-3, which `burn-mamba`
@@ -92,7 +100,7 @@ against it. Patched HF mamba-130m produces **token-identical** greedy output.
 ```bash
 git clone https://github.com/AdityaP9116/ARMHackathon && cd ARMHackathon
 make validate      # kernel + SS2D + diffusion gates, ~5 min, no data, no AWS account
-make test-mamba3   # Mamba-3 reference + torch op + Path A mixer vs official-kernel truth
+make test-mamba3   # all 7 Mamba-3 gates (SISO, MIMO, 2D causal + non-causal), ~20s
 ```
 
 Running the real 187M model on your CPU (downloads ~357 MB):

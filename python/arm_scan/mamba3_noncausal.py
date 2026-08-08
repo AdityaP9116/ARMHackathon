@@ -99,8 +99,15 @@ def noncausal_scan(q, k, v, adt, dt, trap, q_bias, k_bias, angles=None,
 
 
 def noncausal_scan_dense(q, k, v, adt, dt, trap, q_bias, k_bias, angles=None,
-                         D=None, z=None, cos=None, sin=None):
+                         D=None, z=None, cos=None, sin=None, causal=False):
     """Non-causal 1D aggregation, via the explicit `(L, L)` mask.
+
+    `causal=True` drops the upper half of the mask, giving the **dual form of
+    the causal scan**. That is not a curiosity: it is an O(L^2) GEMM algorithm
+    sharing no code with the kernel, so making it reproduce `mamba3_scan`
+    independently validates the mask derivation — and therefore the non-causal
+    mask, which is the same construction run twice. `check_mamba3_noncausal.py`
+    uses it for exactly that.
 
     `y = (M o (Q K^T)) V + D*V`, gated. O(L^2) in time and memory, but every
     step is a GEMM. This exists for two reasons: it is an independent algorithm
@@ -156,7 +163,9 @@ def noncausal_scan_dense(q, k, v, adt, dt, trap, q_bias, k_bias, angles=None,
                                       device=m.device), -1)
         return torch.flip(m, dims=[-1, -2]) if reverse else m
 
-    M = half_mask(False) + half_mask(True) + torch.diag_embed(gamma)
+    M = half_mask(False) + torch.diag_embed(gamma)
+    if not causal:
+        M = M + half_mask(True)
     qk = torch.einsum("bthd,bshd->bhts", qr, kr)
     out = torch.einsum("bhts,bhts,bshp->bthp", M, qk, v)
     if D is not None:
