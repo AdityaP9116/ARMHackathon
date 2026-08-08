@@ -29,9 +29,14 @@ use arm_scan_core::{
 ///    were developed on separate branches, each bumping to 3. Both are in 4.
 /// 5: added `arm_scan_selective_scan_bidirectional_f32` (fused two-direction).
 /// 6: added `arm_scan_mamba3_scan_f32` (Mamba-3 SISO, its own dims struct).
+/// 7: `ArmMamba3Dims` gained `rank`, and the Mamba-3 entry point gained the
+///    three MIMO projections. **This changes the size of `ArmMamba3Dims`**, so
+///    a v6 caller passing the old struct would read garbage for `rank` — hence
+///    a version bump rather than an additive change. `rank = 1` with null
+///    projections is exactly the previous SISO behaviour.
 #[no_mangle]
 pub extern "C" fn arm_scan_abi_version() -> u32 {
-    6
+    7
 }
 
 /// Dimensions for a scan call. `groups` must divide `dim`.
@@ -363,9 +368,11 @@ pub struct ArmMamba3Dims {
     /// Head dim of `q`/`k` — the state matrix's columns. Must be even.
     pub dqk: usize,
     pub len: usize,
+    /// MIMO rank; **1 for SISO**. Above 1 requires `psi`/`zeta`/`phi`.
+    pub rank: usize,
 }
 
-/// Run the Mamba-3 SISO selective scan.
+/// Run the Mamba-3 selective scan (SISO or MIMO).
 ///
 /// `backend`: 0 = auto, 1 = scalar, 2 = neon. `threading`: 0 = auto,
 /// 1 = sequential, 2 = rayon. `reverse`: nonzero walks the sequence backward.
@@ -423,6 +430,12 @@ pub unsafe extern "C" fn arm_scan_mamba3_scan_f32(
     sin: *const f32,
     d_skip: *const f32,
     z: *const f32,
+    // MIMO projections, all (heads, rank, dv). Either all three are non-null
+    // (MIMO) or all three are null (SISO); a partial set is a caller bug and is
+    // rejected rather than defaulted.
+    mimo_psi: *const f32,
+    mimo_zeta: *const f32,
+    mimo_phi: *const f32,
     reverse: c_int,
     backend: c_int,
     threading: c_int,
@@ -449,6 +462,15 @@ pub unsafe extern "C" fn arm_scan_mamba3_scan_f32(
     if last_state.is_null() != last_bx.is_null() {
         return ARM_SCAN_ERR_NULL_POINTER;
     }
+    // Likewise a partial MIMO projection set: two of three cannot be
+    // interpreted, and guessing the third would produce plausible garbage.
+    let n_mimo = [mimo_psi, mimo_zeta, mimo_phi]
+        .iter()
+        .filter(|p| !p.is_null())
+        .count();
+    if n_mimo != 0 && n_mimo != 3 {
+        return ARM_SCAN_ERR_NULL_POINTER;
+    }
     let (Some(backend), Some(threading)) = (backend_from(backend), threading_from(threading))
     else {
         return ARM_SCAN_ERR_BAD_ENUM;
@@ -460,10 +482,16 @@ pub unsafe extern "C" fn arm_scan_mamba3_scan_f32(
     }
     // Overflow-checked element counts before any slice is formed.
     let mul = |a: usize, b: usize| a.checked_mul(b);
-    let (Some(blqk), Some(bhl), Some(hqk)) = (
-        mul(d.batch, d.len).and_then(|x| mul(x, d.dqk)),
+    if d.rank == 0 {
+        return ARM_SCAN_ERR_INVALID_DIMS;
+    }
+    let (Some(blqk), Some(bhl), Some(hqk), Some(hrv)) = (
+        mul(d.batch, d.len)
+            .and_then(|x| mul(x, d.rank))
+            .and_then(|x| mul(x, d.dqk)),
         mul(d.batch, d.heads).and_then(|x| mul(x, d.len)),
-        mul(d.heads, d.dqk),
+        mul(d.heads, d.rank).and_then(|x| mul(x, d.dqk)),
+        mul(d.heads, d.rank).and_then(|x| mul(x, d.dv)),
     ) else {
         return ARM_SCAN_ERR_INVALID_DIMS;
     };
@@ -488,6 +516,7 @@ pub unsafe extern "C" fn arm_scan_mamba3_scan_f32(
         dv: d.dv,
         dqk: d.dqk,
         len: d.len,
+        rank: d.rank,
     };
     let opt = |p: *const f32, n: usize| {
         if p.is_null() {
@@ -510,6 +539,11 @@ pub unsafe extern "C" fn arm_scan_mamba3_scan_f32(
         d_skip: opt(d_skip, d.heads),
         z: opt(z, blhv),
         reverse: reverse != 0,
+        mimo: (n_mimo == 3).then(|| arm_scan_core::Mamba3Mimo {
+            psi: std::slice::from_raw_parts(mimo_psi, hrv),
+            zeta: std::slice::from_raw_parts(mimo_zeta, hrv),
+            phi: std::slice::from_raw_parts(mimo_phi, hrv),
+        }),
     };
     let out_slice = std::slice::from_raw_parts_mut(out, blhv);
     let mut ls = if last_state.is_null() {
@@ -875,6 +909,7 @@ mod tests {
             dv,
             dqk,
             len: l,
+            rank: 1,
         };
         let q = vec![0.3f32; b * l * dqk];
         let k = vec![0.2f32; b * l * dqk];
@@ -905,6 +940,10 @@ mod tests {
                 sin.as_ptr(),
                 std::ptr::null(),
                 std::ptr::null(),
+                // SISO: all three MIMO projections null.
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
                 0,
                 0,
                 1,
@@ -920,6 +959,124 @@ mod tests {
         assert!(last_bx.iter().any(|&x| x != 0.0), "2-tap carry never set");
     }
 
+    /// MIMO runs, and MIMO rejects the carry.
+    ///
+    /// `last_bx` is a single `(dqk,)` vector -- shaped for SISO's one k per
+    /// step. A rank-r step has `r` of them and no vector of that shape
+    /// summarises them, so writing rank 0's slice would be silently wrong.
+    /// Rejecting is the contract; this pins it.
+    #[test]
+    fn ffi_mamba3_mimo_runs_and_rejects_the_carry() {
+        let (b, h, dv, dqk, l, rank) = (1usize, 2usize, 4usize, 8usize, 3usize, 2usize);
+        let dims = ArmMamba3Dims {
+            batch: b,
+            heads: h,
+            dv,
+            dqk,
+            len: l,
+            rank,
+        };
+        let q = vec![0.5f32; b * l * rank * dqk];
+        let v = vec![0.5f32; b * l * h * dv];
+        let gate = vec![0.1f32; b * h * l];
+        let bias = vec![0.25f32; h * rank * dqk];
+        let proj = vec![0.5f32; h * rank * dv];
+        let cs = vec![1.0f32; b * l * h * (dqk / 2)];
+        let sn = vec![0.0f32; b * l * h * (dqk / 2)];
+        let mut out = vec![0.0f32; b * l * h * dv];
+
+        let call = |ls: *mut f32, lb: *mut f32, out: *mut f32| unsafe {
+            arm_scan_mamba3_scan_f32(
+                &dims,
+                q.as_ptr(),
+                q.as_ptr(),
+                v.as_ptr(),
+                gate.as_ptr(),
+                gate.as_ptr(),
+                gate.as_ptr(),
+                bias.as_ptr(),
+                bias.as_ptr(),
+                cs.as_ptr(),
+                sn.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                proj.as_ptr(),
+                proj.as_ptr(),
+                proj.as_ptr(),
+                0,
+                0,
+                1,
+                out,
+                ls,
+                lb,
+            )
+        };
+
+        // Without a carry: runs.
+        assert_eq!(
+            call(std::ptr::null_mut(), std::ptr::null_mut(), out.as_mut_ptr()),
+            ARM_SCAN_OK
+        );
+        assert!(out.iter().all(|x| x.is_finite()));
+        assert!(out.iter().any(|&x| x != 0.0), "MIMO output is all zeros");
+
+        // With one: rejected, not silently half-written.
+        let mut ls = vec![0.0f32; b * h * dv * dqk];
+        let mut lb = vec![0.0f32; b * h * dqk];
+        assert_eq!(
+            call(ls.as_mut_ptr(), lb.as_mut_ptr(), out.as_mut_ptr()),
+            ARM_SCAN_ERR_INVALID_DIMS
+        );
+    }
+
+    /// A rank above 1 without the projections is a caller bug, not a default.
+    #[test]
+    fn ffi_mamba3_rejects_rank_without_projections() {
+        let (b, h, dv, dqk, l, rank) = (1usize, 2usize, 4usize, 8usize, 3usize, 2usize);
+        let dims = ArmMamba3Dims {
+            batch: b,
+            heads: h,
+            dv,
+            dqk,
+            len: l,
+            rank,
+        };
+        let q = vec![0.5f32; b * l * rank * dqk];
+        let v = vec![0.5f32; b * l * h * dv];
+        let gate = vec![0.1f32; b * h * l];
+        let bias = vec![0.25f32; h * rank * dqk];
+        let cs = vec![1.0f32; b * l * h * (dqk / 2)];
+        let sn = vec![0.0f32; b * l * h * (dqk / 2)];
+        let mut out = vec![0.0f32; b * l * h * dv];
+        let rc = unsafe {
+            arm_scan_mamba3_scan_f32(
+                &dims,
+                q.as_ptr(),
+                q.as_ptr(),
+                v.as_ptr(),
+                gate.as_ptr(),
+                gate.as_ptr(),
+                gate.as_ptr(),
+                bias.as_ptr(),
+                bias.as_ptr(),
+                cs.as_ptr(),
+                sn.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+                0,
+                0,
+                1,
+                out.as_mut_ptr(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(rc, ARM_SCAN_ERR_INVALID_DIMS);
+    }
+
     /// `last_state` and `last_bx` must be supplied together. Half a carry would
     /// resume a scan from a state that looks plausible and is wrong.
     #[test]
@@ -930,6 +1087,7 @@ mod tests {
             dv: 2,
             dqk: 4,
             len: 1,
+            rank: 1,
         };
         let one = vec![0.1f32; 64];
         let mut out = vec![0.0f32; 2];
@@ -947,6 +1105,10 @@ mod tests {
                 one.as_ptr(),
                 one.as_ptr(),
                 one.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                // SISO: all three MIMO projections null.
+                std::ptr::null(),
                 std::ptr::null(),
                 std::ptr::null(),
                 0,
@@ -969,6 +1131,7 @@ mod tests {
             dv: 2,
             dqk: 3,
             len: 1,
+            rank: 1,
         };
         let one = vec![0.1f32; 64];
         let mut out = vec![0.0f32; 2];
@@ -985,6 +1148,10 @@ mod tests {
                 one.as_ptr(),
                 one.as_ptr(),
                 one.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                // SISO: all three MIMO projections null.
+                std::ptr::null(),
                 std::ptr::null(),
                 std::ptr::null(),
                 0,

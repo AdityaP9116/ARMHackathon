@@ -129,6 +129,7 @@ fn run_case(path: &PathBuf, backend: Backend, threading: Threading) -> CaseResul
         dv,
         dqk,
         len: l,
+        rank: 1,
     };
     let input = Mamba3Input {
         q: &qv,
@@ -144,6 +145,7 @@ fn run_case(path: &PathBuf, backend: Backend, threading: Threading) -> CaseResul
         d_skip: dv_skip.as_deref(),
         z: zv.as_deref(),
         reverse: false,
+        mimo: None,
     };
     // Kernel output is head-major (batch, heads, len, dv); the goldens are
     // time-major (batch, len, heads, dv). See `parallel::for_each_head`.

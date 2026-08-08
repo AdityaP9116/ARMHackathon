@@ -93,6 +93,11 @@ from pathlib import Path
 import numpy as np
 import torch
 
+# The sweep seeds itself with the same stable, sha256-derived per-case seed the
+# Mamba-1 goldens draw from, so a sweep case redraws identically on any box.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
+from golden_inputs import case_seed  # noqa: E402
+
 
 def find_scan_fn():
     """Locate the official SISO scan without hardcoding a module path.
@@ -174,13 +179,29 @@ def _cast_list_still_matches():
 
 
 class Capture:
-    """Wrap a kernel entry point and record every call's tensors."""
+    """Wrap a kernel entry point and record every call's tensors.
 
-    def __init__(self, fn, limit=64):
+    `bf16_inputs` is the set of kwargs to pre-cast so that "recorded input" and
+    "consumed input" are the same tensor. It is entry-point specific and MUST
+    be empty for MIMO:
+
+      SISO  (Triton)   hardcodes `.to(torch.bfloat16)` on Q/K/V/Trap/Angles/Z
+                       regardless of what it was handed, so the capture mirrors
+                       that or records inputs the kernel never saw.
+      MIMO  (TileLang) does NOT. Its tiles are *typed* on a `dtype` argument
+                       that `Mamba3.forward` fills from `x.dtype`, so the
+                       tensors it consumes are exactly the ones passed in.
+                       Applying SISO's list here would downcast `Angles` --
+                       which the module deliberately casts UP to fp32 -- and
+                       silently corrupt the ground truth.
+    """
+
+    def __init__(self, fn, limit=64, bf16_inputs=_BF16_INPUTS):
         self.fn, self.limit, self.calls = fn, limit, []
+        self.bf16_inputs = tuple(bf16_inputs)
 
     def __call__(self, *args, **kwargs):
-        for k in _BF16_INPUTS:
+        for k in self.bf16_inputs:
             if k in kwargs and torch.is_tensor(kwargs[k]):
                 kwargs[k] = kwargs[k].to(torch.bfloat16)
         if args:
@@ -210,20 +231,29 @@ class Capture:
         return out
 
 
-def capture_block_io(model, outdir, manifest, limit=4):
-    """Record every Mamba3 BLOCK's input and output, as a fallback.
+def install_block_hooks(model, limit=2):
+    """Hook every Mamba3 BLOCK to record its input and output tensors.
 
-    If the inner kernel cannot be wrapped — renamed, inlined, or dispatched
-    somewhere we did not find — block-level input/output still lets Stage 6
-    validate a CPU reimplementation end-to-end. It just cannot isolate the
-    scan from the projections around it, so it is the weaker artifact. Capture
-    both when possible.
+    The scan-level goldens isolate the recurrence, which is what the *kernel*
+    is validated against. This records one level out — the whole mixer, from
+    hidden states in to hidden states out — which is what Path A's plain-PyTorch
+    reimplementation is validated against.
+
+    Why both, rather than just the end-to-end logits: a logits mismatch says
+    "something is wrong somewhere in twelve layers". A layer-0 block mismatch
+    says which of `in_proj`, the heavy-tail `A`, the softplus `dt`, the B/C
+    norms, the angle pre-pass or `out_proj` is wrong. That is the difference
+    between an afternoon and a week — the same lesson Stage 1 taught when the
+    RoPE convention was wrong and only a boundary-level oracle localised it.
+
+    Call before the forward pass; pass the result to `save_block_io`. Returns
+    `(recorded, handles)`, and the caller MUST remove the handles.
     """
     try:
         from mamba_ssm.modules.mamba3 import Mamba3
     except Exception as exc:  # noqa: BLE001
         print(f"  (block hook unavailable: {exc})")
-        return 0
+        return [], []
 
     recorded, handles = [], []
 
@@ -233,15 +263,144 @@ def capture_block_io(model, outdir, manifest, limit=4):
         t_in = inp[0] if isinstance(inp, tuple) else inp
         t_out = out[0] if isinstance(out, tuple) else out
         if torch.is_tensor(t_in) and torch.is_tensor(t_out):
-            recorded.append((t_in.detach().float().cpu().numpy(),
-                             t_out.detach().float().cpu().numpy(),
-                             {k: v for k, v in mod.__dict__.items()
-                              if isinstance(v, (int, float, bool, str))}))
+            recorded.append({
+                "hidden_in": t_in.detach().float().cpu().numpy(),
+                "hidden_out": t_out.detach().float().cpu().numpy(),
+                "layer_idx": getattr(mod, "layer_idx", len(recorded)),
+                "in_dtype": str(t_in.dtype),
+                "out_dtype": str(t_out.dtype),
+            })
 
     for m in model.modules():
         if isinstance(m, Mamba3):
             handles.append(m.register_forward_hook(hook))
+    if not handles:
+        print("  (no Mamba3 modules found to hook)")
     return recorded, handles
+
+
+def _pack_param(p):
+    """Store a parameter at its TRUE precision, not the dtype it was loaded at.
+
+    The published checkpoints are bfloat16 on disk; we load them as fp32 so the
+    capture runs in fp32. Writing those upcast fp32 arrays into the golden
+    would double the bytes committed to git forever while adding exactly zero
+    information, and would imply a precision the weights do not have.
+
+    So round-trip through bf16 and keep that when it is exact — which it is for
+    anything that started life as bf16. numpy has no bfloat16, so the bits ride
+    as int16 and `_unpack_param` reverses it. Losslessness is CHECKED rather
+    than assumed: a genuinely-fp32 parameter falls back to fp32.
+    """
+    f32 = p.detach().float().cpu()
+    bf16 = f32.to(torch.bfloat16)
+    if torch.equal(bf16.float(), f32):
+        return bf16.view(torch.int16).numpy(), True
+    return f32.numpy(), False
+
+
+def save_block_io(recorded, model, outdir, manifest):
+    """Write block-level goldens, each with the layer's own weights alongside.
+
+    The weights are stored WITH the activations rather than left to be loaded
+    from the checkpoint separately, so the gate is self-contained: a mismatch
+    cannot be blamed on having loaded the wrong tensor into the wrong slot,
+    which is the single most likely Path A bug. It also keeps the gate runnable
+    in CI without a 357 MB checkpoint download.
+    """
+    if not recorded:
+        return 0
+    blocks = [m for m in model.modules()
+              if type(m).__name__ == "Mamba3"]
+    for i, rec in enumerate(recorded):
+        arrays = {"hidden_in": rec["hidden_in"], "hidden_out": rec["hidden_out"]}
+        bf16_params = []
+        if i < len(blocks):
+            for pname, p in blocks[i].named_parameters(recurse=True):
+                packed, is_bf16 = _pack_param(p)
+                arrays[f"param_{pname}"] = packed
+                if is_bf16:
+                    bf16_params.append(pname)
+        name = f"block_io_{i:02d}"
+        np.savez_compressed(outdir / f"{name}.npz", **arrays)
+        manifest.setdefault("block_io", []).append({
+            "name": name,
+            "layer_idx": int(rec["layer_idx"]),
+            "in_dtype": rec["in_dtype"],
+            "out_dtype": rec["out_dtype"],
+            # Which param_* arrays are int16-encoded bf16 rather than fp32.
+            # The reader needs this; it cannot be inferred from the npz alone.
+            "bf16_params": sorted(bf16_params),
+            "arrays": {k: list(v.shape) for k, v in arrays.items()},
+        })
+        mb = (outdir / f"{name}.npz").stat().st_size / 1e6
+        print(f"  {name}: layer {rec['layer_idx']}, "
+              f"in{list(rec['hidden_in'].shape)} -> "
+              f"out{list(rec['hidden_out'].shape)}, "
+              f"{len(arrays) - 2} params "
+              f"({len(bf16_params)} as bf16), {mb:.2f} MB")
+    return len(recorded)
+
+
+def record_reference_noise(logits, logits_repeat, previous, manifest):
+    """How much does the official GPU model disagree with ITSELF?
+
+    Two questions, and they have different answers — which is the whole point:
+
+      WITHIN one process   two forward passes are BIT-IDENTICAL. So the scan's
+                           reduction order is fixed once chosen, and there are
+                           no non-deterministic atomics.
+      ACROSS processes     they are NOT. Observed between two invocations:
+                           5/256 argmax positions flipped and logits moved by
+                           2.6e-3 relative.
+
+    Taken together those localise the cause: the kernel is `triton.autotune`d,
+    so the config is chosen by TIMING candidate variants at first call. A
+    differently-loaded machine picks a different chunking, which changes the
+    summation order, which moves the last bits. Deterministic within a run,
+    not across them.
+
+    Why this is recorded rather than merely noted: it bounds the accuracy claim
+    upstream of everything else. A CPU reimplementation "disagreeing with
+    ground truth on 4 tokens" reads as a defect right up until you learn that
+    ground truth disagrees with ITSELF on 5. `check_mamba3_model.py` cites this
+    so the gate is set against the achievable floor, not against a 100% that no
+    implementation — including the reference — can reach.
+    """
+    same_proc = np.array_equal(logits, logits_repeat)
+    entry = {
+        "within_process_bit_identical": bool(same_proc),
+        "note": "within-process: two forwards in ONE run. across-process: "
+                "this run vs the previously captured model_forward.npz. The "
+                "second is the real reproducibility floor; see the docstring "
+                "for why they differ (triton.autotune picks by timing).",
+    }
+    print(f"  reference self-consistency (within process): "
+          f"{'bit-identical' if same_proc else 'DIFFERS'}")
+
+    if previous is not None:
+        am_prev = previous["argmax"]
+        am_now = logits.argmax(-1).astype(am_prev.dtype)
+        n_diff = int((am_prev != am_now).sum())
+        sub = logits[..., previous["vocab_subset"]]
+        d = np.abs(sub - previous["logits_subset"])
+        rng = float(np.ptp(previous["logits_subset"]))
+        entry.update({
+            "across_process_argmax_agreement": float((am_prev == am_now).mean()),
+            "across_process_argmax_disagreements": n_diff,
+            "positions": int(am_now.size),
+            "across_process_max_abs_logit_delta": float(d.max()),
+            "across_process_max_rel_logit_delta": float(d.max() / max(rng, 1e-30)),
+            "logit_subset_range": rng,
+        })
+        print(f"  reference self-consistency (across processes): "
+              f"{float((am_prev == am_now).mean()):.4%} argmax "
+              f"({n_diff}/{am_now.size} differ), max rel logit delta "
+              f"{d.max() / max(rng, 1e-30):.2e}")
+    else:
+        print("  (no previous model_forward.npz — across-process floor "
+              "unmeasured this run; re-run to establish it)")
+    manifest["reference_self_consistency"] = entry
 
 
 def dump_model_shape(model, outdir, manifest):
@@ -327,32 +486,88 @@ SWEEP = [
     ("long_L2048",     1, 2048, 256,  64, 32),   # the PR#997 Blackwell regime
 ]
 
+# MIMO edge shapes: (name, batch, len, d_model, d_state, headdim, rank, chunk)
+#
+# Sized against a MEASURED constraint, not a guess. The TileLang MIMO kernel
+# types its shared tiles on the caller's dtype, so tile bytes scale with
+# rank x chunk_size x d_state x itemsize, and this card allows 101376 B of
+# opt-in dynamic shared memory (datacenter Blackwell allows ~227 KB). At bf16
+# the published configuration -- d_state 128, headdim 64, rank 4, chunk 16 --
+# fits; the same thing in fp32 asks for 168128 B and is rejected. Two shapes
+# are deliberately included that DO exceed the limit, so the manifest records
+# where the ceiling is rather than leaving it folk knowledge.
+#
+# rank=2 with chunk_size=8 is omitted: it trips a TileLang warp-decomposition
+# assertion (m_warp * n_warp == num_warps), which is a tiling limitation
+# unrelated to shared memory and not something a golden would illuminate.
+MIMO_SWEEP = [
+    ("mimo_pub_L128",   1,  128, 768, 128, 64, 4, 16),  # published config
+    ("mimo_pub_L64",    1,   64, 768, 128, 64, 4, 16),  # exactly 4 chunks
+    ("mimo_odd_L63",    1,   63, 768, 128, 64, 4, 16),  # chunk tail
+    ("mimo_batch2",     2,  128, 768, 128, 64, 4, 16),  # batch > 1
+    ("mimo_rank2",      1,  128, 768, 128, 64, 2, 16),  # a different rank
+    ("mimo_small",      1,  128, 256,  64, 32, 4, 16),  # narrow
+    ("mimo_L1",         1,    1, 768, 128, 64, 4, 16),  # decode edge (#985)
+    ("mimo_over_shmem", 1,  128, 768, 128, 64, 4, 32),  # EXPECTED to fail
+]
 
-def sweep_shapes(caps, dtype, manifest):
+
+def sweep_shapes(caps, dtype, manifest, mimo=False):
     """Drive fresh Mamba3 blocks across edge shapes.
 
     Each case is independently guarded: a shape that upstream cannot handle
     (e.g. #985, seqlen=1) must not abort the whole capture — the GPU session is
     the expensive resource. Failures are recorded in the manifest rather than
     swallowed, so a missing shape is visible instead of merely absent.
+
+    Seeding note: this used `abs(hash(name))`, and Python salts `str.__hash__`
+    per process unless PYTHONHASHSEED is set — so every run drew different
+    weights and activations, and re-running produced a numerically different
+    (though self-consistent) golden set. The model-driven cases were unaffected
+    because they load fixed checkpoint weights, which is why only the sweep
+    cases moved. `case_seed` is sha256-based and stable across processes,
+    interpreters and architectures.
     """
     from mamba_ssm.modules.mamba3 import Mamba3
     manifest["sweep"] = []
-    for name, b, L, d_model, d_state, headdim in SWEEP:
+    table = MIMO_SWEEP if mimo else SWEEP
+    for row in table:
+        name, b, L, d_model, d_state, headdim = row[:6]
+        rank, cs = (row[6], row[7]) if mimo else (1, None)
         before = sum(len(c.calls) for _, _, c in caps)
+        extra = dict(is_mimo=True, mimo_rank=rank, chunk_size=cs) if mimo \
+            else dict(is_mimo=False)
         try:
-            torch.manual_seed(abs(hash(name)) % (2 ** 31))
+            torch.manual_seed(case_seed(name))
+            # Construct AT the dtype, then move. Two things are load-bearing:
+            #
+            #   dtype= (not `.to(dtype)`)  a blanket cast overrides the module's
+            #       own per-parameter dtype choices -- `B_bias`/`C_bias` are
+            #       pinned to float32 in Mamba3.__init__ -- and the MIMO kernel
+            #       then rejects the call with "input Q_BIAS dtype expected
+            #       float32".
+            #   NO device= here, .cuda() after   passing device="cuda" makes
+            #       initialisation draw from the CUDA RNG stream instead of the
+            #       CPU one. Same seed, different generator, completely
+            #       different weights -- measured at ~1.0-2.7 RELATIVE change
+            #       in the goldens, i.e. different data, not noise. The CPU
+            #       stream is also the portable one, which is the whole point
+            #       of seeding from case_seed.
             blk = Mamba3(d_model=d_model, d_state=d_state, headdim=headdim,
-                         is_mimo=False).to(dtype).cuda().eval()
+                         dtype=dtype, **extra).cuda().eval()
             with torch.no_grad():
                 blk(torch.randn(b, L, d_model, device="cuda", dtype=dtype))
             gained = sum(len(c.calls) for _, _, c in caps) - before
             status = "ok" if gained else "no kernel call recorded"
             print(f"  sweep {name:14s} b{b} L{L:<5d} d{d_model} "
-                  f"n{d_state} h{headdim}: {status}")
-            manifest["sweep"].append(
-                {"name": name, "batch": b, "seqlen": L, "d_model": d_model,
-                 "d_state": d_state, "headdim": headdim, "status": status})
+                  f"n{d_state} h{headdim}"
+                  f"{f' r{rank} cs{cs}' if mimo else ''}: {status}")
+            row_meta = {"name": name, "batch": b, "seqlen": L,
+                        "d_model": d_model, "d_state": d_state,
+                        "headdim": headdim, "status": status}
+            if mimo:
+                row_meta.update(mimo_rank=rank, chunk_size=cs)
+            manifest["sweep"].append(row_meta)
         except Exception as exc:  # noqa: BLE001
             print(f"  sweep {name:14s} FAILED: {type(exc).__name__}: "
                   f"{str(exc)[:70]}")
@@ -376,6 +591,11 @@ def main():
                          "diversity comes from the sweep instead")
     ap.add_argument("--skip-model", action="store_true",
                     help="capture from a freshly-built block only")
+    ap.add_argument("--max-blocks", type=int, default=2,
+                    help="MIXER-boundary goldens to record (see "
+                         "install_block_hooks). Each carries that layer's "
+                         "full parameter set, so these are the largest files "
+                         "here; 2 is enough to catch a layer-dependent bug")
     ap.add_argument("--dtype", default="float32",
                     choices=["float32", "bfloat16", "float16"],
                     help="capture precision. fp32 keeps the downstream <1e-4 "
@@ -385,7 +605,31 @@ def main():
     ap.add_argument("--vocab-subset", type=int, default=512,
                     help="vocab ids kept in model_forward.npz (see "
                          "save_model_forward for why not all of them)")
+    ap.add_argument("--mimo", action="store_true",
+                    help="capture the MIMO family instead of SISO. Switches "
+                         "the model, the sweep table, the output directory "
+                         "and the default dtype to bfloat16 -- see the "
+                         "--dtype help for why that last one is not optional "
+                         "on consumer Blackwell. Requires a TileLang-capable "
+                         "nvcc: run tools/setup_cuda_toolchain.sh first")
     args = ap.parse_args()
+
+    # MIMO defaults, applied only where the user did not choose explicitly.
+    if args.mimo:
+        if args.model == "state-spaces/mamba3-siso-187m":
+            args.model = "state-spaces/mamba3-mimo-187m"
+        if args.out == "tests/golden/mamba3":
+            args.out = "tests/golden/mamba3_mimo"
+        if args.dtype == "float32":
+            # NOT a precision preference -- a hard constraint. The TileLang
+            # MIMO kernel types its shared tiles on this dtype, so fp32 doubles
+            # every tile: the published configuration then needs 168128 B
+            # against this class of card's 101376 B limit and is rejected. bf16
+            # runs the checkpoint's own chunk_size=16 unmodified, which is
+            # strictly better ground truth than re-tiling the model to fit.
+            print("--mimo: defaulting to bfloat16 (fp32 exceeds consumer-"
+                  "Blackwell shared memory at the published config)")
+            args.dtype = "bfloat16"
     dtype = getattr(torch, args.dtype)
 
     if not torch.cuda.is_available():
@@ -406,20 +650,32 @@ def main():
     for mod, attr, _ in found:
         print(f"  {mod}.{attr}")
 
-    ok, cast = _cast_list_still_matches()
-    print(f"\nkernel downcasts to bf16: {cast}")
-    if not ok:
-        raise SystemExit(
-            f"REFUSING TO CAPTURE. Upstream's bf16 downcast set is {cast}, but "
-            f"this script mirrors {sorted(_BF16_INPUTS)}. Recorded inputs would "
-            "not be the ones the kernel consumed, so the goldens would be "
-            "quietly wrong. Update _BF16_INPUTS to match, then re-run.")
+    # The bf16 pre-cast guard is about SISO's hardcoded downcast list, so it is
+    # only meaningful when capturing SISO. MIMO consumes what it is handed.
+    if args.mimo:
+        cast = []
+        print("\nMIMO: no bf16 pre-cast (TileLang types its tiles on the "
+              "caller's dtype, so recorded inputs ARE the consumed inputs)")
+    else:
+        ok, cast = _cast_list_still_matches()
+        print(f"\nkernel downcasts to bf16: {cast}")
+        if not ok:
+            raise SystemExit(
+                f"REFUSING TO CAPTURE. Upstream's bf16 downcast set is {cast}, "
+                f"but this script mirrors {sorted(_BF16_INPUTS)}. Recorded "
+                "inputs would not be the ones the kernel consumed, so the "
+                "goldens would be quietly wrong. Update _BF16_INPUTS to "
+                "match, then re-run.")
 
     outdir = Path(args.out)
     outdir.mkdir(parents=True, exist_ok=True)
     manifest = {"device": torch.cuda.get_device_name(0),
                 "torch": torch.__version__,
                 "capture_dtype": args.dtype,
+                "family": "mimo" if args.mimo else "siso",
+                "shared_mem_per_block_optin": getattr(
+                    torch.cuda.get_device_properties(0),
+                    "shared_memory_per_block_optin", None),
                 "mamba_ssm": getattr(
                     __import__("mamba_ssm"), "__version__", "unknown"),
                 "blackwell_fix_997": _has_blackwell_fix(),
@@ -438,11 +694,22 @@ def main():
     # --- capture at the kernel boundary --------------------------------
     import importlib
     caps = []
+    want = "mamba3_mimo_combined" if args.mimo else "mamba3_siso_combined"
     for mod, attr, fn in found:
+        # Wrap only the family being captured. Wrapping both would leave the
+        # other's Capture installed and empty, which then writes a zero-case
+        # entry and muddies the manifest.
+        if attr != want:
+            continue
         m = importlib.import_module(mod)
-        cap = Capture(fn, limit=args.max_calls)
+        cap = Capture(fn, limit=args.max_calls,
+                      bf16_inputs=() if args.mimo else _BF16_INPUTS)
         setattr(m, attr, cap)
         caps.append((mod, attr, cap))
+    if not caps:
+        raise SystemExit(
+            f"Found no entry point named {want}. Available: "
+            f"{sorted({a for _, a, _ in found})}")
 
     # --- drive it with the real model ----------------------------------
     if not args.skip_model:
@@ -454,11 +721,31 @@ def main():
             model.eval()
             torch.manual_seed(0)
             ids = torch.randint(0, 1000, (1, args.seq), device="cuda")
-            with torch.no_grad():
-                logits = model(ids).logits.float().cpu().numpy()
+            # Block-level hooks must be installed BEFORE the forward. They
+            # record the mixer boundary, which is the oracle Path A's
+            # reimplementation is gated against — see install_block_hooks.
+            recorded, handles = install_block_hooks(model, limit=args.max_blocks)
+            try:
+                with torch.no_grad():
+                    logits = model(ids).logits.float().cpu().numpy()
+            finally:
+                for h in handles:
+                    h.remove()
             manifest["model"] = args.model
+            # Read the PREVIOUS capture before overwriting it: comparing this
+            # run against it is the only way to measure the across-process
+            # reproducibility floor, and it is the floor that bounds the
+            # accuracy claim. See record_reference_noise.
+            prev_path = outdir / "model_forward.npz"
+            previous = dict(np.load(prev_path)) if prev_path.is_file() else None
+            with torch.no_grad():
+                logits_repeat = model(ids).logits.float().cpu().numpy()
+            record_reference_noise(logits, logits_repeat, previous, manifest)
             save_model_forward(outdir, ids.cpu().numpy(), logits, manifest,
                                subset=args.vocab_subset)
+            if recorded:
+                print("\nblock-level goldens (mixer boundary, for Path A):")
+                save_block_io(recorded, model, outdir, manifest)
             # Stage 6 has to rebuild this block in plain PyTorch and load the
             # published weights into it; without this file that is guesswork.
             dump_model_shape(model, outdir, manifest)
@@ -476,10 +763,11 @@ def main():
     if not args.no_sweep:
         # --max-calls bounds the MODEL layers; the sweep needs headroom beyond
         # it or the shapes it exists to capture would be silently dropped.
+        n_sweep = len(MIMO_SWEEP if args.mimo else SWEEP)
         for _, _, cap in caps:
-            cap.limit = len(cap.calls) + len(SWEEP) + 2
+            cap.limit = len(cap.calls) + n_sweep + 2
         print("\nedge-shape sweep:")
-        sweep_shapes(caps, dtype, manifest)
+        sweep_shapes(caps, dtype, manifest, mimo=args.mimo)
 
     # --- write the goldens ---------------------------------------------
     n = 0

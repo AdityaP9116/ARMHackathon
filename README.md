@@ -50,7 +50,15 @@ is published so a judge can see the search was done.
 **To the best of our knowledge** this is: (1) the **first Arm/NEON selective scan exposed as a
 PyTorch custom op** — a drop-in for existing checkpoints, no model conversion; (2) the **first
 fast CPU SS2D cross-scan** on any architecture; (3) the **first PyTorch-callable,
-NEON-optimised Mamba-3 scan**.
+NEON-optimised Mamba-3 scan**; and (4) the **first CPU implementation of a 2D Mamba-3**, in both
+causal and non-causal form, plus the **causal-vs-non-causal comparison** — which nobody has
+published for any Mamba generation on any hardware.
+
+Claim (4) carries a caveat we state here rather than in a footnote: **there is no authoritative
+2D oracle.** VNCT's code is unreleased and no 2D Mamba-3 weights exist, so our 2D work is
+validated against our own reading of the operator — two independent algorithms agreeing to
+2.99e-16 — which proves the kernel implements the reference, *not* that the reference implements
+VNCT as its authors intended. **No accuracy claim is available for 2D and none is made.**
 
 **We never claim** "first Mamba on CPU", "first Mamba-3 on CPU", or "first Mamba-3 in Rust" —
 three projects above have those. Nor anything about bidirectional Mamba-3, which `burn-mamba`
@@ -92,7 +100,15 @@ against it. Patched HF mamba-130m produces **token-identical** greedy output.
 ```bash
 git clone https://github.com/AdityaP9116/ARMHackathon && cd ARMHackathon
 make validate      # kernel + SS2D + diffusion gates, ~5 min, no data, no AWS account
-make test-mamba3   # Mamba-3 reference + torch op vs the captured official-kernel truth
+make test-mamba3   # all 7 Mamba-3 gates (SISO, MIMO, 2D causal + non-causal), ~20s
+```
+
+Running the real 187M model on your CPU (downloads ~357 MB):
+
+```bash
+make test-mamba3-model    # logits vs the official GPU model, SISO and MIMO
+python bench/bench_mamba3_lm.py --quick
+python bench/bench_mamba3_lm.py --model state-spaces/mamba3-mimo-187m --quick
 ```
 
 Runs on AWS Graviton, Oracle Ampere, Raspberry Pi 5 and Apple Silicon. Correctness validation
@@ -100,22 +116,45 @@ never needs credentials.
 
 ## Status — honestly
 
-**Done:** both kernels, every correctness gate, the PyTorch integration, wheels, and CI across
-three platforms.
+**Done:** both kernels, every correctness gate, the PyTorch integration, wheels, CI across three
+platforms — and **both published Mamba-3 families running end to end on CPU**
+(`apps/mamba3_lm/`): `mamba3-siso-187m` at **98.05%** argmax agreement and the rank-4
+`mamba3-mimo-187m` at **96.48%**. The SISO mixer matches the official block to 1.36 bf16 ULP.
+
+That floor is worth a sentence, because it surprised us: the official kernel is
+`triton.autotune`d, so it picks its config by timing candidates at first call. Two runs of the
+**official model** on the same GPU with the same seed disagree on up to 5/256 tokens, while two
+forward passes inside one process are bit-identical. Our agreement sits inside that band, so
+the gate is written against the measured floor rather than an unreachable 100%.
 
 **Not done, and it is the gap that matters: there are no dedicated-hardware numbers.** Every
 timing in this repository comes from an x86 box or a shared 4-core CI runner, which this
 project's own rules classify as provisional. A Graviton session is the outstanding work, and no
 amount of kernel engineering substitutes for it.
 
-Also outstanding: wiring the 2D cross-scan to the Mamba-3 primitive, and running the real 187M
-checkpoint end to end.
+Also here, and as far as we can tell the first CPU implementation of any 2D Mamba-3:
+`arm_scan.ss2d_scan_mamba3` runs the four-direction cross-scan on the Mamba-3 recurrence as pure
+layout over `mamba3_scan_pair` — **no new kernel code**. Measured 14–38× over the PyTorch
+recurrence and 1.9× over `torch.compile` at vision grid sizes. **Correctness and throughput
+only**: no 2D Mamba-3 weights have ever been published, so no accuracy claim is available, and
+we do not make one.
+
+The **causal-vs-non-causal comparison** — which nobody has published for any Mamba generation —
+is now measured: dropping causality costs **2×** in 1D and **~1×** in 2D, because the
+four-direction cross-scan already runs both directions. It needed no new kernel, because the
+decay factorises. The O(L²) dense formulation is implemented as an independent check and
+reproduces the O(L) kernel to **2.99e-16** — then loses to it by 784 tokens.
+
+Still outstanding: **making MIMO fast** — it is correct everywhere but runs on the portable
+scalar path only, so its arithmetic-intensity advantage on CPU is still a prediction rather
+than a measurement.
 
 ## Where to look
 
 | | |
 |---|---|
 | [`MAMBA3_IMPLEMENTATION_PLAN.md`](./MAMBA3_IMPLEMENTATION_PLAN.md) | Current plan: stages, prior art, claims policy |
+| [`THREE_PATHS_INTEGRATION.md`](./THREE_PATHS_INTEGRATION.md) | The three demonstrations, scoped: what each can and cannot claim |
 | [`MAMBA3_KERNEL_WORKPLAN.md`](./MAMBA3_KERNEL_WORKPLAN.md) | File-by-file execution, and the audit of the existing kernel |
 | [`PROJECT_CONCEPT.md`](./PROJECT_CONCEPT.md) | Decision log — what was chosen, what was rejected, why |
 | [`docs/`](./docs/README.md) | The working record: superseded plans, measurement logs, diagnoses |

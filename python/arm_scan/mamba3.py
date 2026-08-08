@@ -69,9 +69,18 @@ def angles_to_cos_sin(angles: torch.Tensor, dt: torch.Tensor,
     if r > half:
         raise ValueError(
             f"angles has {r} rotation pairs but the head dim allows {half}")
+    # Compute at the caller's precision, floored at fp32. This used to force
+    # `.float()` unconditionally, which is right for the kernel path (the FFI
+    # boundary downcasts anyway) but wrong for anyone doing f64 analysis with
+    # this helper: it silently capped an f64 pipeline at fp32, and the
+    # non-causal dense form then could not be compared against the reference at
+    # better than ~1e-8. fp32 callers are unaffected — `promote_types` returns
+    # float32 and the casts below are no-ops.
+    dtype = torch.promote_types(angles.dtype, torch.float32)
     # dt is (b, h, l) -> (b, l, h, 1) to broadcast over the rotation pairs.
-    dt_blh = dt.permute(0, 2, 1).unsqueeze(-1).float()
-    theta = torch.cumsum(torch.tanh(angles.float()) * math.pi * dt_blh, dim=1)
+    dt_blh = dt.permute(0, 2, 1).unsqueeze(-1).to(dtype)
+    theta = torch.cumsum(
+        torch.tanh(angles.to(dtype)) * math.pi * dt_blh, dim=1)
     cos, sin = torch.cos(theta), torch.sin(theta)
     if r < half:
         pad = (*theta.shape[:-1], half - r)
@@ -95,11 +104,18 @@ def _mamba3_scan_op(
     d_skip: Optional[torch.Tensor],
     z: Optional[torch.Tensor],
     reverse: bool,
+    psi: Optional[torch.Tensor] = None,
+    zeta: Optional[torch.Tensor] = None,
+    phi: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
-    b, length, _, dqk = q.shape
+    # SISO passes q as (b, l, 1, dqk) -- axis 2 is the B/C GROUP axis, always 1.
+    # MIMO passes (b, l, rank, dqk) -- axis 2 is the RANK. Same position, and
+    # the kernel reads it the same way, but they mean different things, so the
+    # distinction is carried by whether the projections are present.
+    b, length, rank, dqk = q.shape
     h, dv = v.shape[2], v.shape[3]
 
-    dims = _ffi.ArmMamba3Dims(b, h, dv, dqk, length)
+    dims = _ffi.ArmMamba3Dims(b, h, dv, dqk, length, rank)
     # The kernel writes head-major (b, h, l, dv); the model's world is
     # time-major. Permuting here keeps the strided-mutable-slice problem inside
     # the kernel, where it is a safety question, instead of leaking into the
@@ -113,7 +129,8 @@ def _mamba3_scan_op(
         dims,
         [q.data_ptr(), k.data_ptr(), v.data_ptr(), adt.data_ptr(),
          dt.data_ptr(), trap.data_ptr(), q_bias.data_ptr(), k_bias.data_ptr(),
-         cos.data_ptr(), sin.data_ptr(), ptr(d_skip), ptr(z)],
+         cos.data_ptr(), sin.data_ptr(), ptr(d_skip), ptr(z),
+         ptr(psi), ptr(zeta), ptr(phi)],
         1 if reverse else 0,
         _ffi.BACKENDS["auto"],
         _ffi.THREADING["auto"],
@@ -126,7 +143,8 @@ def _mamba3_scan_op(
 
 
 @_mamba3_scan_op.register_fake
-def _(q, k, v, adt, dt, trap, q_bias, k_bias, cos, sin, d_skip, z, reverse):
+def _(q, k, v, adt, dt, trap, q_bias, k_bias, cos, sin, d_skip, z, reverse,
+      psi=None, zeta=None, phi=None):
     b, length = q.shape[0], q.shape[1]
     h, dv = v.shape[2], v.shape[3]
     return q.new_empty((b, length, h, dv))
@@ -238,3 +256,79 @@ def mamba3_scan_pair(q, k, v, adt, dt, trap, q_bias, k_bias, angles=None,
     fwd = mamba3_scan(q, k, v, adt, dt, trap, reverse=False, **common)
     bwd = mamba3_scan(q, k, v, adt, dt, trap, reverse=True, **common)
     return fwd, bwd
+
+
+def mamba3_mimo_scan(q, k, v, adt, dt, trap, q_bias, k_bias, psi, zeta, phi,
+                     angles=None, D=None, z=None, reverse=False,
+                     cos=None, sin=None):
+    """Mamba-3 **MIMO** (rank-r) selective scan.
+
+    q, k    : (b, l, r, 1, dqk)  or (b, l, r, dqk) — the group axis is optional
+    v, z    : (b, l, h, dv)
+    adt, dt : (b, h, l)          adt = A*dt (<=0); dt post-softplus
+    trap    : (b, h, l)          PRE-sigmoid
+    q_bias,
+    k_bias  : (h, r, dqk)        per-head AND per-rank
+    psi,
+    zeta,
+    phi     : (h, r, dv)         input / gate / output projections
+    angles  : (b, l, h, a)       raw; the pre-pass runs here
+    D       : (h,)
+    returns : (b, l, h, dv)
+
+    **Not interchangeable with `mamba3_scan` at r=1.** The two families rotate
+    different lane pairs — SISO interleaved `(2i, 2i+1)`, MIMO split-halves
+    `(i, i + dqk/2)` — so a rank-1 MIMO call is *not* a SISO call. They agree
+    only when the rotation is the identity; `check_rank1_collapse` measures
+    exactly that (7.7e-16 with angles zeroed, 3.8e-01 without).
+
+    The angle pre-pass IS shared: upstream calls the same `angle_dt_fwd` for
+    both, so `angles_to_cos_sin` applies unchanged.
+    """
+    if q.dim() == 5:
+        if q.shape[3] != 1:
+            raise ValueError(
+                f"MIMO expects one B/C group, got {q.shape[3]}. Multi-group is "
+                "out of scope — see MAMBA3_IMPLEMENTATION_PLAN.md")
+        q = q[:, :, :, 0, :]
+    if k.dim() == 5:
+        k = k[:, :, :, 0, :]
+    if q.dim() != 4 or k.dim() != 4:
+        raise ValueError(
+            f"q/k must be (b, l, r, dqk) after squeezing the group axis; got "
+            f"{tuple(q.shape)} and {tuple(k.shape)}")
+
+    rank, dqk = q.shape[2], q.shape[3]
+    h, dv = v.shape[2], v.shape[3]
+    if (cos is None) != (sin is None):
+        raise ValueError("pass cos and sin together, or neither")
+    if cos is None:
+        if angles is None:
+            raise ValueError("pass either `angles` or both `cos` and `sin`")
+        cos, sin = angles_to_cos_sin(angles, dt, dqk // 2)
+
+    # The same argument as `_check_shapes`: the C entry point is told how many
+    # elements to read, so a short buffer is an out-of-bounds read rather than
+    # an error. Shape correctness is owned here.
+    for name, t, want in (
+        ("q", q, (q.shape[0], q.shape[1], rank, dqk)),
+        ("k", k, (q.shape[0], q.shape[1], rank, dqk)),
+        ("q_bias", q_bias, (h, rank, dqk)),
+        ("k_bias", k_bias, (h, rank, dqk)),
+        ("psi", psi, (h, rank, dv)),
+        ("zeta", zeta, (h, rank, dv)),
+        ("phi", phi, (h, rank, dv)),
+    ):
+        if tuple(t.shape) != want:
+            raise ValueError(
+                f"{name} must be {want}, got {tuple(t.shape)}")
+    if z is not None and tuple(z.shape) != tuple(v.shape):
+        raise ValueError(
+            f"z must match v {tuple(v.shape)}, got {tuple(z.shape)}")
+
+    return _mamba3_scan_op(
+        _c(q), _c(k), _c(v), _c(adt), _c(dt), _c(trap), _c(q_bias), _c(k_bias),
+        _c(cos), _c(sin),
+        None if D is None else _c(D), None if z is None else _c(z),
+        bool(reverse), _c(psi), _c(zeta), _c(phi),
+    )

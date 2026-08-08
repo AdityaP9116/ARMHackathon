@@ -15,7 +15,10 @@ from pathlib import Path
 #    branches, each claiming 3. Reconciled at merge -> both are in ABI 4.
 # 5: fused bidirectional entry point (arm_scan_selective_scan_bidirectional_f32).
 # 6: Mamba-3 SISO entry point (arm_scan_mamba3_scan_f32) + its own dims struct.
-ABI_VERSION = 6
+# 7: ArmMamba3Dims gained `rank` and the Mamba-3 entry point gained the three
+#    MIMO projections. The struct CHANGED SIZE, so this is a hard version bump,
+#    not an additive one -- a v6 caller would read garbage for `rank`.
+ABI_VERSION = 7
 
 _LIB_NAMES = {
     "win32": ["arm_scan_ffi.dll"],
@@ -55,6 +58,8 @@ class ArmMamba3Dims(ctypes.Structure):
         ("dv", ctypes.c_size_t),
         ("dqk", ctypes.c_size_t),
         ("len", ctypes.c_size_t),
+        # 1 for SISO. Must match the Rust struct field-for-field and in order.
+        ("rank", ctypes.c_size_t),
     ]
 
 
@@ -120,7 +125,8 @@ def load():
             lib.arm_scan_mamba3_scan_f32.argtypes = [
                 ctypes.POINTER(ArmMamba3Dims),
                 # q k v adt dt trap q_bias k_bias cos sin d_skip z
-                *([ctypes.c_void_p] * 12),
+                # then the three MIMO projections (psi, zeta, phi)
+                *([ctypes.c_void_p] * 15),
                 ctypes.c_int,  # reverse
                 ctypes.c_int,  # backend
                 ctypes.c_int,  # threading
@@ -193,15 +199,21 @@ def mamba3_raw(dims, ptrs, reverse, backend, threading, ptr_out,
                ptr_last_state, ptr_last_bx):
     """Call the Mamba-3 entry point.
 
-    `ptrs` is the 12 input pointers in signature order:
-    q, k, v, adt, dt, trap, q_bias, k_bias, cos, sin, d_skip, z
-    (the last two nullable). `last_state` and `last_bx` are nullable but must
-    be supplied together — the C side rejects half a carry rather than
-    defaulting, since resuming from one without the other is silently wrong.
+    `ptrs` is the 15 input pointers in signature order:
+    q, k, v, adt, dt, trap, q_bias, k_bias, cos, sin, d_skip, z,
+    mimo_psi, mimo_zeta, mimo_phi.
+
+    `d_skip`/`z` are nullable. The three MIMO projections are all-or-nothing:
+    pass three nulls for SISO, or three real pointers for MIMO. The C side
+    rejects a partial set rather than guessing the missing one.
+
+    `last_state` and `last_bx` are nullable but must be supplied together — the
+    C side rejects half a carry rather than defaulting, since resuming from one
+    without the other is silently wrong.
     """
     lib = load()
-    if len(ptrs) != 12:
-        raise ValueError(f"expected 12 input pointers, got {len(ptrs)}")
+    if len(ptrs) != 15:
+        raise ValueError(f"expected 15 input pointers, got {len(ptrs)}")
     rc = lib.arm_scan_mamba3_scan_f32(
         ctypes.byref(dims), *ptrs,
         ctypes.c_int(reverse), ctypes.c_int(backend), ctypes.c_int(threading),

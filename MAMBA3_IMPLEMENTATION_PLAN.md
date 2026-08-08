@@ -9,6 +9,11 @@ two pieces of prior art nobody had spotted turned up.
 
 ---
 
+> **Execution plan for the three paths:
+> [`THREE_PATHS_INTEGRATION.md`](THREE_PATHS_INTEGRATION.md)** (Aug 7) — written after the
+> kernel itself was finished, and grounded in the real checkpoint's parameter table rather
+> than in estimates.
+
 ## 0. The shape of the project, in one paragraph
 
 An **Arm-optimised Mamba-3 kernel in Rust** (NEON + chunked scan + rayon),
@@ -175,7 +180,7 @@ goldens, replayed via a Rust-side loader.
 
 **Gate:** NEON↔scalar parity; rayon bit-identical at `RAYON_NUM_THREADS ∈ {1,2,8}`.
 
-## 7. Stage 4 — FFI + torch op ✅ **DONE (Aug 7)** — ABI 6
+## 7. Stage 4 — FFI + torch op ✅ **DONE (Aug 7)** — ABI 6, now **7** (MIMO)
 
 `arm_scan_mamba3_scan_f32`, same discipline as the existing entry point. Bump
 `arm_scan_abi_version()`. `python/arm_scan/mamba3.py` with a registered fake
@@ -218,18 +223,38 @@ re-derivation, and cross-checking block semantics against `burn-mamba` and
 
 **Gate:** 2D goldens per direction; pair-vs-oracle parity at 1/2/8 threads.
 
-## 9. Stage 6 — CPU model path, 1D *(~1–1.5 days — the credibility anchor)*
+## 9. Stage 6 — CPU model path, 1D ✅ *(DONE Aug 7 — the credibility anchor)*
 
-**Directory:** `apps/mamba3_lm/`
+**Directory:** `apps/mamba3_lm/` — `block.py`, `model.py`, `load.py`.
 
-`mamba_ssm`'s `Mamba3` cannot run on CPU, so reimplement the block in plain
+`mamba_ssm`'s `Mamba3` cannot run on CPU, so the block is reimplemented in plain
 PyTorch — projections, RoPE angles (**including the `tanh(·)·π` pre-pass**),
-BCNorm, gated MLP, embedding and head — with the scan routed to our kernel.
-Load the published 187M weights using `model_shape.json`.
+BCNorm, gated MLP, embedding and tied head — with the scan routed to our kernel.
+The published 187M weights load with `strict=True` and no key remapping.
 
-**Gate:** logits match `model_forward.npz` within fp32 tolerance. This is the
-proof that we run *the real model*, and it is the only accuracy claim the
-project can make.
+**Gates, both passing:**
+
+- `tests/check_mamba3_block.py` — the mixer against the real block, driven by
+  the published layer-0/1 weights: **1.36 bf16 ULP** (bound 16). In CI; needs no
+  checkpoint download because the weights ride inside the golden.
+- `tests/check_mamba3_model.py` — logits against `model_forward.npz`: **98.05%**
+  argmax, drift 4.5e-3 of logit range, **0 unexplained flips**. Not in CI (357 MB).
+
+**Three things this stage established that were not known going in:**
+
+1. **Mamba-3 has no `conv1d`.** The mixer has exactly 8 parameters.
+2. **`A` is data-dependent** — out of `in_proj` through `heavy_tail`, not a
+   learned `A_log`. There is no `A` tensor to load.
+3. **The official kernel is not reproducible across processes.** Two runs
+   disagree on up to 5/256 argmax positions (~2.9e-3 relative logit drift), while
+   two forwards inside one process are bit-identical — `triton.autotune` picks
+   its config by timing. The gate therefore cites this measured floor instead of
+   comparing against a 100% nothing can reach.
+
+Fixed here too: the golden sweep seeded itself with `abs(hash(name))`, and
+Python salts `str.__hash__` per process, so the sweep goldens were **not
+regenerable**. Now seeded from `golden_inputs.case_seed` (sha256) and verified
+bit-identical across two independent captures.
 
 ## 10. Stage 7 — The comparison study *(the novel result)*
 

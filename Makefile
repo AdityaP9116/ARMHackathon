@@ -20,9 +20,35 @@ RES   ?= 128
 build:
 	cd kernel && cargo build --release -p arm-scan-ffi
 
+# Typecheck the aarch64-only code from an x86 dev box.
+#
+# `try_neon` and everything under `neon/` are `#[cfg(target_arch = "aarch64")]`,
+# so `cargo build` on x86 does not compile them AT ALL. A field added to a
+# shared struct can therefore pass every local check and break only on the Arm
+# CI runners -- which is exactly what happened when `Mamba3Input` gained `mimo`.
+# This catches it in about a second, and needs no Arm hardware: it is a
+# typecheck, not a build (no linker involved).
+#
+#   rustup target add aarch64-unknown-linux-gnu   # one-off
+#
+# Skips (loudly) when the target is not installed, so `make test` still works on
+# a fresh clone and on CI runners that do not have it. Skipping is safe here in
+# a way that "CI silently stopped running" was not: the arm64 and macOS-arm64
+# jobs compile this same code NATIVELY, so the coverage exists either way. This
+# target only moves the discovery earlier for someone working on x86.
+check-cross:
+	@if rustup target list --installed 2>/dev/null | grep -q '^aarch64-unknown-linux-gnu$$'; then \
+	  echo "check-cross: typechecking the aarch64-only paths"; \
+	  cd kernel && cargo check --target aarch64-unknown-linux-gnu --all-targets; \
+	else \
+	  echo "check-cross: SKIPPED - aarch64-unknown-linux-gnu not installed."; \
+	  echo "             Install it with: rustup target add aarch64-unknown-linux-gnu"; \
+	  echo "             (the arm64 CI jobs compile these paths natively regardless)"; \
+	fi
+
 # Kernel correctness: Rust gates, then the goldens replayed through the real
 # C ABI, then both golden sets re-derived by an independent implementation.
-test: build
+test: build check-cross
 	cd kernel && cargo test --release
 	$(PY) tests/check_ffi.py
 	$(PY) tests/verify_golden.py
@@ -42,6 +68,20 @@ test-app: build
 test-mamba3:
 	$(PY) tests/verify_golden_mamba3.py
 	$(PY) tests/check_mamba3_op.py
+	$(PY) tests/check_mamba3_block.py
+	$(PY) tests/check_ss2d_mamba3.py
+	$(PY) tests/verify_golden_mamba3_mimo.py
+	$(PY) tests/check_mamba3_mimo_op.py
+	$(PY) tests/check_mamba3_noncausal.py
+
+# Path A end to end: the published 187M checkpoint, on CPU, through our kernel.
+# Kept OUT of `test-mamba3` because it downloads ~357 MB, which no CI job
+# should do on every push. `check_mamba3_block` is the cheap proxy that runs
+# there instead: it carries the real layer-0/1 weights inside the golden, so it
+# catches the same plumbing bugs without the download.
+test-mamba3-model:
+	$(PY) tests/check_mamba3_model.py
+	$(PY) tests/check_mamba3_model.py --dir tests/golden/mamba3_mimo
 
 # The minutes-long ones: in-process prior training. CI and pre-release only.
 test-app-slow: build

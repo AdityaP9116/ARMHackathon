@@ -20,11 +20,27 @@ What is left is not kernel work:
 
 1. **No dedicated-hardware numbers, for anything.** Every timing in this repo is
    x86 or a shared 4-core runner. Existential for a Cloud-track entry.
-2. **2D cross-scan is not wired** to the Mamba-3 primitive — `ss2d_scan`'s
-   machinery is recurrence-agnostic, but its `scan_pair` seam still speaks
-   Mamba-1's parameter list. This is the smallest item and it unblocks the
-   headline claim.
-3. **The real 187M checkpoint has not been run end to end** (Stage 6).
+2. **2D is DONE, causal and non-causal, with no new Rust for either.**
+   `ss2d_scan_mamba3` and `ss2d_noncausal_mamba3` are layout/composition over
+   `mamba3_scan_pair`. Two traps worth keeping: the RoPE angle pre-pass must run
+   on the traversal **views**, not the grid, or both orderings silently share
+   the row-major `theta`; and the plan's assumption that non-causal needs dense
+   GEMMs was **wrong** — the decay factorises, so non-causal is
+   forward + backward − diagonal.
+3. **MIMO is correct end to end but SLOW.** Path B is complete (B0-B4):
+   `mamba3-mimo-187m` runs on CPU at **96.48%** argmax — better than the
+   reference reproduces itself (95.31%) — through ABI v7. But `mamba3/mimo.rs`
+   is the **scalar path only**; there is no blocked or NEON MIMO kernel, so
+   MIMO is ~2x slower than SISO in absolute terms and the arithmetic-intensity
+   argument for MIMO on CPU is **still untested**. That kernel is the highest-
+   value remaining Path B work.
+
+   Two things to know: the families use **different RoPE conventions** (SISO
+   interleaved `(2i, 2i+1)`, MIMO split-halves `(i, i+n/2)` over the first
+   `n/4` lanes), and re-capturing goldens needs `tools/setup_cuda_toolchain.sh`
+   at bf16.
+   *(Stage 6 — the real checkpoints end to end — is **done** for both families:
+   see `apps/mamba3_lm/` and `THREE_PATHS_INTEGRATION.md`.)*
 4. **Performance is untuned.** `TILE = 32` in the blocked kernel has never been
    swept, and there is no Mamba-3 phase profile. Tuning genuinely needs Arm —
    the blocking exists to fit NEON registers and Arm's L1, and x86 does not even
@@ -50,6 +66,12 @@ file does and why.
   how many elements to read, so a short buffer is an out-of-bounds read, not an
   error — it surfaces as NaN much later. The Python layer owns shape
   correctness; see `_check_shapes` in `python/arm_scan/mamba3.py`.
+- **x86 does not compile the aarch64 code at all.** `try_neon` and everything
+  under `neon/` are `#[cfg(target_arch = "aarch64")]`, so a field added to a
+  shared struct passes every local check and breaks only on the Arm runners.
+  It cost a red CI run when `Mamba3Input` gained `mimo`. `make check-cross`
+  typechecks the Arm path from an x86 box in about a second — no Arm hardware,
+  no linker. `make test` now depends on it.
 - **Mamba-3 is not resumable and no carry can make it so.** `scale_t` depends on
   `dt_{t+1}`, so the trapezoid looks *forward*. Mamba-1's `h0` contract does not
   transfer. `last_bx` exists but is diagnostic only.
@@ -229,7 +251,7 @@ in the status section at the top.
 
 ## Repo state (Aug 7)
 
-- Mamba-1 and Mamba-3 kernels both shipped; ABI **6**
+- Mamba-1 and Mamba-3 kernels both shipped; ABI **7** (Mamba-3 SISO + MIMO)
 - CI green on `linux-arm64`, `macos-arm64`, `linux-x86_64`
 - Root docs reduced to six; superseded plans moved to `docs/archive/`
 - The MRI diffusion app is **demoted but still CI-gated** — it is the only

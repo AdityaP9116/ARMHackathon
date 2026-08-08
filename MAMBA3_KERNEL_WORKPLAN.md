@@ -185,7 +185,7 @@ bit-identity at 1/2/8 threads.
 mirroring the Mamba-1 family, with the same `Backend`/`Threading` enums reused
 verbatim. `mod mamba3;` alongside the existing modules.
 
-### M6 — FFI ✅ **DONE** (ABI 6)
+### M6 — FFI ✅ **DONE** (ABI 6; bumped to **7** by B2 for MIMO)
 **Modify:** `arm-scan-ffi/src/lib.rs`
 
 Third entry point `arm_scan_mamba3_scan_f32` with `#[repr(C)] Mamba3DimsC`.
