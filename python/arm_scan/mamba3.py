@@ -69,9 +69,18 @@ def angles_to_cos_sin(angles: torch.Tensor, dt: torch.Tensor,
     if r > half:
         raise ValueError(
             f"angles has {r} rotation pairs but the head dim allows {half}")
+    # Compute at the caller's precision, floored at fp32. This used to force
+    # `.float()` unconditionally, which is right for the kernel path (the FFI
+    # boundary downcasts anyway) but wrong for anyone doing f64 analysis with
+    # this helper: it silently capped an f64 pipeline at fp32, and the
+    # non-causal dense form then could not be compared against the reference at
+    # better than ~1e-8. fp32 callers are unaffected — `promote_types` returns
+    # float32 and the casts below are no-ops.
+    dtype = torch.promote_types(angles.dtype, torch.float32)
     # dt is (b, h, l) -> (b, l, h, 1) to broadcast over the rotation pairs.
-    dt_blh = dt.permute(0, 2, 1).unsqueeze(-1).float()
-    theta = torch.cumsum(torch.tanh(angles.float()) * math.pi * dt_blh, dim=1)
+    dt_blh = dt.permute(0, 2, 1).unsqueeze(-1).to(dtype)
+    theta = torch.cumsum(
+        torch.tanh(angles.to(dtype)) * math.pi * dt_blh, dim=1)
     cos, sin = torch.cos(theta), torch.sin(theta)
     if r < half:
         pad = (*theta.shape[:-1], half - r)

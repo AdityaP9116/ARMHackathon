@@ -20,12 +20,13 @@ What is left is not kernel work:
 
 1. **No dedicated-hardware numbers, for anything.** Every timing in this repo is
    x86 or a shared 4-core runner. Existential for a Cloud-track entry.
-2. **2D non-causal (C2) has not started.** The *causal* half is done:
-   `arm_scan.ss2d_scan_mamba3` runs the four-direction cross-scan on
-   `mamba3_scan_pair` as pure layout, with no new Rust. Note the trap it is
-   built around — the RoPE angle pre-pass must run on the traversal **views**,
-   not the grid, or both orderings silently share the row-major `theta`. C2 is
-   a second, GEMM-shaped kernel with a deliberately thin moat.
+2. **2D is DONE, causal and non-causal, with no new Rust for either.**
+   `ss2d_scan_mamba3` and `ss2d_noncausal_mamba3` are layout/composition over
+   `mamba3_scan_pair`. Two traps worth keeping: the RoPE angle pre-pass must run
+   on the traversal **views**, not the grid, or both orderings silently share
+   the row-major `theta`; and the plan's assumption that non-causal needs dense
+   GEMMs was **wrong** — the decay factorises, so non-causal is
+   forward + backward − diagonal.
 3. **MIMO is correct end to end but SLOW.** Path B is complete (B0-B4):
    `mamba3-mimo-187m` runs on CPU at **96.48%** argmax — better than the
    reference reproduces itself (95.31%) — through ABI v7. But `mamba3/mimo.rs`

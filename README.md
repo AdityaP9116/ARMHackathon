@@ -131,8 +131,13 @@ recurrence and 1.9× over `torch.compile` at vision grid sizes. **Correctness an
 only**: no 2D Mamba-3 weights have ever been published, so no accuracy claim is available, and
 we do not make one.
 
-Still outstanding: the non-causal 2D formulation (the causal-vs-non-causal comparison is the
-novel result), and **making MIMO fast** — it is correct everywhere but runs on the portable
+The **causal-vs-non-causal comparison** — which nobody has published for any Mamba generation —
+is now measured: dropping causality costs **2×** in 1D and **~1×** in 2D, because the
+four-direction cross-scan already runs both directions. It needed no new kernel, because the
+decay factorises. The O(L²) dense formulation is implemented as an independent check and
+reproduces the O(L) kernel to **2.99e-16** — then loses to it by 784 tokens.
+
+Still outstanding: **making MIMO fast** — it is correct everywhere but runs on the portable
 scalar path only, so its arithmetic-intensity advantage on CPU is still a prediction rather
 than a measurement.
 

@@ -32,6 +32,9 @@ __all__ = [
     "mamba3_scan_pair",
     "mamba3_mimo_scan",
     "ss2d_scan_mamba3",
+    "noncausal_scan",
+    "noncausal_scan_dense",
+    "ss2d_noncausal_mamba3",
     "angles_to_cos_sin",
     "patch",
     "unpatch",
@@ -58,6 +61,10 @@ def __getattr__(name):
     if name == "ss2d_scan_mamba3":
         return importlib.import_module(
             ".ss2d_mamba3", __name__).ss2d_scan_mamba3
+    if name in ("noncausal_scan", "noncausal_scan_dense",
+                "ss2d_noncausal_mamba3"):
+        return getattr(importlib.import_module(
+            ".mamba3_noncausal", __name__), name)
     if name in ("patch", "unpatch", "stats"):
         return getattr(importlib.import_module(".patch", __name__), name)
     raise AttributeError(f"module 'arm_scan' has no attribute '{name}'")

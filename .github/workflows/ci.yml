@@ -241,17 +241,19 @@ jobs:
       # the official GPU kernels (tests/golden/mamba3/). Runs in ~1s and needs
       # no GPU -- capturing was the only step that did. Guards against a
       # regression in the reference that every later Mamba-3 stage is gated on.
-      # Five gates, ~10s total, none needing a GPU or a checkpoint download:
+      # Seven gates, ~20s total, none needing a GPU or a checkpoint download:
       # the SISO reference vs captured official-kernel ground truth; the torch
       # op end to end (angle pre-pass, head-major -> time-major permute,
       # pointer marshalling, torch.compile composability -- none of which the
       # Rust or FFI tests cover); the Path A mixer vs the real block, driven by
       # the published layer-0/1 weights carried inside the golden; the 2D
       # cross-scan's layout invariants plus kernel-vs-reference parity at 1/2/8
-      # threads; and the MIMO rank-r reference vs the TileLang goldens. The
-      # model-level Path A gate (make test-mamba3-model, ~357 MB) is
-      # deliberately NOT here.
-      - name: Mamba-3 SISO + MIMO + Path A mixer + 2D vs goldens
+      # threads; the MIMO rank-r reference vs the TileLang goldens; the MIMO
+      # kernel through the C ABI; and the non-causal aggregation, where an
+      # O(L^2) dense algorithm and the O(L) scan form must agree. The
+      # model-level gate (make test-mamba3-model, ~357 MB) is deliberately NOT
+      # here.
+      - name: Mamba-3 SISO + MIMO + 2D causal + non-causal vs goldens
         working-directory: .
         run: make test-mamba3 PY=python3
       # Smoke only, NOT a measurement: a shared CI runner cannot produce a

@@ -17,7 +17,7 @@ within one family rather than three unrelated models: it is the honest maximum.
 | Oracle | ✅ official kernels | ✅ official kernels *(if capturable)* | ❌ **our own reference only** |
 | Accuracy claim | ✅ token-level | ✅ | ❌ **impossible** |
 | Speed claim | ✅ | ✅ | ✅ |
-| Kernel work | none | **rank-r update** | seam widening |
+| Kernel work | none | **rank-r update** | none — layout + composition only |
 | Risk | model plumbing | **TileLang on Blackwell** | no authoritative oracle |
 
 ---
@@ -431,15 +431,64 @@ things, and the writeup must not present them as comparable. And as everywhere e
 repo right now: x86, unquiesced, **scalar path** (NEON is not compiled on x86). Graviton
 remains the gap.
 
-### C2 — non-causal, VNCT-style *(the expensive half)*
+### C2 — non-causal ✅ *(DONE Aug 7 — and the plan's premise was wrong)*
 
-Dropping causality removes the recurrence entirely: the intra-chunk term becomes **two dense
-GEMMs** plus 2D RoPE. This is a *second kernel*, sharing packaging and tests but almost no
-compute code, and `matrixmultiply` is currently only a transitive dev-dependency.
+**The plan predicted this would be "a second kernel — two dense GEMMs", O(L²), with a thin moat
+because BLAS is good at GEMMs. The maths says otherwise, and that is the result.**
 
-**Be honest about the moat here.** GEMMs are what BLAS and compilers are good at, so expect a
-much thinner margin against `torch.compile` than the scan enjoys. That is the finding, not a
-failure — and publishing both formulations side by side is what converts it into a result.
+Unrolling the recurrence gives `y_t = Σ_s M[t,s]·(q_t·k_s)·v_s` with
+`M[t,s] = e^(L_t − L_s)·scale_s`. The decay **factorises** into `e^(L_t)·e^(−L_s)`, so the sum
+over `s < t` is exactly a forward scan and the sum over `s > t` is exactly a backward one:
+
+```
+Σ_{all s}  =  Σ_{s≤t}  +  Σ_{s≥t}  −  Σ_{s=t}
+non-causal =  forward  +  backward  −  diagonal
+```
+
+**Non-causal costs 2× a causal scan, not O(L²), and needs no new kernel at all.** Both
+directions already existed. `arm_scan.noncausal_scan` and `ss2d_noncausal_mamba3` are pure
+composition over `mamba3_scan_pair`; **no Rust changed for C2**.
+
+The diagonal correction reads `q_t·k_t`, which looks like it needs the rotated q/k the kernel
+computes internally. It does not: **a dot product is invariant under rotating both operands by
+the same angle**, and RoPE gives `q_t` and `k_t` the same `theta_t`. That is why this composes
+over the public op instead of needing kernel surgery.
+
+**In 2D it is nearly free.** The four-direction cross-scan *already* runs both directions, so
+non-causal 2D is the same scans minus two diagonals — measured at **1.06–1.23× causal**, against
+**2.25–2.65×** for the 1D case where a second scan really is added.
+
+### The measurement — `bench/bench_mamba3_noncausal.py`
+
+x86, 16 threads. Sub-millisecond rows are dispatch-dominated and the harness says so.
+
+| grid | tokens | 1D causal | 1D non-causal | ratio | 2D causal | 2D non-causal | ratio | dense |
+|---|---|---|---|---|---|---|---|---|
+| 8×8 | 64 | 0.32 ms | 0.73 ms | 2.25× | 1.20 ms | 1.47 ms | 1.23× | 0.80 ms |
+| 14×14 | 196 | 0.61 | 1.59 | 2.63× | 3.47 | 2.83 | 0.81× | 0.90 |
+| 28×28 | 784 | 2.71 | 3.19 | 1.18× | 6.53 | 7.86 | 1.20× | 15.84 |
+| 56×56 | 3136 | 6.26 | 16.58 | 2.65× | 25.59 | 27.13 | 1.06× | *(mask too large)* |
+
+**The dense form has a crossover and it arrives early.** Better constant (GEMMs, no sequential
+dependency), worse asymptotics: competitive around 200 tokens, **5× slower by 784**, and at 3136
+the `(L,L)` mask per head is the binding constraint before time is. For any real vision grid the
+scan form wins — which is the argument for a CPU scan kernel existing at all, now measured
+rather than asserted.
+
+### Gates — `tests/check_mamba3_noncausal.py`
+
+Five checks. The load-bearing one is that **an O(L²) dense algorithm reproduces the O(L) kernel
+to 2.99e-16 in f64** — two implementations sharing no code, agreeing to machine precision. That
+validates the mask derivation and, through it, the recurrence itself.
+
+Also checked: non-causal genuinely differs from causal (3.3e-01 — a no-op would pass every
+equality above), the 2D form equals its own per-ordering definition **exactly** (0.00e+00), and
+thread invariance.
+
+One fix fell out: `angles_to_cos_sin` hardcoded `.float()`, silently capping any f64 pipeline at
+fp32 — harmless for the kernel path, which downcasts at the FFI boundary anyway, but it made the
+f64 algorithm comparison bottom out at 1e-8 instead of 1e-16. Now dtype-preserving, floored at
+fp32; fp32 callers are unaffected.
 
 ### The oracle caveat, stated plainly
 
@@ -458,7 +507,7 @@ its authors intended. This must appear in the writeup, not be buried.
 | ~~2~~ | ~~**B0 capture probe**~~ | ✅ **GREEN Aug 7** — MIMO goldens captured at the published config |
 | ~~3~~ | ~~**C1 causal 2D**~~ | ✅ **done Aug 7** — `ss2d_scan_mamba3`, zero new kernel code |
 | 4 | **B1–B4** | Second real-weights path — now unblocked |
-| 5 | **C2 non-causal** | Highest novelty, thinnest moat — last |
+| ~~5~~ | ~~**C2 non-causal**~~ | ✅ **done Aug 7** — and it needed no new kernel: the decay factorises |
 
 **Not sequenced here, and still the largest gap: dedicated-hardware numbers.** Every timing in
 this repo is x86 or a shared 4-core runner. All five items above are laptop work; the Graviton

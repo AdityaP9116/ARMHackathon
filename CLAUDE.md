@@ -53,9 +53,12 @@ Not done, in priority order:
 
 1. **No dedicated-hardware numbers, for anything.** Every timing is x86 or a shared 4-core
    runner. This is the existential gap for a Cloud-track entry and no kernel work substitutes.
-2. **2D non-causal (C2) not started.** The *causal* 2D cross-scan is done —
-   `arm_scan.ss2d_scan_mamba3`, pure layout over `mamba3_scan_pair`, no new kernel code, gated
-   by `tests/check_ss2d_mamba3.py` at 2.0e-07. C2 is the second, GEMM-shaped kernel.
+2. **2D is complete, causal and non-causal.** `arm_scan.ss2d_scan_mamba3` (causal) and
+   `ss2d_noncausal_mamba3` (non-causal), both pure layout/composition over `mamba3_scan_pair` —
+   **no new kernel code for either**. The plan's premise that non-causal needs dense GEMMs was
+   wrong: the decay factorises, so non-causal = forward + backward − diagonal, at 2× a causal
+   scan in 1D and ~1× in 2D (the cross-scan already runs both directions). The O(L²) dense form
+   is implemented as an independent oracle and loses by 784 tokens.
 3. **MIMO is correct but not fast.** Path B is complete end to end (B0–B4): ground truth
    captured, reference at 2.40 bf16 ULP, Rust kernel at **1.90** through ABI v7, and
    `mamba3-mimo-187m` running on CPU at **96.48%** argmax — *better than the reference
