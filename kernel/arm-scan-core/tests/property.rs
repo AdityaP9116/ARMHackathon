@@ -307,6 +307,20 @@ proptest! {
         let mut out_r = vec![0.0_f32; n_out];
         selective_scan(&case.dims, &mk(true), &mut out_r, None).unwrap();
 
+        // An output that is identically zero is the SAME in both directions, so
+        // for such a case "reverse differs from forward" is false rather than
+        // merely unproven — asserting it would be asserting something untrue of
+        // a correct kernel. The strategy reaches this whenever u, B or C is all
+        // zero: nothing enters the state, or nothing is read out of it.
+        //
+        // Found by proptest on a macos-arm64 run with u = b = c = 0 (L=4), after
+        // 53 successes. The seed is random per run and no regression file is
+        // written here, so this could redden ANY run on ANY platform — and a
+        // failure in this job skips app-and-mamba3, hiding the Mamba-3 gates
+        // behind an unrelated flake.
+        let peak = out_f.iter().fold(0.0_f32, |m, v| m.max(v.abs()));
+        prop_assume!(peak > 1e-6);
+
         let scale = out_f.iter().fold(1e-6_f32, |m, v| m.max(v.abs()));
         let max_rel = out_f.iter().zip(&out_r)
             .map(|(a, b)| (a - b).abs() / scale)
