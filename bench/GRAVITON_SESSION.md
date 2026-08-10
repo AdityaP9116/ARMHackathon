@@ -24,9 +24,27 @@ dedicated Arm hardware. It is an **Arm** contest.
       *AWS Educate* often restricts instance types; **AWS Academy Learner Lab**
       blocks larger instance types outright *and* auto-terminates sessions
       (typically 4 h) — a 3-hour benchmark run is at real risk there.
-- [ ] If 64 vCPU is a fight, take **`c8g.8xlarge` (32 vCPU)**. A 1→32 sweep is six
-      points and shows the scaling story essentially as well. Do not lose days to a
-      quota argument for the last doubling.
+- [ ] **If the quota is a fight, size down and run anyway — do not wait.** What
+      moves numbers from *provisional* to *headline* is **dedicated, unshared Arm
+      hardware**, not 64 cores. Today's Arm data is a shared 4-core CI runner, so
+      even a 16-core dedicated box is 4× the cores *and* removes contention.
+
+      | Instance | vCPU | ~$/hr | 3 h | Scaling points |
+      |---|---|---|---|---|
+      | `c8g.16xlarge` | 64 | ~$2.90 | ~$9 | 1→64, seven |
+      | `c8g.8xlarge` | 32 | ~$1.45 | ~$4 | 1→32, six |
+      | **`c8g.4xlarge`** | **16** | **~$0.72** | **~$2** | **1→16, five** |
+      | `c8g.2xlarge` | 8 | ~$0.36 | ~$1 | 1→8, four |
+
+      **Only the top of the scaling curve is lost.** The first-ever NEON Mamba-3
+      measurement, every correctness gate, every Mamba-3 benchmark, the
+      `torch.compile` comparisons and the constant-memory claim are all
+      core-count-independent.
+
+      Results are JSON. Running 16 cores now and re-running at 64 later costs one
+      more session with all the first-run friction already solved — which strictly
+      beats holding out for a support ticket. **Tag the smaller run** (e.g.
+      `graviton-c8g-4xl`) so a later run does not overwrite it.
 
 **Then:**
 
@@ -100,9 +118,20 @@ Three things to find in that output, in order of importance:
 USD_PER_HOUR=2.90 INSTANCE_TYPE=c8g.16xlarge THREADS_LIST="1 2 4 8 16 32 64" bash bench/run_baseline.sh graviton-c8g 2>&1 | tee session.log
 ```
 
+**On a smaller instance**, drop the thread list to the cores you actually have and
+change the tag, so a later larger run does not overwrite these results:
+
+```bash
+USD_PER_HOUR=0.72 INSTANCE_TYPE=c8g.4xlarge THREADS_LIST="1 2 4 8 16" bash bench/run_baseline.sh graviton-c8g-4xl 2>&1 | tee session.log
+```
+
 Set `USD_PER_HOUR` to what you are **actually paying** (check the console — spot differs from
 on-demand); it drives the $/reconstruction table. Add `PRIOR_CKPT=path.pt` if a trained prior
 exists, to get the quality rows too.
+
+> A thread count above `nproc` measures oversubscription, not scaling — the curve
+> bends because threads are contending for cores, which is a property of the box
+> rather than of the kernel. Keep the list within the cores you have.
 
 That single command runs all seven stages. What it covers and roughly how long:
 
