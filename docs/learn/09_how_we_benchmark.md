@@ -22,9 +22,11 @@ From our own benchmark source:
 > that matters.** An Arm-engineer judge will discount the eager column and look
 > straight at this one.
 
-The gap is stark. On 2D: **14–38×** against eager, **~1.9×** against
-`torch.compile`. Both are true. Only one is interesting, and quoting only the
-first would be the kind of thing that ends a submission's credibility.
+The gap is stark. On 2D, measured on Graviton4: **17.7–92.5×** against eager but
+**14.25×** against `torch.compile` — and on the 187M model, **18.89×** against
+eager collapses to **1.64–3.05×** against `torch.compile`. Both are true. Only
+one is interesting, and quoting only the first is the kind of thing that ends a
+submission's credibility.
 
 ### Why we can beat `torch.compile` at all
 
@@ -123,15 +125,19 @@ The repo classifies numbers by where they were measured:
 | shared 4-core CI runner | **provisional** |
 | dedicated Arm instance (Graviton) | **headline** |
 
-Everything in the repo today is provisional. That is stated in the README rather
-than buried:
+**As of Aug 11, 2026 the headline numbers exist**: `c8g.16xlarge`, Graviton4
+(Neoverse-V2), 64 vCPU. See `README.md` for the tables and `bench/results/` for
+the raw JSON.
 
-> **Not done, and it is the gap that matters: there are no dedicated-hardware
-> numbers.**
+Two of those measurements **reversed** what x86 had said, which is the whole
+reason the provisional/headline distinction exists:
 
-The Graviton session converts them. And note from [§6](06_inside_our_kernel.md)
-that this is not a refinement: **on x86 the NEON path is not compiled at all**, so
-Graviton is the first measurement of the actual NEON Mamba-3 kernel anywhere.
+- the SS2D traversal-pair rewrite measured 1.80× on x86 and **0.96× — a
+  regression — on 64 cores**, because the pair form halves the rayon rows
+- the "is a fully fused 2D kernel worth building" verdict flipped from *no*
+  (7.2–13.8% overhead) to *yes* (**46.1%**)
+
+A number without its hardware attached is not a result.
 
 ## What gets measured on Graviton
 
@@ -162,12 +168,16 @@ breakdown and hardware counters:
 | `vexpq_f32` dominates | `exp` is still the hot spot |
 | transpose loop hot | B/C prep costs too much |
 
-Measured so far on Neoverse-N2: NEON **4.03–4.08×** over scalar, threading
-**3.99×/4 cores (99.7%)**, `exp` at **53.7%** of runtime, transpose at **0.1%**.
+Measured on Graviton4 (Neoverse-V2): NEON **4.23×** over scalar, **+6.17×** from
+rayon on top (26× total), `exp` at **47.7–48.2%** of runtime and the transpose at
+**0.0–0.1%** — stable to within 0.5% across every shape tested.
 
 That last pair is a genuine finding: `exp` dominates and the transpose is free,
-which tells you exactly where the next optimization should go — and where it
-should not.
+which says exactly where the next optimization goes (bf16 storage, SVE2 `FEXPA`)
+and where it must not.
+
+Summed differently: **Pass A is ~72% of runtime.** That is the two-pass design's
+founding premise, measured rather than asserted.
 
 ---
 

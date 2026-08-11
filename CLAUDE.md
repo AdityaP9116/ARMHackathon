@@ -28,8 +28,10 @@ schedules (`ROADMAP.md`, `SUBMISSION_ENDGAME_PLAN.md`, `APPLICATIONS.md`) are in
 `docs/archive/` — read for history, not for what to do next.
 
 **Mamba-1: complete.** Goldens, scalar + NEON chunked kernel, rayon, C ABI, torch op,
-`arm_scan.patch()`, wheels, three-platform CI. 1D · fused bidirectional · SS2D cross-scan, the
-last measured at 1.80× over the four-scan formulation.
+`arm_scan.patch()`, wheels, three-platform CI. 1D · fused bidirectional · SS2D cross-scan. The
+traversal-pair rewrite measured 1.80× over the four-scan formulation on x86 but **0.96× — a
+regression — on 64-core Graviton4** — the pair form halves the rayon rows, which is free on 4 cores and
+costly on 64. `_forward_legacy` is retained and wins there.
 
 **Mamba-3: kernel complete, gated (Stages 0–5, M0–M8).** Ground truth captured from the
 official GPU kernels; reference, Rust scalar, cache-blocked and NEON kernels, C ABI at v7, and
@@ -51,8 +53,12 @@ bit-identical within one). First x86 numbers: **1.85–3.66×** over the PyTorch
 
 Not done, in priority order:
 
-1. **No dedicated-hardware numbers, for anything.** Every timing is x86 or a shared 4-core
-   runner. This is the existential gap for a Cloud-track entry and no kernel work substitutes.
+1. ~~No dedicated-hardware numbers.~~ **DONE Aug 11** — `c8g.16xlarge` (Graviton4,
+   Neoverse-V2, 64 vCPU). Core scaling 1→64 at 100/99.8/98.3% efficiency through 8 cores then
+   decaying to 60.4%; ladder scalar→NEON 4.23×→+rayon 6.17× = 26×; phase profile puts `exp` at
+   47.7–48.2% and the transpose at 0.1%. Numbers and raw JSON in `README.md` and
+   `bench/results/`. **Two results reversed x86:** the SS2D pair rewrite regresses (0.96×) and
+   the P1-7 verdict flips to *justified* at 46.1% overhead.
 2. **2D is complete, causal and non-causal.** `arm_scan.ss2d_scan_mamba3` (causal) and
    `ss2d_noncausal_mamba3` (non-causal), both pure layout/composition over `mamba3_scan_pair` —
    **no new kernel code for either**. The plan's premise that non-causal needs dense GEMMs was

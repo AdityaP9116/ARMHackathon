@@ -86,7 +86,7 @@ Checked by fetching the repos and papers, not by search summary.
 | FFI discipline (`catch_unwind`, overflow-checked sizing, ABI versioning) | New entry points beside the old |
 | `torch.library` custom op + fake kernel | Same pattern, so Mamba-3 composes with `torch.compile` |
 | Golden methodology (capture → independent re-derivation → C-ABI replay) | Already applied; Stage 0/1 done |
-| **SS2D orchestration** (`ss2d_scan`, traversal pairs, measured 1.80×) | **Recurrence-agnostic** — retargets to Mamba-3 by swapping the primitive |
+| **SS2D orchestration** (`ss2d_scan`, traversal pairs; 1.80× on x86, 0.96× on 64-core Graviton4) | **Recurrence-agnostic** — retargets to Mamba-3 by swapping the primitive |
 | `bidirectional_scan` + fused reverse | Same seam |
 | Wheels, arm64/macOS/x86 CI, bench harness | Unchanged |
 

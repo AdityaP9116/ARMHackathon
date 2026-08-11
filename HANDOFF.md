@@ -18,8 +18,11 @@ hardware in CI.
 
 What is left is not kernel work:
 
-1. **No dedicated-hardware numbers, for anything.** Every timing in this repo is
-   x86 or a shared 4-core runner. Existential for a Cloud-track entry.
+1. ~~No dedicated-hardware numbers.~~ **DONE Aug 11** on `c8g.16xlarge`
+   (Graviton4, 64 vCPU). See `README.md` and `bench/results/*graviton*`. Two
+   results reversed x86: the SS2D traversal-pair rewrite **regresses** (0.96×
+   vs 1.80×) because it halves the rayon rows, and the P1-7 verdict **flips to
+   justified** at 46.1% overhead. What remains is the video and the writeup.
 2. **2D is DONE, causal and non-causal, with no new Rust for either.**
    `ss2d_scan_mamba3` and `ss2d_noncausal_mamba3` are layout/composition over
    `mamba3_scan_pair`. Two traps worth keeping: the RoPE angle pre-pass must run
@@ -265,7 +268,7 @@ By this repo's own rules none of these is headline-grade.
 | Result | Number |
 |---|---|
 | Mamba-3 vs captured official-kernel truth | **4.47 bf16 ULP** (correctness, not speed) |
-| SS2D via the fused bidirectional kernel | **1.77–1.82×** (geomean 1.80×) |
+| SS2D via the fused bidirectional kernel | 1.80× on x86 — but **0.96× (regression) on 64-core Graviton4** |
 | 1D unidirectional vs `torch.compile` | 3.71× |
 | 1D bidirectional vs `torch.compile` | 6.39–8.99× |
 | Long context, L=131,072 | ours **4.60 s**; reference needs **12.88 GB**, not attempted |

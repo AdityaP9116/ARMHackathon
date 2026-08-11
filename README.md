@@ -22,10 +22,11 @@ entire correctness harness.
 
 | | Mamba-1 kernel | Mamba-3 kernel |
 |---|---|---|
-| Status | shipped, measured | shipped, gated |
-| Topologies | 1D · fused bidirectional · SS2D cross-scan | 1D · bidirectional · 2D *(wiring in progress)* |
+| Status | shipped, measured on Graviton4 | shipped, gated, measured on Graviton4 |
+| Topologies | 1D · fused bidirectional · SS2D cross-scan | 1D · bidirectional · 2D, causal **and** non-causal |
 | Drop-in | `arm_scan.patch()` for HF `transformers` Mamba | `arm_scan.mamba3_scan(...)` |
 | Ground truth | vendored f64 reference | **captured from the official GPU kernels** |
+| Runs real weights | `mamba-130m-hf`, **3.77×** end to end | `siso-187m` **98.05%** · `mimo-187m` **96.48%** argmax |
 
 ```python
 import arm_scan
@@ -127,27 +128,97 @@ That floor is worth a sentence, because it surprised us: the official kernel is
 forward passes inside one process are bit-identical. Our agreement sits inside that band, so
 the gate is written against the measured floor rather than an unreachable 100%.
 
-**Not done, and it is the gap that matters: there are no dedicated-hardware numbers.** Every
-timing in this repository comes from an x86 box or a shared 4-core CI runner, which this
-project's own rules classify as provisional. A Graviton session is the outstanding work, and no
-amount of kernel engineering substitutes for it.
+## Measured on Graviton4
 
-Also here, and as far as we can tell the first CPU implementation of any 2D Mamba-3:
+**`c8g.16xlarge` — Neoverse-V2, 64 vCPU, Ubuntu 24.04, torch 2.13.0, quiesced.** These replace
+every earlier figure; anything measured on x86 or the shared 4-core CI runner was provisional
+by this project's own rules. Raw JSON in [`bench/results/`](bench/results/).
+
+**Core scaling** (B=1 D=1536 L=512 N=16) — near-perfect to 8 cores, then an honest decay:
+
+| threads | 1 | 2 | 4 | 8 | 16 | 32 | 64 |
+|---|---|---|---|---|---|---|---|
+| kernel | 17.55 ms | 8.76 ms | 4.40 ms | 2.23 ms | 1.22 ms | 0.74 ms | **0.45 ms** |
+| speedup | 1.00× | 2.00× | 3.99× | 7.86× | 14.44× | 23.58× | **38.69×** |
+| efficiency | 100% | 100.2% | 99.8% | 98.3% | 90.3% | 73.7% | 60.4% |
+
+**Ladder:** scalar 1.447 ms → NEON 342 µs (**4.23×**) → +rayon 55.5 µs (**6.17×**) = **26×**.
+
+**Where the time goes** — stable to within 0.5% across every shape tested:
+
+| exp | discretize | recurrence | epilogue | projection | transpose |
+|---|---|---|---|---|---|
+| **47.7–48.2%** | 24.0–24.4% | 14.2–14.3% | 6.7–7.9% | 5.5–6.8% | **0.0–0.1%** |
+
+Pass A is **~72% of runtime**, which is the two-pass design's premise measured rather than
+asserted. It also names the next lever — `exp` (bf16 storage, SVE2 `FEXPA`) — and rules one
+out: the transpose is free.
+
+**The real 187M models, end to end on CPU:**
+
+| | L=128 | L=256 | L=512 | L=1024 |
+|---|---|---|---|---|
+| `siso-187m` vs the recurrence | 5.03× | 9.05× | 13.54× | **18.89×** |
+| …vs `torch.compile` | 1.64× | 3.05× | — | — |
+| …`torch.compile` **compile time** | 48.9 s | 88.2 s | — | — |
+| …tokens/s | 957 | 1,802 | 2,742 | **3,820** |
+| `mimo-187m` vs the recurrence | 31.6× | 43.6× | 56.5× | 55.2× |
+
+**Drop-in, on a stock Hugging Face model** — one `arm_scan.patch()` call, mamba-130m:
+
+| prompt | prefill | end to end |
+|---|---|---|
+| 128 tok | 275.9 → **175.5 ms** (1.57×) | 1.13× |
+| 2048 tok | 3634.5 → **358.3 ms** (**10.14×**) | **3.77×** |
+
+Decode is ~1× and that is expected, not a miss: single-token decode runs
+`mamba_selective_state_update`, which we deliberately leave to upstream.
+
+**2D Mamba-3** — as far as we can tell the first CPU implementation of any 2D Mamba-3.
 `arm_scan.ss2d_scan_mamba3` runs the four-direction cross-scan on the Mamba-3 recurrence as pure
-layout over `mamba3_scan_pair` — **no new kernel code**. Measured 14–38× over the PyTorch
-recurrence and 1.9× over `torch.compile` at vision grid sizes. **Correctness and throughput
-only**: no 2D Mamba-3 weights have ever been published, so no accuracy claim is available, and
-we do not make one.
+layout over `mamba3_scan_pair` — **no new kernel code**:
+
+| grid | 14×14 (196 tok) | 28×28 (784) | 56×56 (3136) |
+|---|---|---|---|
+| kernel | 3.32 ms | 5.15 ms | **9.08 ms** |
+| vs the recurrence | 17.7× | 41.9× | **92.5×** |
+| vs `torch.compile` | 14.25× | *cannot compile* | *cannot compile* |
+
+**Correctness and throughput only**: no 2D Mamba-3 weights have ever been published, so no
+accuracy claim is available and we do not make one.
 
 The **causal-vs-non-causal comparison** — which nobody has published for any Mamba generation —
-is now measured: dropping causality costs **2×** in 1D and **~1×** in 2D, because the
-four-direction cross-scan already runs both directions. It needed no new kernel, because the
-decay factorises. The O(L²) dense formulation is implemented as an independent check and
-reproduces the O(L) kernel to **2.99e-16** — then loses to it by 784 tokens.
+now measured: dropping causality costs **~2× in 1D** (1.61–3.19×) but only **1.14–1.55× in 2D**,
+because the four-direction cross-scan already runs both directions. It needed no new kernel,
+because the decay factorises. The O(L²) dense form reproduces the O(L) kernel to **2.99e-16**
+and the crossover sits at ~784 tokens.
 
-Still outstanding: **making MIMO fast** — it is correct everywhere but runs on the portable
-scalar path only, so its arithmetic-intensity advantage on CPU is still a prediction rather
-than a measurement.
+### Two results that reversed on real hardware
+
+Published because they contradict what x86 said, and because the second one is a decision this
+project now has to act on.
+
+**The SS2D traversal-pair rewrite regresses at 64 cores.** x86 measured 1.77–1.82×; Graviton
+measures **0.96× geomean** on the production shapes. The cause is structural and was predicted
+in [`bench/GRAVITON_SESSION.md`](bench/GRAVITON_SESSION.md) before the session: the pair form
+halves the rayon rows — two batches per call instead of four — which costs nothing on 4 cores
+and a great deal on 64. `SS2DBlock._forward_legacy` was retained for exactly this and now earns
+its keep.
+
+**The P1-7 verdict flips.** Worst real-shape overhead is **46.1%** here against 7.2–13.8% on
+x86, so a fully fused `selective_scan_2d` is **justified** under the 15% rule rather than
+rejected. That is the highest-value remaining kernel work.
+
+### Open, and reported rather than explained
+
+`bench_mamba3.py` at the 187M shape runs **L=256 in 6.15 ms and L=1024 in 5.05 ms** — four
+times the tokens in less time. It reproduced at `reps=15 warmup=5`, so it is not a warm-up
+artifact. We do not have an explanation.
+
+**MIMO's ratios are a floor, not a result.** The 31–56× above is the **scalar** path measured
+against a slow PyTorch baseline: `mamba3/mimo.rs` has no blocked or NEON kernel. In absolute
+terms MIMO is **3.4× slower than SISO** at L=1024. The arithmetic-intensity argument for MIMO
+on CPU remains a prediction, and that gap is what an optimised kernel would have to close.
 
 ## Where to look
 

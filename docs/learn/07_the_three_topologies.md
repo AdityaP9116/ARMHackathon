@@ -90,8 +90,16 @@ does. So instead of four independent forward scans, we run **two fused pair
 calls** — computing Pass A **twice** instead of four times, and eliminating four
 `torch.flip` tensor copies.
 
-**Measured:** **1.77–1.82× (geomean 1.80×)** over the four-scan formulation.
-Non-scan overhead fell from 21–25% to 7.2–13.8%.
+**Measured:** **1.77–1.82× (geomean 1.80×)** over the four-scan formulation *on x86*.
+
+> **This reverses on a large Arm box.** On 64-core Graviton4 the same rewrite measures
+> **0.96× — a regression.** The pair form halves the rayon rows (two batches per call
+> instead of four), which costs nothing on 4 cores and a great deal on 64. It is a good
+> lesson in why a number without its hardware attached is not a result.
+
+On x86, non-scan overhead also fell from 21–25% to 7.2–13.8%. On Graviton4 the worst
+real shape sits at **46.1%**, which flips the "is a fully fused 2D kernel worth building"
+decision from *no* to *yes*.
 
 This is the clearest example of the layering paying off: `ss2d_scan` →
 `scan_pair` → `bidirectional_scan` → *a scan primitive*. **That layer is

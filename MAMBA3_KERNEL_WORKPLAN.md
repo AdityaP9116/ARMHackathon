@@ -238,8 +238,11 @@ Worst deviation from the captured official-kernel ground truth is **4.47 bf16
 ULP** (bound 8) at every layer — Python reference, Rust scalar, Rust blocked,
 and the torch op — which is the floor bf16 output quantisation allows.
 
-**What is NOT done:** no dedicated-hardware numbers. Every timing anywhere in
-this repo, including `bench_mamba3.py`, is x86 or a shared CI runner.
+**Dedicated-hardware numbers: DONE Aug 11, 2026** on `c8g.16xlarge` (Graviton4,
+Neoverse-V2, 64 vCPU) — see `README.md` and `bench/results/`. The SS2D pair
+rewrite **regressed** there (0.96× vs 1.80× on x86) and the P1-7 verdict
+**flipped to justified** at 46.1% overhead, which makes a fully fused
+`selective_scan_2d` the highest-value remaining kernel work.
 
 ## 4. Sequencing
 
