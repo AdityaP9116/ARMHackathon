@@ -76,7 +76,21 @@ def main():
             **inputs, max_new_tokens=16, do_sample=False)
     stats2 = arm_scan.stats()
     assert stats2["fast_calls"] > stats["fast_calls"], "prefill not engaged"
-    assert stats2["fallback_calls"] > 0, "decode fallback never used"
+    if stats2["api"] == "selective_scan_fn":
+        # transformers >= 5.5 routes prefill and decode to DIFFERENT module
+        # functions -- `mamba_selective_scan` (patched) and
+        # `mamba_selective_state_update` (untouched). Our wrapper is therefore
+        # never called during decode and cannot record a fallback, so
+        # asserting one here could never pass. The older seam served both
+        # phases from one method, which is what that assertion was written for.
+        #
+        # The invariant that still matters is checked below and is the stronger
+        # one anyway: greedy generation must produce identical tokens.
+        assert stats2["fallback_calls"] == 0, (
+            "unexpected fallback on the selective_scan_fn seam -- decode "
+            "should not reach our wrapper at all")
+    else:
+        assert stats2["fallback_calls"] > 0, "decode fallback never used"
 
     arm_scan.unpatch()
     with torch.no_grad():

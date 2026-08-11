@@ -41,7 +41,7 @@ import torch.nn.functional as F
 
 from .op import kernel_calls, selective_scan
 
-_STATE = {"orig": None, "api": None, "arg_names": (),
+_STATE = {"orig": None, "api": None, "arg_names": (), "target": None,
           "fast_calls": 0, "fallback_calls": 0}
 
 
@@ -116,6 +116,70 @@ def _mixer_scan_forward(self, input_states, cache_params, cache_position,
     return self.out_proj(scan_output.transpose(1, 2).to(dtype))
 
 
+def _patch_scan_fn(modeling_mamba):
+    """transformers >= 5.5: patch the module-level `mamba_selective_scan`.
+
+    Upstream removed `MambaMixer.slow_forward` and lifted the recurrence into
+    a module-level function, dispatched through
+    `@use_kernel_func_from_hub_with_fallback("selective_scan_fn", "mamba_ssm")`.
+    That is a BETTER seam than the old one: it hands us exactly the scan's
+    tensors, so we no longer transcribe the surrounding mixer (projections,
+    conv, gating, cache plumbing) and cannot drift from it.
+
+    The signature matches ours parameter-for-parameter, because both mirror
+    `mamba_ssm`'s `selective_scan_fn`:
+
+        mamba_selective_scan(hidden_states, dt, A, B, C, D, z, delta_bias,
+                             delta_softplus, return_last_state, ...)
+
+    B/C arrive already transposed by the call site to (batch, state, len),
+    which `selective_scan` accepts directly.
+
+    `use_associative_scan` and `use_mambapy` are deliberately NOT treated as
+    reasons to fall back. They select which ALGORITHM upstream uses to compute
+    the same recurrence — a parallel scan instead of a sequential one — not a
+    different result, and `use_associative_scan` defaults to True on torch
+    >= 2.9, so honouring it would disable the kernel on every modern install.
+    (Guarding on it was exactly that bug: 24/24 layers fell back.)
+
+    What genuinely matters is **autograd**: the op has no backward, so a
+    gradient-requiring call must go to the original. That is also what the
+    older patch was really protecting against when it special-cased mambapy
+    during training.
+    """
+    orig = modeling_mamba.mamba_selective_scan
+
+    def mamba_selective_scan(hidden_states, dt, A, B, C, D=None, z=None,
+                             delta_bias=None, delta_softplus=False,
+                             return_last_state=False, use_mambapy=False,
+                             use_associative_scan=False, **kwargs):
+        tensors = (hidden_states, dt, A, B, C)
+        needs_grad = torch.is_grad_enabled() and any(
+            t.requires_grad for t in (*tensors, D, z, delta_bias)
+            if t is not None)
+        if (needs_grad
+                or any(t.device.type != "cpu" for t in tensors)
+                or any(t.dtype != torch.float32 for t in tensors)):
+            _STATE["fallback_calls"] += 1
+            return orig(hidden_states, dt, A, B, C, D=D, z=z,
+                        delta_bias=delta_bias, delta_softplus=delta_softplus,
+                        return_last_state=return_last_state,
+                        use_mambapy=use_mambapy,
+                        use_associative_scan=use_associative_scan, **kwargs)
+
+        _STATE["fast_calls"] += 1
+        return selective_scan(hidden_states, dt, A, B, C, D=D, z=z,
+                              delta_bias=delta_bias,
+                              delta_softplus=delta_softplus,
+                              return_last_state=return_last_state)
+
+    modeling_mamba.mamba_selective_scan = mamba_selective_scan
+    _STATE["orig"] = orig
+    _STATE["api"] = "selective_scan_fn"
+    _STATE["target"] = "mamba_selective_scan"
+    return ["transformers mamba_selective_scan (selective_scan_fn API)"]
+
+
 def patch():
     """Route HF Mamba's CPU slow path through the Arm kernel.
 
@@ -126,6 +190,19 @@ def patch():
         return ["transformers MambaMixer.slow_forward (already patched)"]
 
     from transformers.models.mamba import modeling_mamba
+
+    # transformers >= 5.5 removed slow_forward entirely. Prefer the newer seam
+    # when it exists; it is both narrower and more stable than the method.
+    if not hasattr(modeling_mamba.MambaMixer, "slow_forward"):
+        if hasattr(modeling_mamba, "mamba_selective_scan"):
+            return _patch_scan_fn(modeling_mamba)
+        import warnings
+
+        warnings.warn(
+            "arm_scan.patch(): this transformers version has neither "
+            "MambaMixer.slow_forward nor mamba_selective_scan; leaving it "
+            "unpatched")
+        return []
 
     orig = modeling_mamba.MambaMixer.slow_forward
     api = _detect_api(orig)
@@ -178,9 +255,13 @@ def unpatch():
         return False
     from transformers.models.mamba import modeling_mamba
 
-    modeling_mamba.MambaMixer.slow_forward = _STATE["orig"]
+    if _STATE.get("target") == "mamba_selective_scan":
+        modeling_mamba.mamba_selective_scan = _STATE["orig"]
+    else:
+        modeling_mamba.MambaMixer.slow_forward = _STATE["orig"]
     _STATE["orig"] = None
     _STATE["api"] = None
+    _STATE["target"] = None
     return True
 
 
