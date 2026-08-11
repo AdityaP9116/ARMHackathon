@@ -1,0 +1,125 @@
+.venv/bin/python tests/verify_golden_mamba3.py
+reference vs official kernel  (NVIDIA GeForce RTX 5090, capture dtype float32, PR#997 fix True)
+
+  case                 shape    max ULP   mean ULP    exact        rel
+ned_00      (1, 256, 24, 64)       1.61      0.009   41.3%   6.29e-03
+ned_01      (1, 256, 24, 64)       4.47      0.020   19.4%   1.74e-02
+ned_02      (1, 256, 24, 64)       1.19      0.007   27.7%   4.65e-03
+ned_03      (1, 256, 24, 64)       1.63      0.012   27.0%   6.37e-03
+ned_04        (1, 1, 16, 32)       0.27      0.003   96.7%   1.07e-03
+ned_05       (1, 63, 16, 32)       0.48      0.007   59.9%   1.88e-03
+ned_06       (1, 64, 16, 32)       0.98      0.014   58.9%   3.82e-03
+ned_07      (1, 255, 16, 32)       1.29      0.010   56.2%   5.05e-03
+ned_08      (2, 128, 16, 32)       0.62      0.005   57.6%   2.43e-03
+ned_09     (1, 2048, 16, 32)       1.29      0.007   51.4%   5.03e-03
+
+worst case across 10 goldens: 4.47 bf16 ULP
+STAGE 1 GATE: PASS — the paper-form recurrence reproduces the official kernel to <= 8.0 bf16 ULP on every case.
+.venv/bin/python tests/check_mamba3_op.py
+Mamba-3 torch op vs captured official-kernel ground truth:
+  mamba3_siso_combined_00      L=256      1.61 ULP  ok
+  mamba3_siso_combined_01      L=256      4.47 ULP  ok
+  mamba3_siso_combined_02      L=256      1.19 ULP  ok
+  mamba3_siso_combined_03      L=256      1.63 ULP  ok
+  mamba3_siso_combined_04      L=1        0.27 ULP  ok
+  mamba3_siso_combined_05      L=63       0.48 ULP  ok
+  mamba3_siso_combined_06      L=64       0.98 ULP  ok
+  mamba3_siso_combined_07      L=255      1.29 ULP  ok
+  mamba3_siso_combined_08      L=128      0.62 ULP  ok
+  mamba3_siso_combined_09      L=2048     1.29 ULP  ok
+  worst: 4.47 bf16 ULP (bound 8.0)
+
+  torch.compile(fullgraph=True): max_abs=0.000e+00  ok
+  reverse == flip/forward/flip: rel=0.000e+00  ok
+  pair == two separate calls: ok
+
+MAMBA-3 OP CHECK: PASS
+.venv/bin/python tests/check_mamba3_block.py
+our mixer vs the real block  (state-spaces/mamba3-siso-187m, NVIDIA GeForce RTX 5090, capture dtype float32)
+
+        case  layer               shape    max ULP   mean ULP        rel
+ block_io_00      0       (1, 256, 768)       0.75      0.022   2.92e-03
+ block_io_01      1       (1, 256, 768)       1.36      0.058   5.29e-03
+
+worst case across 2 blocks: 1.36 bf16 ULP
+PATH A BLOCK GATE: PASS — the plain-PyTorch mixer reproduces the official block to <= 16.0 bf16 ULP.
+.venv/bin/python tests/check_ss2d_mamba3.py
+2D Mamba-3 cross-scan (C1)
+
+  reference reverse == kernel reverse: rel=1.266e-07  ok
+  view builders round-trip exactly: ok
+  row/col orderings genuinely differ: ok
+  angles accumulate per traversal order: ok
+         case     grid      row_f      row_b      col_f      col_b
+       square      4x4   8.98e-08   1.76e-07   8.17e-08   1.21e-07
+    nonsquare      3x5   1.50e-07   7.80e-08   8.10e-08   6.92e-08
+          odd      5x7   8.57e-08   1.17e-07   9.16e-08   1.10e-07
+         wide      2x9   9.35e-08   1.06e-07   7.66e-08   8.35e-08
+   degenerate      1x6   2.91e-07   7.78e-08   2.91e-07   7.78e-08
+  worst per-direction relative error: 2.907e-07  ok
+  merge sum/mean/none consistent: 0.0e+00, 0.0e+00  ok
+  bit-identical across RAYON_NUM_THREADS 1/2/8: ok
+
+SS2D MAMBA-3 CHECK: PASS
+.venv/bin/python tests/verify_golden_mamba3_mimo.py
+MIMO reference vs official kernel  (NVIDIA GeForce RTX 5090, capture dtype bfloat16, model state-spaces/mamba3-mimo-187m)
+
+  case  rank                 shape    max ULP   mean ULP    exact        rel
+ned_00     4      (1, 256, 24, 64)       2.40      0.010   42.1%   9.39e-03
+ned_01     4      (1, 256, 24, 64)       1.92      0.007   31.4%   7.52e-03
+ned_02     4      (1, 256, 24, 64)       1.32      0.011   30.5%   5.15e-03
+ned_03     4      (1, 256, 24, 64)       0.91      0.009   31.7%   3.55e-03
+ned_04     4      (1, 128, 24, 64)       0.81      0.010   41.4%   3.14e-03
+ned_05     4       (1, 64, 24, 64)       1.22      0.015   41.1%   4.78e-03
+ned_06     4       (1, 63, 24, 64)       1.08      0.019   41.8%   4.24e-03
+ned_07     4      (2, 128, 24, 64)       2.21      0.017   40.9%   8.62e-03
+ned_08     2      (1, 128, 24, 64)       1.64      0.012   42.2%   6.41e-03
+ned_09     4      (1, 128, 16, 32)       1.62      0.013   41.4%   6.33e-03
+
+worst case across 10 goldens: 2.40 bf16 ULP
+
+r=1 collapse to SISO (the plan predicted bit-for-bit):
+  as captured, rotation active : rel 3.765e-01  -> DIFFER (expected)
+  with angles zeroed           : rel 5.128e-16  -> agree
+  CONFIRMED: r=1 MIMO equals SISO in every term EXCEPT the rotation convention (SISO interleaved, MIMO split-halves).
+  The plan's 'bit-for-bit' prediction does not hold, and this is why. B2 needs BOTH conventions in the kernel.
+
+B1 MIMO GATE: PASS — the rank-r recurrence reproduces the official TileLang kernel to <= 12.0 bf16 ULP on every case.
+.venv/bin/python tests/check_mamba3_mimo_op.py
+Mamba-3 MIMO kernel through the C ABI (v7)
+
+    case  rank                 shape    max ULP        rel
+  ned_00     4      (1, 256, 24, 64)       1.90   7.42e-03
+  ned_01     4      (1, 256, 24, 64)       1.81   7.06e-03
+  ned_02     4      (1, 256, 24, 64)       1.66   6.49e-03
+  ned_03     4      (1, 256, 24, 64)       1.07   4.17e-03
+  ned_04     4      (1, 128, 24, 64)       1.14   4.44e-03
+  ned_05     4       (1, 64, 24, 64)       1.70   6.66e-03
+  ned_06     4       (1, 63, 24, 64)       1.43   5.60e-03
+  ned_07     4      (2, 128, 24, 64)       1.74   6.79e-03
+  ned_08     2      (1, 128, 24, 64)       1.16   4.52e-03
+  ned_09     4      (1, 128, 16, 32)       1.31   5.13e-03
+  worst vs official kernel: 1.90 bf16 ULP  ok
+  kernel vs f64 reference: rel=1.347e-07  ok
+  rank-1 MIMO == SISO (rotation removed): rel=2.414e-07  ok
+  partial MIMO projections rejected: ok
+  bit-identical across RAYON_NUM_THREADS 1/2/8: ok
+
+MAMBA-3 MIMO OP CHECK: PASS
+.venv/bin/python tests/check_mamba3_noncausal.py
+Non-causal Mamba-3 aggregation (C2)
+
+    b1 L16  h2 dv8 dqk16: rel=9.199e-08
+    b2 L31  h3 dv8 dqk16: rel=7.255e-08
+    b1 L1   h2 dv4 dqk8: rel=3.845e-08
+  dense CAUSAL mask == the causal kernel: worst 9.199e-08  ok
+    b1 L8   h2 dv4 dqk8: algorithm 2.10e-16   kernel 7.11e-08
+    b2 L24  h3 dv8 dqk16: algorithm 1.78e-16   kernel 1.68e-07
+    b1 L33  h4 dv16 dqk32: algorithm 2.99e-16   kernel 2.81e-07
+    b1 L1   h2 dv4 dqk8: algorithm 2.52e-16   kernel 1.90e-07
+  recurrent == dense: algorithm 2.99e-16 (f64), kernel 2.81e-07 (fp32 floor)  ok
+  non-causal differs from causal: rel=3.310e-01  ok
+  2D per-ordering == 1D non-causal: rows 0.00e+00, cols 0.00e+00  ok
+  bit-identical across RAYON_NUM_THREADS 1/2/8: ok
+
+MAMBA-3 NON-CAUSAL CHECK: PASS

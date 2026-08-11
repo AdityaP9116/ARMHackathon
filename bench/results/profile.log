@@ -1,0 +1,158 @@
+cargo: /home/ubuntu/.cargo/bin/cargo
+== host: aarch64 | tag: graviton-c8g ==
+== phase profiler ==
+   Compiling arm-scan-core v0.1.0 (/home/ubuntu/ARMHackathon/kernel/arm-scan-core)
+    Finished `release` profile [optimized] target(s) in 3.26s
+     Running `target/release/examples/profile_phases`
+# NEON selective-scan phase profile (single-threaded)
+# host: aarch64  | read RELATIVE %, not absolute ns
+# transpose is a SERIAL prologue: at C cores its wall share ~×C
+
+## mamba130m_L128  (B=1 D=1536 L=128 N=16)
+   phase                    ns        %
+   transpose             1702     0.0
+   discretize         1036405    24.2
+   exp                2066746    48.2
+   projection          236311     5.5
+   recurrence          610248    14.2
+   epilogue            337891     7.9
+   TOTAL              4289303   100.0
+
+## mamba130m_L512  (B=1 D=1536 L=512 N=16)
+   phase                    ns        %
+   transpose             9662     0.1
+   discretize         4127757    24.0
+   exp                8263903    48.1
+   projection         1103438     6.4
+   recurrence         2443336    14.2
+   epilogue           1219066     7.1
+   TOTAL             17167162   100.0
+
+## mamba130m_L2048  (B=1 D=1536 L=2048 N=16)
+   phase                    ns        %
+   transpose            56980     0.1
+   discretize        16904255    24.4
+   exp               33068899    47.7
+   projection         4744996     6.8
+   recurrence         9924745    14.3
+   epilogue           4621388     6.7
+   TOTAL             69321263   100.0
+
+## batch8_L1024  (B=8 D=1536 L=1024 N=16)
+   phase                    ns        %
+   transpose           216768     0.1
+   discretize        67530601    24.4
+   exp              132407833    47.9
+   projection        18376516     6.6
+   recurrence        39313193    14.2
+   epilogue          18657018     6.7
+   TOTAL            276501929   100.0
+
+Interpretation (see IMPROVEMENT_IDEAS.md):
+  exp dominant        -> §3.1 cheaper exp / §3.2 SVE FEXPA
+  recurrence dominant -> §3.3 chain-breaking (esp. Graviton4)
+  transpose large     -> §2.1 layout flag / §4.1 workspace reuse
+  grows with L        -> §4.2 cache-blocking (protects long-context)
+== criterion ladder (scalar -> NEON -> rayon) ==
+    Finished `bench` profile [optimized] target(s) in 0.04s
+     Running unittests src/lib.rs (target/release/deps/arm_scan_core-00b1cdb57f325b31)
+
+running 11 tests
+test neon::exp::tests::dense_sweep_accuracy ... ignored
+test neon::exp::tests::nonpos_dense_sweep_accuracy ... ignored
+test neon::exp::tests::nonpos_fast_dense_sweep_accuracy ... ignored
+test neon::exp::tests::nonpos_fast_special_values ... ignored
+test neon::exp::tests::nonpos_special_values ... ignored
+test neon::exp::tests::special_values ... ignored
+test neon::math::tests::log_sweep ... ignored
+test neon::math::tests::silu_sweep ... ignored
+test neon::math::tests::softplus_sweep ... ignored
+test scalar::tests::hand_computed_single_step ... ignored
+test scalar::tests::hand_computed_state_carryover ... ignored
+
+test result: ok. 0 passed; 0 failed; 11 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running benches/scan.rs (target/release/deps/scan-52271040486e2718)
+Gnuplot not found, using plotters backend
+Benchmarking selective_scan/scalar_seq/small_d64_l128
+Benchmarking selective_scan/scalar_seq/small_d64_l128: Warming up for 1.0000 s
+Benchmarking selective_scan/scalar_seq/small_d64_l128: Collecting 10 samples in estimated 3.0234 s (2090 iterations)
+Benchmarking selective_scan/scalar_seq/small_d64_l128: Analyzing
+selective_scan/scalar_seq/small_d64_l128
+                        time:   [1.4467 ms 1.4468 ms 1.4470 ms]
+                        thrpt:  [11.323 Melem/s 11.324 Melem/s 11.325 Melem/s]
+                 change:
+                        time:   [-0.0222% -0.0025% +0.0178%] (p = 0.82 > 0.05)
+                        thrpt:  [-0.0178% +0.0025% +0.0222%]
+                        No change in performance detected.
+Benchmarking selective_scan/neon_seq/small_d64_l128
+Benchmarking selective_scan/neon_seq/small_d64_l128: Warming up for 1.0000 s
+Benchmarking selective_scan/neon_seq/small_d64_l128: Collecting 10 samples in estimated 3.0116 s (8800 iterations)
+Benchmarking selective_scan/neon_seq/small_d64_l128: Analyzing
+selective_scan/neon_seq/small_d64_l128
+                        time:   [342.16 µs 342.29 µs 342.36 µs]
+                        thrpt:  [47.856 Melem/s 47.865 Melem/s 47.884 Melem/s]
+                 change:
+                        time:   [-0.0962% -0.0262% +0.0333%] (p = 0.49 > 0.05)
+                        thrpt:  [-0.0332% +0.0262% +0.0963%]
+                        No change in performance detected.
+Benchmarking selective_scan/neon_par/small_d64_l128
+Benchmarking selective_scan/neon_par/small_d64_l128: Warming up for 1.0000 s
+Benchmarking selective_scan/neon_par/small_d64_l128: Collecting 10 samples in estimated 3.0008 s (55k iterations)
+Benchmarking selective_scan/neon_par/small_d64_l128: Analyzing
+selective_scan/neon_par/small_d64_l128
+                        time:   [55.244 µs 55.475 µs 55.716 µs]
+                        thrpt:  [294.06 Melem/s 295.34 Melem/s 296.57 Melem/s]
+                 change:
+                        time:   [+1.3313% +1.9231% +2.5257%] (p = 0.00 < 0.05)
+                        thrpt:  [-2.4635% -1.8868% -1.3138%]
+                        Performance has regressed.
+Found 3 outliers among 10 measurements (30.00%)
+  1 (10.00%) low severe
+  1 (10.00%) low mild
+  1 (10.00%) high mild
+Benchmarking selective_scan/scalar_seq/mamba130m_layer_l512
+Benchmarking selective_scan/scalar_seq/mamba130m_layer_l512: Warming up for 1.0000 s
+
+Warning: Unable to complete 10 samples in 3.0s. You may wish to increase target time to 3.8s or enable flat sampling.
+Benchmarking selective_scan/scalar_seq/mamba130m_layer_l512: Collecting 10 samples in estimated 3.8252 s (55 iterations)
+Benchmarking selective_scan/scalar_seq/mamba130m_layer_l512: Analyzing
+selective_scan/scalar_seq/mamba130m_layer_l512
+                        time:   [69.530 ms 69.541 ms 69.557 ms]
+                        thrpt:  [11.306 Melem/s 11.309 Melem/s 11.311 Melem/s]
+                 change:
+                        time:   [-0.0901% -0.0632% -0.0357%] (p = 0.00 < 0.05)
+                        thrpt:  [+0.0357% +0.0633% +0.0902%]
+                        Change within noise threshold.
+Benchmarking selective_scan/neon_seq/mamba130m_layer_l512
+Benchmarking selective_scan/neon_seq/mamba130m_layer_l512: Warming up for 1.0000 s
+Benchmarking selective_scan/neon_seq/mamba130m_layer_l512: Collecting 10 samples in estimated 3.7899 s (220 iterations)
+Benchmarking selective_scan/neon_seq/mamba130m_layer_l512: Analyzing
+selective_scan/neon_seq/mamba130m_layer_l512
+                        time:   [17.093 ms 17.145 ms 17.251 ms]
+                        thrpt:  [45.588 Melem/s 45.868 Melem/s 46.009 Melem/s]
+                 change:
+                        time:   [-0.9520% -0.3106% +0.3782%] (p = 0.41 > 0.05)
+                        thrpt:  [-0.3768% +0.3116% +0.9611%]
+                        No change in performance detected.
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high severe
+Benchmarking selective_scan/neon_par/mamba130m_layer_l512
+Benchmarking selective_scan/neon_par/mamba130m_layer_l512: Warming up for 1.0000 s
+Benchmarking selective_scan/neon_par/mamba130m_layer_l512: Collecting 10 samples in estimated 3.0063 s (8085 iterations)
+Benchmarking selective_scan/neon_par/mamba130m_layer_l512: Analyzing
+selective_scan/neon_par/mamba130m_layer_l512
+                        time:   [370.93 µs 371.20 µs 371.43 µs]
+                        thrpt:  [2.1173 Gelem/s 2.1186 Gelem/s 2.1201 Gelem/s]
+                 change:
+                        time:   [+0.1578% +0.2248% +0.2939%] (p = 0.00 < 0.05)
+                        thrpt:  [-0.2930% -0.2243% -0.1575%]
+                        Change within noise threshold.
+
+
+Wrote results to: /home/ubuntu/ARMHackathon/bench/profile/out/graviton-c8g
+Read profile-phases.txt: the largest-% phase is your bottleneck.
+== build the single-threaded profiler binary ==
+error: rustup could not choose a version of cargo to run, because one wasn't specified explicitly, and no default is configured.
+help: run 'rustup default stable' to download the latest stable release of Rust and set it as your default toolchain.
+PROFILE_FINISHED

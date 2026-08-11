@@ -1,0 +1,671 @@
+=== baseline run: tag=graviton-c8g  python=.venv/bin/python  2026-08-11T04:30:41Z ===
++ uname -a
+Linux ip-172-31-38-148 6.17.0-1017-aws #17~24.04.1-Ubuntu SMP Tue May 26 21:09:53 UTC 2026 aarch64 aarch64 aarch64 GNU/Linux
++ nproc
+64
+=== [0/7] build FFI cdylib (required by every python stage) ===
++ cargo build --release -p arm-scan-ffi
+    Finished `release` profile [optimized] target(s) in 0.03s
+=== [1/7] correctness gate ===
++ cargo test --release
+    Finished `release` profile [optimized] target(s) in 0.05s
+     Running unittests src/lib.rs (target/release/deps/arm_scan_core-00b1cdb57f325b31)
+
+running 11 tests
+test neon::exp::tests::nonpos_fast_special_values ... ok
+test neon::exp::tests::nonpos_special_values ... ok
+test neon::exp::tests::special_values ... ok
+test scalar::tests::hand_computed_single_step ... ok
+test scalar::tests::hand_computed_state_carryover ... ok
+test neon::math::tests::log_sweep ... ok
+test neon::math::tests::silu_sweep ... ok
+test neon::exp::tests::nonpos_fast_dense_sweep_accuracy ... ok
+test neon::exp::tests::dense_sweep_accuracy ... ok
+test neon::exp::tests::nonpos_dense_sweep_accuracy ... ok
+test neon::math::tests::softplus_sweep ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/golden.rs (target/release/deps/golden-45ab315bc75d0c8b)
+
+running 1 test
+test all_golden_cases ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/golden_mamba3.rs (target/release/deps/golden_mamba3-cd3069b9f4b90f02)
+
+running 2 tests
+test mamba3_parallel_is_bit_identical ... ok
+test mamba3_golden_cases ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.91s
+
+     Running tests/property.rs (target/release/deps/property-8fbe17d1076f1f53)
+
+running 9 tests
+test neon_backend_availability ... ok
+test validation_rejects_bad_shapes ... ok
+test streaming_matches_oneshot ... ok
+test f32_matches_f64 ... ok
+test reverse_actually_reverses ... ok
+test auto_backend_matches_scalar ... ok
+test reverse_matches_flip_forward_flip ... ok
+test parallel_is_bit_identical ... ok
+test fused_bidirectional_matches_two_scans ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/property_mamba3.rs (target/release/deps/property_mamba3-0949041e81fa569b)
+
+running 8 tests
+test mamba3_reverse_actually_differs ... ok
+test mamba3_tiled_handles_ragged_dqk ... ok
+test mamba3_validation_rejects_bad_shapes ... ok
+test mamba3_neon_matches_naive ... ok
+test mamba3_reverse_matches_flip_forward_flip ... ok
+test mamba3_tiled_matches_naive ... ok
+test mamba3_neon_parallel_bit_identical ... ok
+test mamba3_parallel_bit_identical_both_directions ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/release/deps/arm_scan_ffi-0e684627bf3865ef)
+
+running 10 tests
+test tests::ffi_bidirectional_two_steps ... ok
+test tests::ffi_mamba3_mimo_runs_and_rejects_the_carry ... ok
+test tests::ffi_mamba3_rejects_half_a_carry ... ok
+test tests::ffi_mamba3_rejects_odd_dqk ... ok
+test tests::ffi_mamba3_rejects_rank_without_projections ... ok
+test tests::ffi_mamba3_two_steps ... ok
+test tests::ffi_rejects_null_and_bad_enum ... ok
+test tests::ffi_reverse_two_steps ... ok
+test tests::ffi_roundtrip_single_step ... ok
+test tests::ffi_streaming_with_h0 ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests arm_scan_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
++ .venv/bin/python tests/check_ffi.py
+kernel library: /home/ubuntu/ARMHackathon/kernel/target/release/libarm_scan_ffi.so
+  tiny                     out_max_abs=1.372e-07 (floor 8.945e-08)  last_rel=1.070e-07  ok
+  small                    out_max_abs=4.937e-07 (floor 3.316e-07)  last_rel=1.223e-07  ok
+  medium                   out_max_abs=2.093e-06 (floor 9.732e-07)  last_rel=5.765e-07  ok
+  channels                 out_max_abs=1.694e-06 (floor 7.920e-07)  last_rel=3.916e-07  ok
+  long_seq                 out_max_abs=1.116e-06 (floor 1.214e-06)  last_rel=1.881e-07  ok
+  edge_L1                  out_max_abs=4.270e-08 (floor 4.270e-08)  last_rel=1.681e-08  ok
+  edge_D1                  out_max_abs=3.629e-07 (floor 3.629e-07)  last_rel=1.802e-07  ok
+  state8                   out_max_abs=1.118e-06 (floor 7.290e-07)  last_rel=2.490e-07  ok
+  state13_neon_tail        out_max_abs=4.677e-07 (floor 1.837e-07)  last_rel=1.363e-07  ok
+  no_z                     out_max_abs=9.515e-07 (floor 4.743e-07)  last_rel=1.474e-07  ok
+  no_D                     out_max_abs=4.350e-07 (floor 1.500e-07)  last_rel=1.559e-07  ok
+  no_bias                  out_max_abs=4.553e-07 (floor 4.474e-07)  last_rel=5.183e-08  ok
+  no_softplus              out_max_abs=2.248e-06 (floor 3.041e-07)  last_rel=5.799e-07  ok
+  extreme_delta            out_max_abs=6.939e-05 (floor 1.772e-05)  last_rel=6.674e-07  ok
+  grouped_BC               out_max_abs=9.935e-07 (floor 3.324e-07)  last_rel=1.756e-07  ok
+  hf_mixer_layer0          out_max_abs=8.179e-07 (floor 3.448e-07)  last_rel=4.008e-07  ok
+  streaming (h0 resume)    max_abs=1.192e-07  ok
+  shape validation            rejects bad A dim  ok
+
+all 16 golden cases pass through the C ABI
++ .venv/bin/python tests/verify_golden_2d.py
+6 2D golden cases
+
+1. input determinism — redraw from the case name, numpy only
+   grid_square      7 arrays  PASS
+   grid_nonsquare   7 arrays  PASS
+   grid_odd         7 arrays  PASS
+   grid_wide        7 arrays  PASS
+   grid_state13     7 arrays  PASS
+   grid_l1          7 arrays  PASS
+   all redrawn bit-identical (pcg64-raw/box-muller/v2, no torch)
+
+2. independent numpy re-derivation vs stored f64 ground truth
+   grid_square      max_abs 4.441e-16  PASS
+   grid_nonsquare   max_abs 8.882e-16  PASS
+   grid_odd         max_abs 4.441e-16  PASS
+   grid_wide        max_abs 4.441e-16  PASS
+   grid_state13     max_abs 8.882e-16  PASS
+   grid_l1          max_abs 0.000e+00  PASS
+
+3. kernel replay through arm_scan.ss2d (real C ABI)
+   grid_square      max_abs 1.629e-06  floor 3.062e-07  (  5.3x floor)  PASS
+   grid_nonsquare   max_abs 3.063e-06  floor 4.574e-07  (  6.7x floor)  PASS
+   grid_odd         max_abs 8.676e-07  floor 2.462e-07  (  3.5x floor)  PASS
+   grid_wide        max_abs 1.401e-06  floor 2.900e-07  (  4.8x floor)  PASS
+   grid_state13     max_abs 4.393e-07  floor 3.722e-07  (  1.2x floor)  PASS
+   grid_l1          max_abs 4.291e-07  floor 2.286e-07  (  1.9x floor)  PASS
+
+RESULT: PASS
++ RAYON_NUM_THREADS=1 .venv/bin/python apps/mri_diffusion/tests/test_ss2d_pair_parity.py
+reference path (torch pair vs torch 4-stack) — refactor gate
+    grid 8x8                     max_abs 3.815e-06  (scale 4.077e+01)  PASS
+    grid 6x10                    max_abs 3.815e-06  (scale 4.613e+01)  PASS
+    grid 7x5                     max_abs 3.815e-06  (scale 3.971e+01)  PASS
+    grid 12x4                    max_abs 3.815e-06  (scale 4.702e+01)  PASS
+
+kernel path (arm_scan pair vs arm_scan 4-stack) — kernel gate
+    grid 8x8                     max_abs 3.815e-06  (scale 4.077e+01)  PASS
+    grid 6x10                    max_abs 3.815e-06  (scale 4.613e+01)  PASS
+    grid 7x5                     max_abs 1.907e-06  (scale 3.971e+01)  PASS
+    grid 12x4                    max_abs 3.815e-06  (scale 4.702e+01)  PASS
+
+cross-backend (kernel pair vs torch pair) — numerics gate
+    grid 8x8                     max_abs 1.240e-05  PASS
+    grid 6x10                    max_abs 7.629e-06  PASS
+    grid 7x5                     max_abs 7.272e-06  PASS
+    grid 12x4                    max_abs 7.629e-06  PASS
+
+RESULT: PASS
++ RAYON_NUM_THREADS=2 .venv/bin/python apps/mri_diffusion/tests/test_ss2d_pair_parity.py
+reference path (torch pair vs torch 4-stack) — refactor gate
+    grid 8x8                     max_abs 3.815e-06  (scale 4.077e+01)  PASS
+    grid 6x10                    max_abs 3.815e-06  (scale 4.613e+01)  PASS
+    grid 7x5                     max_abs 3.815e-06  (scale 3.971e+01)  PASS
+    grid 12x4                    max_abs 3.815e-06  (scale 4.702e+01)  PASS
+
+kernel path (arm_scan pair vs arm_scan 4-stack) — kernel gate
+    grid 8x8                     max_abs 3.815e-06  (scale 4.077e+01)  PASS
+    grid 6x10                    max_abs 3.815e-06  (scale 4.613e+01)  PASS
+    grid 7x5                     max_abs 1.907e-06  (scale 3.971e+01)  PASS
+    grid 12x4                    max_abs 3.815e-06  (scale 4.702e+01)  PASS
+
+cross-backend (kernel pair vs torch pair) — numerics gate
+    grid 8x8                     max_abs 1.240e-05  PASS
+    grid 6x10                    max_abs 7.629e-06  PASS
+    grid 7x5                     max_abs 7.272e-06  PASS
+    grid 12x4                    max_abs 7.629e-06  PASS
+
+RESULT: PASS
++ RAYON_NUM_THREADS=8 .venv/bin/python apps/mri_diffusion/tests/test_ss2d_pair_parity.py
+reference path (torch pair vs torch 4-stack) — refactor gate
+    grid 8x8                     max_abs 3.815e-06  (scale 4.077e+01)  PASS
+    grid 6x10                    max_abs 3.815e-06  (scale 4.613e+01)  PASS
+    grid 7x5                     max_abs 3.815e-06  (scale 3.971e+01)  PASS
+    grid 12x4                    max_abs 3.815e-06  (scale 4.702e+01)  PASS
+
+kernel path (arm_scan pair vs arm_scan 4-stack) — kernel gate
+    grid 8x8                     max_abs 3.815e-06  (scale 4.077e+01)  PASS
+    grid 6x10                    max_abs 3.815e-06  (scale 4.613e+01)  PASS
+    grid 7x5                     max_abs 1.907e-06  (scale 3.971e+01)  PASS
+    grid 12x4                    max_abs 3.815e-06  (scale 4.702e+01)  PASS
+
+cross-backend (kernel pair vs torch pair) — numerics gate
+    grid 8x8                     max_abs 1.240e-05  PASS
+    grid 6x10                    max_abs 7.629e-06  PASS
+    grid 7x5                     max_abs 7.272e-06  PASS
+    grid 12x4                    max_abs 7.629e-06  PASS
+
+RESULT: PASS
+=== [2/7] criterion ladder (scalar_seq / neon_seq / neon_par) ===
+   Compiling arm-scan-core v0.1.0 (/home/ubuntu/ARMHackathon/kernel/arm-scan-core)
+    Finished `bench` profile [optimized] target(s) in 15.10s
+     Running unittests src/lib.rs (target/release/deps/arm_scan_core-00b1cdb57f325b31)
+
+running 11 tests
+test neon::exp::tests::dense_sweep_accuracy ... ignored
+test neon::exp::tests::nonpos_dense_sweep_accuracy ... ignored
+test neon::exp::tests::nonpos_fast_dense_sweep_accuracy ... ignored
+test neon::exp::tests::nonpos_fast_special_values ... ignored
+test neon::exp::tests::nonpos_special_values ... ignored
+test neon::exp::tests::special_values ... ignored
+test neon::math::tests::log_sweep ... ignored
+test neon::math::tests::silu_sweep ... ignored
+test neon::math::tests::softplus_sweep ... ignored
+test scalar::tests::hand_computed_single_step ... ignored
+test scalar::tests::hand_computed_state_carryover ... ignored
+
+test result: ok. 0 passed; 0 failed; 11 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running benches/scan.rs (target/release/deps/scan-52271040486e2718)
+Gnuplot not found, using plotters backend
+Benchmarking selective_scan/scalar_seq/small_d64_l128
+Benchmarking selective_scan/scalar_seq/small_d64_l128: Warming up for 1.0000 s
+Benchmarking selective_scan/scalar_seq/small_d64_l128: Collecting 10 samples in estimated 3.0228 s (2090 iterations)
+Benchmarking selective_scan/scalar_seq/small_d64_l128: Analyzing
+selective_scan/scalar_seq/small_d64_l128
+                        time:   [1.4467 ms 1.4469 ms 1.4472 ms]
+                        thrpt:  [11.321 Melem/s 11.323 Melem/s 11.325 Melem/s]
+Benchmarking selective_scan/neon_seq/small_d64_l128
+Benchmarking selective_scan/neon_seq/small_d64_l128: Warming up for 1.0000 s
+Benchmarking selective_scan/neon_seq/small_d64_l128: Collecting 10 samples in estimated 3.0119 s (8800 iterations)
+Benchmarking selective_scan/neon_seq/small_d64_l128: Analyzing
+selective_scan/neon_seq/small_d64_l128
+                        time:   [342.04 µs 342.15 µs 342.28 µs]
+                        thrpt:  [47.868 Melem/s 47.885 Melem/s 47.901 Melem/s]
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high mild
+Benchmarking selective_scan/neon_par/small_d64_l128
+Benchmarking selective_scan/neon_par/small_d64_l128: Warming up for 1.0000 s
+Benchmarking selective_scan/neon_par/small_d64_l128: Collecting 10 samples in estimated 3.0029 s (55k iterations)
+Benchmarking selective_scan/neon_par/small_d64_l128: Analyzing
+selective_scan/neon_par/small_d64_l128
+                        time:   [54.525 µs 54.629 µs 54.726 µs]
+                        thrpt:  [299.38 Melem/s 299.91 Melem/s 300.49 Melem/s]
+Benchmarking selective_scan/scalar_seq/mamba130m_layer_l512
+Benchmarking selective_scan/scalar_seq/mamba130m_layer_l512: Warming up for 1.0000 s
+
+Warning: Unable to complete 10 samples in 3.0s. You may wish to increase target time to 3.8s or enable flat sampling.
+Benchmarking selective_scan/scalar_seq/mamba130m_layer_l512: Collecting 10 samples in estimated 3.8277 s (55 iterations)
+Benchmarking selective_scan/scalar_seq/mamba130m_layer_l512: Analyzing
+selective_scan/scalar_seq/mamba130m_layer_l512
+                        time:   [69.564 ms 69.570 ms 69.580 ms]
+                        thrpt:  [11.303 Melem/s 11.304 Melem/s 11.305 Melem/s]
+Benchmarking selective_scan/neon_seq/mamba130m_layer_l512
+Benchmarking selective_scan/neon_seq/mamba130m_layer_l512: Warming up for 1.0000 s
+Benchmarking selective_scan/neon_seq/mamba130m_layer_l512: Collecting 10 samples in estimated 3.8115 s (220 iterations)
+Benchmarking selective_scan/neon_seq/mamba130m_layer_l512: Analyzing
+selective_scan/neon_seq/mamba130m_layer_l512
+                        time:   [17.111 ms 17.148 ms 17.213 ms]
+                        thrpt:  [45.689 Melem/s 45.861 Melem/s 45.962 Melem/s]
+Benchmarking selective_scan/neon_par/mamba130m_layer_l512
+Benchmarking selective_scan/neon_par/mamba130m_layer_l512: Warming up for 1.0000 s
+Benchmarking selective_scan/neon_par/mamba130m_layer_l512: Collecting 10 samples in estimated 3.0197 s (8140 iterations)
+Benchmarking selective_scan/neon_par/mamba130m_layer_l512: Analyzing
+selective_scan/neon_par/mamba130m_layer_l512
+                        time:   [370.02 µs 370.26 µs 370.43 µs]
+                        thrpt:  [2.1230 Gelem/s 2.1240 Gelem/s 2.1254 Gelem/s]
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) low mild
+
+     Running unittests src/lib.rs (target/release/deps/arm_scan_ffi-0e684627bf3865ef)
+
+running 10 tests
+test tests::ffi_bidirectional_two_steps ... ignored
+test tests::ffi_mamba3_mimo_runs_and_rejects_the_carry ... ignored
+test tests::ffi_mamba3_rejects_half_a_carry ... ignored
+test tests::ffi_mamba3_rejects_odd_dqk ... ignored
+test tests::ffi_mamba3_rejects_rank_without_projections ... ignored
+test tests::ffi_mamba3_two_steps ... ignored
+test tests::ffi_rejects_null_and_bad_enum ... ignored
+test tests::ffi_reverse_two_steps ... ignored
+test tests::ffi_roundtrip_single_step ... ignored
+test tests::ffi_streaming_with_h0 ... ignored
+
+test result: ok. 0 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+=== [3/7] op-level suites ===
++ .venv/bin/python bench/bench_op.py --suite basic --tag graviton-c8g --json bench/results/op_basic_graviton-c8g.json
+environment:
+  platform: Linux-6.17.0-1017-aws-aarch64-with-glibc2.39
+  machine: aarch64
+  processor: aarch64
+  cpu_count: 64
+  torch: 2.13.0+cu130
+  torch_threads: 64
+  python: 3.12.3
+  kernel_lib: /home/ubuntu/ARMHackathon/kernel/target/release/libarm_scan_ffi.so
+  tag: graviton-c8g
+  git_sha: 88caa09
+  timestamp_utc: 2026-08-11T04:31:34Z
+
+suite=basic reps=10 warmup=3 compile_max_len=512
+
+=== B1_D768_L128_N16 ===
+  kernel-vs-ref max_abs_err 4.053e-06 (scale 17.7)
+  ref_eager         9.68 ms
+  ref_compile      17.12 ms (one-time compile 42.9s)
+  kernel            0.17 ms
+  speedup: 57.64x vs eager, 101.94x vs torch.compile
+
+=== B1_D768_L512_N16 ===
+  kernel-vs-ref max_abs_err 5.245e-06 (scale 24.6)
+  ref_eager        39.93 ms
+  ref_compile      32.87 ms (one-time compile 110.5s)
+  kernel            0.30 ms
+  speedup: 132.29x vs eager, 108.91x vs torch.compile
+
+=== B1_D768_L2048_N16 ===
+  kernel-vs-ref max_abs_err 4.292e-06 (scale 25.2)
+  ref_eager       196.36 ms
+  ref_compile  skipped (L=2048 > compile_max_len=512)
+  kernel            1.01 ms
+  speedup: 194.10x vs eager
+
+=== B8_D1536_L1024_N16 ===
+  kernel-vs-ref max_abs_err 9.060e-06 (scale 29.5)
+  ref_eager       640.02 ms
+  ref_compile  skipped (L=1024 > compile_max_len=512)
+  kernel            5.68 ms
+  speedup: 112.67x vs eager
+
+results written to bench/results/op_basic_graviton-c8g.json
++ .venv/bin/python bench/bench_op.py --suite sweep-len --tag graviton-c8g --compile-max-len 512 --json bench/results/op_sweep-len_graviton-c8g.json
+environment:
+  platform: Linux-6.17.0-1017-aws-aarch64-with-glibc2.39
+  machine: aarch64
+  processor: aarch64
+  cpu_count: 64
+  torch: 2.13.0+cu130
+  torch_threads: 64
+  python: 3.12.3
+  kernel_lib: /home/ubuntu/ARMHackathon/kernel/target/release/libarm_scan_ffi.so
+  tag: graviton-c8g
+  git_sha: 88caa09
+  timestamp_utc: 2026-08-11T04:34:25Z
+
+suite=sweep-len reps=10 warmup=3 compile_max_len=512
+
+=== B1_D768_L64_N16 ===
+  kernel-vs-ref max_abs_err 2.146e-06 (scale 11.3)
+  ref_eager         5.39 ms
+  ref_compile       7.72 ms (one-time compile 28.3s)
+  kernel            0.15 ms
+  speedup: 35.18x vs eager, 50.37x vs torch.compile
+
+=== B1_D768_L128_N16 ===
+  kernel-vs-ref max_abs_err 4.053e-06 (scale 17.7)
+  ref_eager         9.72 ms
+  ref_compile      16.04 ms (one-time compile 1.3s)
+  kernel            0.16 ms
+  speedup: 59.49x vs eager, 98.12x vs torch.compile
+
+=== B1_D768_L256_N16 ===
+  kernel-vs-ref max_abs_err 4.888e-06 (scale 21.1)
+  ref_eager        18.44 ms
+  ref_compile      22.81 ms (one-time compile 61.4s)
+  kernel            0.20 ms
+  speedup: 90.47x vs eager, 111.94x vs torch.compile
+
+=== B1_D768_L512_N16 ===
+  kernel-vs-ref max_abs_err 5.245e-06 (scale 24.6)
+  ref_eager        39.45 ms
+  ref_compile      31.51 ms (one-time compile 5.1s)
+  kernel            0.29 ms
+  speedup: 137.75x vs eager, 110.02x vs torch.compile
+
+=== B1_D768_L1024_N16 ===
+  kernel-vs-ref max_abs_err 8.106e-06 (scale 35.3)
+  ref_eager        95.86 ms
+  ref_compile  skipped (L=1024 > compile_max_len=512)
+  kernel            0.62 ms
+  speedup: 154.77x vs eager
+
+=== B1_D768_L2048_N16 ===
+  kernel-vs-ref max_abs_err 4.292e-06 (scale 25.2)
+  ref_eager       189.83 ms
+  ref_compile  skipped (L=2048 > compile_max_len=512)
+  kernel            1.02 ms
+  speedup: 186.10x vs eager
+
+=== B1_D768_L4096_N16 ===
+  kernel-vs-ref max_abs_err 5.245e-06 (scale 21.9)
+  ref_eager       412.61 ms
+  ref_compile  skipped (L=4096 > compile_max_len=512)
+  kernel            1.73 ms
+  speedup: 238.34x vs eager
+
+=== B1_D768_L8192_N16 ===
+  kernel-vs-ref max_abs_err 7.920e-06 (scale 32.8)
+  ref_eager       867.45 ms
+  ref_compile  skipped (L=8192 > compile_max_len=512)
+  kernel            3.18 ms
+  speedup: 272.84x vs eager
+
+results written to bench/results/op_sweep-len_graviton-c8g.json
++ .venv/bin/python bench/bench_op.py --suite sweep-dim --tag graviton-c8g --no-compile --json bench/results/op_sweep-dim_graviton-c8g.json
+environment:
+  platform: Linux-6.17.0-1017-aws-aarch64-with-glibc2.39
+  machine: aarch64
+  processor: aarch64
+  cpu_count: 64
+  torch: 2.13.0+cu130
+  torch_threads: 64
+  python: 3.12.3
+  kernel_lib: /home/ubuntu/ARMHackathon/kernel/target/release/libarm_scan_ffi.so
+  tag: graviton-c8g
+  git_sha: 88caa09
+  timestamp_utc: 2026-08-11T04:36:29Z
+
+suite=sweep-dim reps=10 warmup=3 compile_max_len=512
+
+=== B1_D256_L512_N16 ===
+  kernel-vs-ref max_abs_err 9.388e-06 (scale 16.2)
+  ref_eager        25.95 ms
+  kernel            0.17 ms
+  speedup: 153.29x vs eager
+
+=== B1_D768_L512_N16 ===
+  kernel-vs-ref max_abs_err 5.245e-06 (scale 24.6)
+  ref_eager        38.48 ms
+  kernel            0.29 ms
+  speedup: 134.67x vs eager
+
+=== B1_D1536_L512_N16 ===
+  kernel-vs-ref max_abs_err 6.676e-06 (scale 19.5)
+  ref_eager        61.73 ms
+  kernel            0.43 ms
+  speedup: 141.95x vs eager
+
+=== B1_D3072_L512_N16 ===
+  kernel-vs-ref max_abs_err 4.053e-06 (scale 24.3)
+  ref_eager       112.54 ms
+  kernel            0.73 ms
+  speedup: 154.09x vs eager
+
+results written to bench/results/op_sweep-dim_graviton-c8g.json
++ .venv/bin/python bench/bench_op.py --suite sweep-batch --tag graviton-c8g --no-compile --json bench/results/op_sweep-batch_graviton-c8g.json
+environment:
+  platform: Linux-6.17.0-1017-aws-aarch64-with-glibc2.39
+  machine: aarch64
+  processor: aarch64
+  cpu_count: 64
+  torch: 2.13.0+cu130
+  torch_threads: 64
+  python: 3.12.3
+  kernel_lib: /home/ubuntu/ARMHackathon/kernel/target/release/libarm_scan_ffi.so
+  tag: graviton-c8g
+  git_sha: 88caa09
+  timestamp_utc: 2026-08-11T04:36:34Z
+
+suite=sweep-batch reps=10 warmup=3 compile_max_len=512
+
+=== B1_D1536_L1024_N16 ===
+  kernel-vs-ref max_abs_err 4.649e-06 (scale 22.8)
+  ref_eager       161.11 ms
+  kernel            0.92 ms
+  speedup: 174.69x vs eager
+
+=== B4_D1536_L1024_N16 ===
+  kernel-vs-ref max_abs_err 5.841e-06 (scale 26.3)
+  ref_eager       522.63 ms
+  kernel            3.01 ms
+  speedup: 173.70x vs eager
+
+=== B8_D1536_L1024_N16 ===
+  kernel-vs-ref max_abs_err 9.060e-06 (scale 29.5)
+  ref_eager       639.31 ms
+  kernel            5.66 ms
+  speedup: 112.88x vs eager
+
+results written to bench/results/op_sweep-batch_graviton-c8g.json
+=== [4/7] thread-scaling loop (one process per count) ===
+thread counts:1 2 4 8 16 32 64
++ RAYON_NUM_THREADS=1 .venv/bin/python bench/bench_op.py --suite scaling-point --no-compile --reps 7 --tag graviton-c8g-t1 --json bench/results/op_scaling_graviton-c8g_t1.json
+environment:
+  platform: Linux-6.17.0-1017-aws-aarch64-with-glibc2.39
+  machine: aarch64
+  processor: aarch64
+  cpu_count: 64
+  torch: 2.13.0+cu130
+  torch_threads: 64
+  python: 3.12.3
+  kernel_lib: /home/ubuntu/ARMHackathon/kernel/target/release/libarm_scan_ffi.so
+  tag: graviton-c8g-t1
+  git_sha: 88caa09
+  timestamp_utc: 2026-08-11T04:36:55Z
+
+suite=scaling-point reps=7 warmup=3 compile_max_len=512
+
+=== B1_D1536_L512_N16 ===
+  kernel-vs-ref max_abs_err 6.676e-06 (scale 19.5)
+  ref_eager        60.67 ms
+  kernel           17.55 ms
+  speedup: 3.46x vs eager
+
+results written to bench/results/op_scaling_graviton-c8g_t1.json
++ RAYON_NUM_THREADS=2 .venv/bin/python bench/bench_op.py --suite scaling-point --no-compile --reps 7 --tag graviton-c8g-t2 --json bench/results/op_scaling_graviton-c8g_t2.json
+environment:
+  platform: Linux-6.17.0-1017-aws-aarch64-with-glibc2.39
+  machine: aarch64
+  processor: aarch64
+  cpu_count: 64
+  torch: 2.13.0+cu130
+  torch_threads: 64
+  python: 3.12.3
+  kernel_lib: /home/ubuntu/ARMHackathon/kernel/target/release/libarm_scan_ffi.so
+  tag: graviton-c8g-t2
+  git_sha: 88caa09
+  timestamp_utc: 2026-08-11T04:36:58Z
+
+suite=scaling-point reps=7 warmup=3 compile_max_len=512
+
+=== B1_D1536_L512_N16 ===
+  kernel-vs-ref max_abs_err 6.676e-06 (scale 19.5)
+  ref_eager        62.02 ms
+  kernel            8.76 ms
+  speedup: 7.08x vs eager
+
+results written to bench/results/op_scaling_graviton-c8g_t2.json
++ RAYON_NUM_THREADS=4 .venv/bin/python bench/bench_op.py --suite scaling-point --no-compile --reps 7 --tag graviton-c8g-t4 --json bench/results/op_scaling_graviton-c8g_t4.json
+environment:
+  platform: Linux-6.17.0-1017-aws-aarch64-with-glibc2.39
+  machine: aarch64
+  processor: aarch64
+  cpu_count: 64
+  torch: 2.13.0+cu130
+  torch_threads: 64
+  python: 3.12.3
+  kernel_lib: /home/ubuntu/ARMHackathon/kernel/target/release/libarm_scan_ffi.so
+  tag: graviton-c8g-t4
+  git_sha: 88caa09
+  timestamp_utc: 2026-08-11T04:37:00Z
+
+suite=scaling-point reps=7 warmup=3 compile_max_len=512
+
+=== B1_D1536_L512_N16 ===
+  kernel-vs-ref max_abs_err 6.676e-06 (scale 19.5)
+  ref_eager        64.00 ms
+  kernel            4.40 ms
+  speedup: 14.56x vs eager
+
+results written to bench/results/op_scaling_graviton-c8g_t4.json
++ RAYON_NUM_THREADS=8 .venv/bin/python bench/bench_op.py --suite scaling-point --no-compile --reps 7 --tag graviton-c8g-t8 --json bench/results/op_scaling_graviton-c8g_t8.json
+environment:
+  platform: Linux-6.17.0-1017-aws-aarch64-with-glibc2.39
+  machine: aarch64
+  processor: aarch64
+  cpu_count: 64
+  torch: 2.13.0+cu130
+  torch_threads: 64
+  python: 3.12.3
+  kernel_lib: /home/ubuntu/ARMHackathon/kernel/target/release/libarm_scan_ffi.so
+  tag: graviton-c8g-t8
+  git_sha: 88caa09
+  timestamp_utc: 2026-08-11T04:37:03Z
+
+suite=scaling-point reps=7 warmup=3 compile_max_len=512
+
+=== B1_D1536_L512_N16 ===
+  kernel-vs-ref max_abs_err 6.676e-06 (scale 19.5)
+  ref_eager        61.80 ms
+  kernel            2.23 ms
+  speedup: 27.70x vs eager
+
+results written to bench/results/op_scaling_graviton-c8g_t8.json
++ RAYON_NUM_THREADS=16 .venv/bin/python bench/bench_op.py --suite scaling-point --no-compile --reps 7 --tag graviton-c8g-t16 --json bench/results/op_scaling_graviton-c8g_t16.json
+environment:
+  platform: Linux-6.17.0-1017-aws-aarch64-with-glibc2.39
+  machine: aarch64
+  processor: aarch64
+  cpu_count: 64
+  torch: 2.13.0+cu130
+  torch_threads: 64
+  python: 3.12.3
+  kernel_lib: /home/ubuntu/ARMHackathon/kernel/target/release/libarm_scan_ffi.so
+  tag: graviton-c8g-t16
+  git_sha: 88caa09
+  timestamp_utc: 2026-08-11T04:37:06Z
+
+suite=scaling-point reps=7 warmup=3 compile_max_len=512
+
+=== B1_D1536_L512_N16 ===
+  kernel-vs-ref max_abs_err 6.676e-06 (scale 19.5)
+  ref_eager        60.92 ms
+  kernel            1.22 ms
+  speedup: 50.13x vs eager
+
+results written to bench/results/op_scaling_graviton-c8g_t16.json
++ RAYON_NUM_THREADS=32 .venv/bin/python bench/bench_op.py --suite scaling-point --no-compile --reps 7 --tag graviton-c8g-t32 --json bench/results/op_scaling_graviton-c8g_t32.json
+environment:
+  platform: Linux-6.17.0-1017-aws-aarch64-with-glibc2.39
+  machine: aarch64
+  processor: aarch64
+  cpu_count: 64
+  torch: 2.13.0+cu130
+  torch_threads: 64
+  python: 3.12.3
+  kernel_lib: /home/ubuntu/ARMHackathon/kernel/target/release/libarm_scan_ffi.so
+  tag: graviton-c8g-t32
+  git_sha: 88caa09
+  timestamp_utc: 2026-08-11T04:37:08Z
+
+suite=scaling-point reps=7 warmup=3 compile_max_len=512
+
+=== B1_D1536_L512_N16 ===
+  kernel-vs-ref max_abs_err 6.676e-06 (scale 19.5)
+  ref_eager        60.87 ms
+  kernel            0.74 ms
+  speedup: 81.80x vs eager
+
+results written to bench/results/op_scaling_graviton-c8g_t32.json
++ RAYON_NUM_THREADS=64 .venv/bin/python bench/bench_op.py --suite scaling-point --no-compile --reps 7 --tag graviton-c8g-t64 --json bench/results/op_scaling_graviton-c8g_t64.json
+environment:
+  platform: Linux-6.17.0-1017-aws-aarch64-with-glibc2.39
+  machine: aarch64
+  processor: aarch64
+  cpu_count: 64
+  torch: 2.13.0+cu130
+  torch_threads: 64
+  python: 3.12.3
+  kernel_lib: /home/ubuntu/ARMHackathon/kernel/target/release/libarm_scan_ffi.so
+  tag: graviton-c8g-t64
+  git_sha: 88caa09
+  timestamp_utc: 2026-08-11T04:37:11Z
+
+suite=scaling-point reps=7 warmup=3 compile_max_len=512
+
+=== B1_D1536_L512_N16 ===
+  kernel-vs-ref max_abs_err 6.676e-06 (scale 19.5)
+  ref_eager        60.17 ms
+  kernel            0.45 ms
+  speedup: 132.66x vs eager
+
+results written to bench/results/op_scaling_graviton-c8g_t64.json
+=== [5/7] end-to-end HF generate() sweeps ===
++ .venv/bin/python bench/bench_e2e.py --prompt-tokens 128 --new-tokens 32 --reps 5 --tag graviton-c8g --json bench/results/e2e_p128_graviton-c8g.json
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+model=state-spaces/mamba-130m-hf prompt=128tok new=32tok reps=5
+host: Linux-6.17.0-1017-aws-aarch64-with-glibc2.39 / aarch64, torch 2.13.0+cu130, threads 64
+Loading weights:   0%|          | 0/242 [00:00<?, ?it/s]Loading weights: 100%|██████████| 242/242 [00:00<00:00, 7137.38it/s]
+
+--- unpatched (HF slow path) ---
+  prefill    272.8 ms   decode  37.09 tok/s   total 1.136 s
+
+--- patched (arm_scan kernel) ---
+Traceback (most recent call last):
+  File "/home/ubuntu/ARMHackathon/bench/bench_e2e.py", line 164, in <module>
+    main()
+  File "/home/ubuntu/ARMHackathon/bench/bench_e2e.py", line 113, in main
+    arm_scan.patch()
+  File "/home/ubuntu/ARMHackathon/python/arm_scan/patch.py", line 130, in patch
+    orig = modeling_mamba.MambaMixer.slow_forward
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: type object 'MambaMixer' has no attribute 'slow_forward'. Did you mean: '_slow_forward'?
+BASELINE_FINISHED

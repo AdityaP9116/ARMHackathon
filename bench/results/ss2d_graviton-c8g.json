@@ -1,0 +1,78 @@
+{
+  "kind": "ss2d",
+  "tag": "graviton-c8g",
+  "host": "Linux-6.17.0-1017-aws-aarch64-with-glibc2.39",
+  "machine": "aarch64",
+  "torch": "2.13.0+cu130",
+  "threads": 64,
+  "reps": 5,
+  "cases": [
+    {
+      "case": "L1_384x320_in96_b1",
+      "arm_total_s": 0.07801606300017738,
+      "arm_scan_s": 0.05883164999977453,
+      "legacy_total_s": 0.07072980600014489,
+      "legacy_scan_s": 0.051228782999714895,
+      "pair_speedup_total": 0.9066056819604454,
+      "pair_speedup_scan": 0.8707691013240532,
+      "overhead_pct": 24.59033724934215
+    },
+    {
+      "case": "L1_384x320_in96_b4",
+      "arm_total_s": 0.3263560810000854,
+      "arm_scan_s": 0.2526980459997503,
+      "legacy_total_s": 0.33928826900000786,
+      "legacy_scan_s": 0.26067082300005495,
+      "pair_speedup_total": 1.0396260059266953,
+      "pair_speedup_scan": 1.0315506080340349,
+      "overhead_pct": 22.56983684036695
+    },
+    {
+      "case": "L2_192x160_in192_b1",
+      "arm_total_s": 0.03480969500014908,
+      "arm_scan_s": 0.018757362000087596,
+      "legacy_total_s": 0.03295012200032943,
+      "legacy_scan_s": 0.01925108600016756,
+      "pair_speedup_total": 0.9465788769533406,
+      "pair_speedup_scan": 1.0263216117531697,
+      "overhead_pct": 46.114546536511554
+    },
+    {
+      "case": "L2_192x160_in192_b4",
+      "arm_total_s": 0.11683468299997912,
+      "arm_scan_s": 0.07825630299976183,
+      "legacy_total_s": 0.1122485260002577,
+      "legacy_scan_s": 0.07211657500010915,
+      "pair_speedup_total": 0.9607466132319438,
+      "pair_speedup_scan": 0.9215433420146187,
+      "overhead_pct": 33.019629967433715
+    },
+    {
+      "case": "mini_96x80_in96_b1",
+      "arm_total_s": 0.006458046000261675,
+      "arm_scan_s": 0.001809105999655003,
+      "legacy_total_s": 0.008029579000321974,
+      "legacy_scan_s": 0.0032094759999381495,
+      "pair_speedup_total": 1.2433449684311046,
+      "pair_speedup_scan": 1.7740674126061144,
+      "overhead_pct": 71.98678981875169,
+      "ref_eager_total_s": 0.435911073500165,
+      "ref_compile_total_s": null,
+      "ref_compile_skipped": "L=7680 > --compile-max-l=2048"
+    },
+    {
+      "case": "tiny_32x32_in96_b1",
+      "arm_total_s": 0.004335188999903039,
+      "arm_scan_s": 0.0005776279999736289,
+      "legacy_total_s": 0.009069952000118064,
+      "legacy_scan_s": 0.0010337240000808379,
+      "pair_speedup_total": 2.092169914695974,
+      "pair_speedup_scan": 1.789601612331867,
+      "overhead_pct": 86.67582889727419,
+      "ref_eager_total_s": 0.06600887900003727,
+      "ref_compile_total_s": 9.43904286399993
+    }
+  ],
+  "fused_kernel_justified": true,
+  "pair_speedup_geomean": 0.9621999070064448
+}

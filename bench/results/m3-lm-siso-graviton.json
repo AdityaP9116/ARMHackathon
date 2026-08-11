@@ -1,0 +1,65 @@
+{
+  "meta": {
+    "host": "ip-172-31-38-148",
+    "platform": "Linux-6.17.0-1017-aws-aarch64-with-glibc2.39",
+    "machine": "aarch64",
+    "processor": "aarch64",
+    "torch": "2.13.0+cu130",
+    "threads": 64,
+    "git": "88caa09",
+    "params": 186849600,
+    "model": "state-spaces/mamba3-siso-187m",
+    "variant": "siso",
+    "mimo_rank": 1
+  },
+  "rows": [
+    {
+      "len": 128,
+      "correctness": "PASS",
+      "max_abs": 5.0067901611328125e-05,
+      "kernel_ms": 133.75520800002505,
+      "ref_eager_ms": 673.0484030000525,
+      "ref_compile_ms": 218.81368800018208,
+      "compile_s": 48.940649890000145,
+      "speedup_vs_eager": 5.031941657179633,
+      "speedup_vs_compile": 1.635926490429749,
+      "tokens_per_s": 956.9720829111643
+    },
+    {
+      "len": 256,
+      "correctness": "PASS",
+      "max_abs": 6.198883056640625e-05,
+      "kernel_ms": 142.03206100000898,
+      "ref_eager_ms": 1285.45083899985,
+      "ref_compile_ms": 432.80770999990636,
+      "compile_s": 88.20467909800004,
+      "speedup_vs_eager": 9.050427276414505,
+      "speedup_vs_compile": 3.047253605648087,
+      "tokens_per_s": 1802.409950243444
+    },
+    {
+      "len": 512,
+      "correctness": "PASS",
+      "max_abs": 0.00010728836059570312,
+      "kernel_ms": 186.7430479999257,
+      "ref_eager_ms": 2528.0133750000005,
+      "ref_compile_ms": null,
+      "compile_s": null,
+      "speedup_vs_eager": 13.53738948826093,
+      "speedup_vs_compile": null,
+      "tokens_per_s": 2741.7352639558703
+    },
+    {
+      "len": 1024,
+      "correctness": "PASS",
+      "max_abs": 0.000263214111328125,
+      "kernel_ms": 268.0895440000768,
+      "ref_eager_ms": 5063.854223999897,
+      "ref_compile_ms": null,
+      "compile_s": null,
+      "speedup_vs_eager": 18.888667377488048,
+      "speedup_vs_compile": null,
+      "tokens_per_s": 3819.619313462321
+    }
+  ]
+}

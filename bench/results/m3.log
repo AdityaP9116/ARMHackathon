@@ -1,0 +1,115 @@
+host Linux-6.17.0-1017-aws-aarch64-with-glibc2.39 (aarch64), torch 2.13.0+cu130, 64 threads, git 88caa09, ABI 7
+reps=7 warmup=2
+
+187m_L256  (b=1 h=24 dv=64 dqk=128 L=256)
+  kernel             6.23 ms
+  ref_eager     skipped (python-loop reference too slow at this shape; that skip is itself a result)
+
+187m_L1024  (b=1 h=24 dv=64 dqk=128 L=1024)
+  kernel             5.03 ms
+  ref_eager     skipped (python-loop reference too slow at this shape; that skip is itself a result)
+
+small_L512  (b=1 h=16 dv=32 dqk=64 L=512)
+  vs reference  max_abs=2.861e-06 (rel 1.10e-07)
+  kernel             2.06 ms
+  ref_eager         66.76 ms  ( 32.42x)
+  ref_compile       43.92 ms  ( 21.33x)  [compile 249.9s]
+
+small_L2048  (b=1 h=16 dv=32 dqk=64 L=2048)
+  kernel             3.37 ms
+  ref_eager     skipped (python-loop reference too slow at this shape; that skip is itself a result)
+
+wrote bench/results/m3-kernel-graviton.json
+2D Mamba-3 cross-scan — 4 directions as two traversal pairs
+aarch64  torch 2.13.0+cu130  threads 64  git 88caa09
+
+No 2D Mamba-3 exists on ANY device, so the baseline is the PyTorch recurrence.
+
+         grid   tokens   kernel ms      ref ms   speedup   compiled ms   vs comp    rel err
+-------------------------------------------------------------------------------------------
+    14x14_p16      196        3.32       58.89    17.72x         47.34    14.25x   1.29e-07
+     28x28_p8      784        5.15      215.70    41.86x             -         -   2.07e-07
+ 56x56_stage1     3136        9.08      840.21    92.50x             -         -   2.14e-07
+
+wrote bench/results/m3-2d-graviton.json
+Causal vs non-causal 2D Mamba-3 — and scan-form vs dense-form
+aarch64  torch 2.13.0+cu130  threads 64  git 88caa09
+
+No authoritative non-causal implementation exists (VNCT unreleased);
+these time OUR reading of the operator.
+
+1D columns isolate the cost of dropping causality (1 scan vs 2).
+2D columns are the four-direction cross-scan, which ALREADY runs
+both directions -- so there non-causal only adds a diagonal pass.
+
+         grid   tokens   1D causal      1D nc   nc/causal   2D causal      2D nc   2D ratio   dense ms   dense/1Dnc    rel err
+------------------------------------------------------------------------------------------------------------------------------
+          8x8       64        0.67       1.10       1.64x        1.32       1.99      1.51x       1.65        1.50x   2.39e-07
+    14x14_p16      196        1.78       2.37       1.33x        9.89       6.03      0.61x       4.72        1.99x   5.25e-07
+     28x28_p8      784        2.20       5.83       2.65x       13.69      14.10      1.03x       5.89        1.01x   8.79e-07
+ 56x56_stage1     3136        4.24       7.95       1.87x        9.11      11.59      1.27x          -            -   1.47e-06
+
+NOTE: 8x8 time under 1 ms per call. Medians that short are
+dominated by dispatch overhead on an unquiesced box — read those rows as
+order-of-magnitude only, not to two significant figures.
+
+The cost of dropping causality:
+  8x8               64 tok   1D 1.64x   2D 1.51x
+  14x14_p16        196 tok   1D 1.33x   2D 0.61x
+  28x28_p8         784 tok   1D 2.65x   2D 1.03x
+  56x56_stage1    3136 tok   1D 1.87x   2D 1.27x
+
+Scan form vs dense form (vs 1D non-causal):
+  8x8               64 tok   dense/scan 1.50x   -> scan wins
+  14x14_p16        196 tok   dense/scan 1.99x   -> scan wins
+  28x28_p8         784 tok   dense/scan 1.01x   -> scan wins
+  56x56_stage1    3136 tok   dense skipped (the (L,L) mask is the limit)
+
+wrote bench/results/m3-noncausal-graviton.json
+loading checkpoint ...
+Fetching 4 files:   0%|          | 0/4 [00:00<?, ?it/s]Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Fetching 4 files:  75%|███████▌  | 3/4 [00:00<00:00, 24.70it/s]Fetching 4 files: 100%|██████████| 4/4 [00:04<00:00,  1.19s/it]
+
+state-spaces/mamba3-siso-187m  (186.8M params, SISO)
+aarch64  torch 2.13.0+cu130  threads 64  git 88caa09
+
+baseline = the PyTorch recurrence (fp32). Upstream has NO CPU path at all.
+
+     L   kernel ms      ref ms   speedup   compiled ms   vs comp   compile s     max|d|
+---------------------------------------------------------------------------------------
+   128      133.76      673.05     5.03x        218.81     1.64x        48.9   5.01e-05
+   256      142.03     1285.45     9.05x        432.81     3.05x        88.2   6.20e-05
+   512      186.74     2528.01    13.54x       skipped         -           -   1.07e-04
+  1024      268.09     5063.85    18.89x       skipped         -           -   2.63e-04
+
+tokens/s (prefill, our kernel):
+  L=128         957.0 tok/s
+  L=256        1802.4 tok/s
+  L=512        2741.7 tok/s
+  L=1024       3819.6 tok/s
+
+wrote bench/results/m3-lm-siso-graviton.json
+loading checkpoint ...
+Fetching 4 files:   0%|          | 0/4 [00:00<?, ?it/s]Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Fetching 4 files: 100%|██████████| 4/4 [00:05<00:00,  1.34s/it]Fetching 4 files: 100%|██████████| 4/4 [00:05<00:00,  1.34s/it]
+
+state-spaces/mamba3-mimo-187m  (187.3M params, MIMO, rank 4)
+aarch64  torch 2.13.0+cu130  threads 64  git 88caa09
+
+baseline = the PyTorch recurrence (fp32). Upstream has NO CPU path at all.
+
+     L   kernel ms      ref ms   speedup   compiled ms   vs comp   compile s     max|d|
+---------------------------------------------------------------------------------------
+   128      171.95     5437.21    31.62x       6090.18    35.42x        52.0   5.82e-05
+   256      251.82    10978.96    43.60x      11660.48    46.30x       103.6   1.01e-04
+   512      465.58    26307.28    56.50x       skipped         -           -   1.01e-04
+  1024      919.70    50748.37    55.18x       skipped         -           -   2.55e-04
+
+tokens/s (prefill, our kernel):
+  L=128         744.4 tok/s
+  L=256        1016.6 tok/s
+  L=512        1099.7 tok/s
+  L=1024       1113.4 tok/s
+
+wrote bench/results/m3-lm-mimo-graviton.json
+M3_FINISHED

@@ -1,0 +1,60 @@
+{
+  "kind": "mamba3",
+  "tag": "ip-172-31-38-148",
+  "platform": "Linux-6.17.0-1017-aws-aarch64-with-glibc2.39",
+  "machine": "aarch64",
+  "torch": "2.13.0+cu130",
+  "threads": 64,
+  "git_sha": "88caa09",
+  "abi": 7,
+  "reps": 7,
+  "warmup": 2,
+  "cases": [
+    {
+      "case": "187m_L256",
+      "batch": 1,
+      "heads": 24,
+      "dv": 64,
+      "dqk": 128,
+      "len": 256,
+      "kernel_s": 0.006228277999980492,
+      "max_abs_err": null,
+      "ref_eager_s": null
+    },
+    {
+      "case": "187m_L1024",
+      "batch": 1,
+      "heads": 24,
+      "dv": 64,
+      "dqk": 128,
+      "len": 1024,
+      "kernel_s": 0.005034539999996923,
+      "max_abs_err": null,
+      "ref_eager_s": null
+    },
+    {
+      "case": "small_L512",
+      "batch": 1,
+      "heads": 16,
+      "dv": 32,
+      "dqk": 64,
+      "len": 512,
+      "kernel_s": 0.0020589000000086344,
+      "max_abs_err": 2.86102294921875e-06,
+      "ref_eager_s": 0.06675574149997487,
+      "ref_compile_s": 0.043916100999979335,
+      "compile_cost_s": 249.89231732500008
+    },
+    {
+      "case": "small_L2048",
+      "batch": 1,
+      "heads": 16,
+      "dv": 32,
+      "dqk": 64,
+      "len": 2048,
+      "kernel_s": 0.0033749379999790108,
+      "max_abs_err": null,
+      "ref_eager_s": null
+    }
+  ]
+}

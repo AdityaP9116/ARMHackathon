@@ -1,0 +1,326 @@
+ Downloading crates ...
+  Downloaded clap_lex v1.1.0
+  Downloaded adler2 v2.0.1
+  Downloaded cast v0.3.0
+  Downloaded itoa v1.0.18
+  Downloaded anes v0.1.6
+  Downloaded ciborium v0.2.2
+  Downloaded walkdir v2.5.0
+  Downloaded bit-vec v0.8.0
+  Downloaded crc32fast v1.5.0
+  Downloaded proc-macro2 v1.0.107
+  Downloaded ciborium-ll v0.2.2
+  Downloaded rand_xorshift v0.4.0
+  Downloaded bit-set v0.8.0
+  Downloaded num-traits v0.2.19
+  Downloaded errno v0.3.14
+  Downloaded plotters-svg v0.3.7
+  Downloaded ppv-lite86 v0.2.21
+  Downloaded anstyle v1.0.14
+  Downloaded autocfg v1.5.1
+  Downloaded wait-timeout v0.2.1
+  Downloaded quick-error v1.2.3
+  Downloaded same-file v1.0.6
+  Downloaded serde v1.0.229
+  Downloaded fnv v1.0.7
+  Downloaded unarray v0.1.4
+  Downloaded cfg-if v1.0.4
+  Downloaded num-complex v0.4.6
+  Downloaded oorandom v11.1.5
+  Downloaded quote v1.0.47
+  Downloaded is-terminal v0.4.17
+  Downloaded rawpointer v0.2.1
+  Downloaded ciborium-io v0.2.2
+  Downloaded pest_generator v2.8.8
+  Downloaded equivalent v1.0.2
+  Downloaded plotters-backend v0.3.7
+  Downloaded ndarray-npy v0.9.1
+  Downloaded py_literal v0.4.0
+  Downloaded rusty-fork v0.3.1
+  Downloaded tinytemplate v1.2.1
+  Downloaded fastrand v2.5.0
+  Downloaded zmij v1.0.23
+  Downloaded byteorder v1.5.0
+  Downloaded clap v4.6.6
+  Downloaded criterion-plot v0.5.0
+  Downloaded serde_derive v1.0.229
+  Downloaded rand_chacha v0.9.0
+  Downloaded displaydoc v0.2.7
+  Downloaded rand_core v0.9.5
+  Downloaded simd-adler32 v0.3.10
+  Downloaded thiserror-impl v2.0.20
+  Downloaded zerocopy-derive v0.8.56
+  Downloaded zopfli v0.8.3
+  Downloaded bumpalo v3.20.3
+  Downloaded tempfile v3.27.0
+  Downloaded matrixmultiply v0.3.11
+  Downloaded num-integer v0.1.46
+  Downloaded once_cell v1.21.4
+  Downloaded pest_meta v2.8.8
+  Downloaded thiserror v2.0.20
+  Downloaded ucd-trie v0.1.7
+  Downloaded bitflags v2.13.1
+  Downloaded pest v2.8.8
+  Downloaded flate2 v1.1.9
+  Downloaded pest_derive v2.8.8
+  Downloaded serde_core v1.0.229
+  Downloaded unicode-ident v1.0.24
+  Downloaded half v2.7.1
+  Downloaded miniz_oxide v0.8.9
+  Downloaded aho-corasick v1.1.5
+  Downloaded log v0.4.33
+  Downloaded getrandom v0.3.4
+  Downloaded getrandom v0.4.3
+  Downloaded memchr v2.8.3
+  Downloaded num-bigint v0.4.8
+  Downloaded criterion v0.5.1
+  Downloaded rand v0.9.5
+  Downloaded zip v2.4.2
+  Downloaded itertools v0.10.5
+  Downloaded indexmap v2.14.0
+  Downloaded clap_builder v4.6.6
+  Downloaded regex v1.13.1
+  Downloaded plotters v0.3.7
+  Downloaded serde_json v1.0.151
+  Downloaded hashbrown v0.17.1
+  Downloaded proptest v1.11.0
+  Downloaded zerocopy v0.8.56
+  Downloaded ndarray v0.16.1
+  Downloaded syn v3.0.3
+  Downloaded syn v2.0.119
+  Downloaded rustix v1.1.4
+  Downloaded regex-syntax v0.8.11
+  Downloaded regex-automata v0.4.18
+  Downloaded libc v0.2.189
+  Downloaded linux-raw-sys v0.12.1
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.47
+   Compiling cfg-if v1.0.4
+   Compiling autocfg v1.5.1
+   Compiling libc v0.2.189
+   Compiling zerocopy v0.8.56
+   Compiling serde_core v1.0.229
+   Compiling getrandom v0.3.4
+   Compiling memchr v2.8.3
+   Compiling crc32fast v1.5.0
+   Compiling ucd-trie v0.1.7
+   Compiling either v1.17.0
+   Compiling getrandom v0.4.3
+   Compiling zmij v1.0.23
+   Compiling rustix v1.1.4
+   Compiling serde v1.0.229
+   Compiling simd-adler32 v0.3.10
+   Compiling once_cell v1.21.4
+   Compiling adler2 v2.0.1
+   Compiling regex-syntax v0.8.11
+   Compiling linux-raw-sys v0.12.1
+   Compiling thiserror v2.0.20
+   Compiling bitflags v2.13.1
+   Compiling serde_json v1.0.151
+   Compiling hashbrown v0.17.1
+   Compiling zip v2.4.2
+   Compiling ciborium-io v0.2.2
+   Compiling fastrand v2.5.0
+   Compiling anstyle v1.0.14
+   Compiling equivalent v1.0.2
+   Compiling log v0.4.33
+   Compiling plotters-backend v0.3.7
+   Compiling rawpointer v0.2.1
+   Compiling clap_lex v1.1.0
+   Compiling itoa v1.0.18
+   Compiling bumpalo v3.20.3
+   Compiling same-file v1.0.6
+   Compiling cast v0.3.0
+   Compiling quick-error v1.2.3
+   Compiling bit-vec v0.8.0
+   Compiling fnv v1.0.7
+   Compiling unarray v0.1.4
+   Compiling oorandom v11.1.5
+   Compiling anes v0.1.6
+   Compiling byteorder v1.5.0
+   Compiling walkdir v2.5.0
+   Compiling miniz_oxide v0.8.9
+   Compiling rayon v1.12.0
+   Compiling itertools v0.10.5
+   Compiling clap_builder v4.6.6
+   Compiling num-traits v0.2.19
+   Compiling matrixmultiply v0.3.11
+   Compiling bit-set v0.8.0
+   Compiling plotters-svg v0.3.7
+   Compiling zopfli v0.8.3
+   Compiling pest v2.8.8
+   Compiling flate2 v1.1.9
+   Compiling indexmap v2.14.0
+   Compiling syn v2.0.119
+   Compiling syn v3.0.3
+   Compiling num-integer v0.1.46
+   Compiling num-complex v0.4.6
+   Compiling plotters v0.3.7
+   Compiling wait-timeout v0.2.1
+   Compiling is-terminal v0.4.17
+   Compiling rand_core v0.9.5
+   Compiling num-bigint v0.4.8
+   Compiling rand v0.9.5
+   Compiling rand_xorshift v0.4.0
+   Compiling ndarray v0.16.1
+   Compiling pest_meta v2.8.8
+   Compiling criterion-plot v0.5.0
+   Compiling regex-automata v0.4.18
+   Compiling tempfile v3.27.0
+   Compiling clap v4.6.6
+   Compiling rusty-fork v0.3.1
+   Compiling serde_derive v1.0.229
+   Compiling thiserror-impl v2.0.20
+   Compiling displaydoc v0.2.7
+   Compiling arm-scan-core v0.1.0 (/home/ubuntu/ARMHackathon/kernel/arm-scan-core)
+   Compiling pest_generator v2.8.8
+   Compiling zerocopy-derive v0.8.56
+   Compiling pest_derive v2.8.8
+   Compiling py_literal v0.4.0
+   Compiling regex v1.13.1
+   Compiling arm-scan-ffi v0.1.0 (/home/ubuntu/ARMHackathon/kernel/arm-scan-ffi)
+   Compiling tinytemplate v1.2.1
+   Compiling ndarray-npy v0.9.1
+   Compiling half v2.7.1
+   Compiling ppv-lite86 v0.2.21
+   Compiling rand_chacha v0.9.0
+   Compiling ciborium-ll v0.2.2
+   Compiling proptest v1.11.0
+   Compiling ciborium v0.2.2
+   Compiling criterion v0.5.1
+    Finished `release` profile [optimized] target(s) in 25.02s
+     Running unittests src/lib.rs (target/release/deps/arm_scan_core-00b1cdb57f325b31)
+
+running 11 tests
+test neon::exp::tests::nonpos_fast_special_values ... ok
+test neon::exp::tests::nonpos_special_values ... ok
+test neon::exp::tests::special_values ... ok
+test scalar::tests::hand_computed_single_step ... ok
+test scalar::tests::hand_computed_state_carryover ... ok
+vlogq_f32 worst error: 7.708e-8
+test neon::math::tests::log_sweep ... ok
+vsiluq_f32 worst error: 1.438e-7
+test neon::math::tests::silu_sweep ... ok
+vexpq_f32_nonpos_fast worst relative error over sweep: 3.353e-6
+test neon::exp::tests::nonpos_fast_dense_sweep_accuracy ... ok
+vexpq_f32 worst relative error over sweep: 1.181e-7
+test neon::exp::tests::dense_sweep_accuracy ... ok
+vexpq_f32_nonpos worst relative error over sweep: 2.631e-7
+test neon::exp::tests::nonpos_dense_sweep_accuracy ... ok
+vsoftplusq_f32 worst error: 3.068e-7
+test neon::math::tests::softplus_sweep ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/golden.rs (target/release/deps/golden-45ab315bc75d0c8b)
+
+running 1 test
+backend Auto resolves to NEON on this host
+  tiny                     scalar=8.945e-8 auto=1.372e-7 (floor 8.945e-8)  parity=1.163e-7  last_rel=1.070e-7  ok
+  small                    scalar=1.992e-7 auto=4.937e-7 (floor 3.316e-7)  parity=1.401e-7  last_rel=1.223e-7  ok
+  medium                   scalar=9.732e-7 auto=2.093e-6 (floor 9.732e-7)  parity=1.787e-7  last_rel=5.765e-7  ok
+  channels                 scalar=7.920e-7 auto=1.694e-6 (floor 7.920e-7)  parity=7.308e-8  last_rel=3.916e-7  ok
+  long_seq                 scalar=9.756e-7 auto=1.116e-6 (floor 1.214e-6)  parity=2.555e-7  last_rel=1.881e-7  ok
+  edge_L1                  scalar=4.270e-8 auto=4.270e-8 (floor 4.270e-8)  parity=1.164e-10  last_rel=1.681e-8  ok
+  edge_D1                  scalar=3.629e-7 auto=3.629e-7 (floor 3.629e-7)  parity=4.513e-8  last_rel=1.802e-7  ok
+  state8                   scalar=7.290e-7 auto=1.118e-6 (floor 7.290e-7)  parity=9.666e-8  last_rel=2.490e-7  ok
+  state13_neon_tail        scalar=1.871e-7 auto=4.677e-7 (floor 1.837e-7)  parity=1.954e-7  last_rel=1.363e-7  ok
+  no_z                     scalar=2.203e-7 auto=9.515e-7 (floor 4.743e-7)  parity=2.503e-7  last_rel=1.474e-7  ok
+  no_D                     scalar=1.328e-7 auto=4.350e-7 (floor 1.500e-7)  parity=4.202e-7  last_rel=1.559e-7  ok
+  no_bias                  scalar=4.474e-7 auto=4.553e-7 (floor 4.474e-7)  parity=2.689e-8  last_rel=5.183e-8  ok
+  no_softplus              scalar=4.081e-7 auto=2.248e-6 (floor 3.041e-7)  parity=4.363e-7  last_rel=5.799e-7  ok
+  extreme_delta            scalar=2.026e-5 auto=6.939e-5 (floor 1.772e-5)  parity=8.720e-7  last_rel=6.674e-7  ok
+  grouped_BC               scalar=4.800e-7 auto=9.935e-7 (floor 3.324e-7)  parity=1.303e-7  last_rel=1.756e-7  ok
+  hf_mixer_layer0          scalar=3.448e-7 auto=8.179e-7 (floor 3.448e-7)  parity=4.467e-7  last_rel=4.008e-7  ok
+test all_golden_cases ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/golden_mamba3.rs (target/release/deps/golden_mamba3-cd3069b9f4b90f02)
+
+running 2 tests
+  mamba3_siso_combined_00[naive] L=256   scale=  19.875     1.61 bf16 ULP
+  mamba3_siso_combined_01[naive] L=256   scale=   5.375     4.47 bf16 ULP
+  mamba3_siso_combined_02[naive] L=256   scale=  13.438     1.19 bf16 ULP
+  mamba3_siso_combined_03[naive] L=256   scale=   9.812     1.63 bf16 ULP
+  mamba3_siso_combined_04[naive] L=1     scale=   3.656     0.27 bf16 ULP
+  mamba3_siso_combined_05[naive] L=63    scale=  33.250     0.48 bf16 ULP
+  mamba3_siso_combined_06[naive] L=64    scale=  16.375     0.98 bf16 ULP
+  mamba3_siso_combined_07[naive] L=255   scale=  49.500     1.29 bf16 ULP
+  mamba3_siso_combined_08[naive] L=128   scale=  51.500     0.62 bf16 ULP
+  mamba3_siso_combined_09[naive] L=2048  scale=  49.750     1.29 bf16 ULP
+  mamba3_siso_combined_00[tiled] L=256   scale=  19.875     1.61 bf16 ULP
+  mamba3_siso_combined_01[tiled] L=256   scale=   5.375     4.47 bf16 ULP
+  mamba3_siso_combined_02[tiled] L=256   scale=  13.438     1.19 bf16 ULP
+  mamba3_siso_combined_03[tiled] L=256   scale=   9.812     1.63 bf16 ULP
+  mamba3_siso_combined_04[tiled] L=1     scale=   3.656     0.27 bf16 ULP
+  mamba3_siso_combined_05[tiled] L=63    scale=  33.250     0.48 bf16 ULP
+  mamba3_siso_combined_06[tiled] L=64    scale=  16.375     0.98 bf16 ULP
+  mamba3_siso_combined_07[tiled] L=255   scale=  49.500     1.29 bf16 ULP
+  mamba3_siso_combined_08[tiled] L=128   scale=  51.500     0.62 bf16 ULP
+test mamba3_parallel_is_bit_identical ... ok
+  mamba3_siso_combined_09[tiled] L=2048  scale=  49.750     1.29 bf16 ULP
+  worst across 10 goldens x 2 backends: 4.47 bf16 ULP
+test mamba3_golden_cases ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.91s
+
+     Running tests/property.rs (target/release/deps/property-8fbe17d1076f1f53)
+
+running 9 tests
+proptest: FileFailurePersistence::SourceParallel set, but failed to find lib.rs or main.rs
+proptest: FileFailurePersistence::SourceParallel set, but failed to find lib.rs or main.rs
+proptest: FileFailurePersistence::SourceParallel set, but failed to find lib.rs or main.rs
+proptest: FileFailurePersistence::SourceParallel set, but failed to find lib.rs or main.rs
+test neon_backend_availability ... ok
+proptest: FileFailurePersistence::SourceParallel set, but failed to find lib.rs or main.rs
+proptest: FileFailurePersistence::SourceParallel set, but failed to find lib.rs or main.rs
+test validation_rejects_bad_shapes ... ok
+test streaming_matches_oneshot ... ok
+test auto_backend_matches_scalar ... ok
+test f32_matches_f64 ... ok
+test reverse_actually_reverses ... ok
+test reverse_matches_flip_forward_flip ... ok
+test parallel_is_bit_identical ... ok
+test fused_bidirectional_matches_two_scans ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/property_mamba3.rs (target/release/deps/property_mamba3-0949041e81fa569b)
+
+running 8 tests
+test mamba3_reverse_actually_differs ... ok
+test mamba3_validation_rejects_bad_shapes ... ok
+test mamba3_tiled_handles_ragged_dqk ... ok
+test mamba3_neon_matches_naive ... ok
+test mamba3_reverse_matches_flip_forward_flip ... ok
+test mamba3_tiled_matches_naive ... ok
+test mamba3_neon_parallel_bit_identical ... ok
+test mamba3_parallel_bit_identical_both_directions ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/release/deps/arm_scan_ffi-0e684627bf3865ef)
+
+running 10 tests
+test tests::ffi_bidirectional_two_steps ... ok
+test tests::ffi_mamba3_mimo_runs_and_rejects_the_carry ... ok
+test tests::ffi_mamba3_rejects_half_a_carry ... ok
+test tests::ffi_mamba3_rejects_rank_without_projections ... ok
+test tests::ffi_mamba3_rejects_odd_dqk ... ok
+test tests::ffi_mamba3_two_steps ... ok
+test tests::ffi_rejects_null_and_bad_enum ... ok
+test tests::ffi_roundtrip_single_step ... ok
+test tests::ffi_reverse_two_steps ... ok
+test tests::ffi_streaming_with_h0 ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests arm_scan_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+GATES_FINISHED

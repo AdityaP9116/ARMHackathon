@@ -1,0 +1,31 @@
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+model=state-spaces/mamba-130m-hf prompt=128tok new=32tok reps=5
+host: Linux-6.17.0-1017-aws-aarch64-with-glibc2.39 / aarch64, torch 2.13.0+cu130, threads 64
+Loading weights:   0%|          | 0/242 [00:00<?, ?it/s]Loading weights: 100%|██████████| 242/242 [00:00<00:00, 7003.43it/s]
+
+--- unpatched (HF slow path) ---
+  prefill    275.9 ms   decode  37.04 tok/s   total 1.139 s
+
+--- patched (arm_scan kernel) ---
+  prefill    175.5 ms   decode  38.72 tok/s   total 1.012 s
+  engagement: {'fast_calls': 288, 'fallback_calls': 0, 'kernel_calls': 288, 'patched': True, 'api': 'selective_scan_fn'}
+
+greedy tokens identical patched vs unpatched: True
+speedup: prefill 1.57x, end-to-end generate 1.13x (prompt 128 + 32 new)
+results written to bench/results/e2e_p128_graviton-c8g.json
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+model=state-spaces/mamba-130m-hf prompt=2048tok new=32tok reps=5
+host: Linux-6.17.0-1017-aws-aarch64-with-glibc2.39 / aarch64, torch 2.13.0+cu130, threads 64
+Loading weights:   0%|          | 0/242 [00:00<?, ?it/s]Loading weights: 100%|██████████| 242/242 [00:00<00:00, 5906.65it/s]
+
+--- unpatched (HF slow path) ---
+  prefill   3634.5 ms   decode  41.48 tok/s   total 4.403 s
+
+--- patched (arm_scan kernel) ---
+  prefill    358.3 ms   decode  40.18 tok/s   total 1.169 s
+  engagement: {'fast_calls': 288, 'fallback_calls': 0, 'kernel_calls': 288, 'patched': True, 'api': 'selective_scan_fn'}
+
+greedy tokens identical patched vs unpatched: True
+speedup: prefill 10.14x, end-to-end generate 3.77x (prompt 2048 + 32 new)
+results written to bench/results/e2e_p2048_graviton-c8g.json
+E2E_FINISHED

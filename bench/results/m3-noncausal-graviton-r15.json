@@ -1,0 +1,68 @@
+{
+  "meta": {
+    "host": "ip-172-31-38-148",
+    "platform": "Linux-6.17.0-1017-aws-aarch64-with-glibc2.39",
+    "machine": "aarch64",
+    "torch": "2.13.0+cu130",
+    "threads": 64,
+    "git": "88caa09"
+  },
+  "rows": [
+    {
+      "grid": "8x8",
+      "correctness": "PASS",
+      "tokens": 64,
+      "d1_causal_ms": 0.6848680000075547,
+      "d1_noncausal_ms": 1.1044439997931477,
+      "d1_noncausal_over_causal": 1.612637763453636,
+      "d2_causal_ms": 1.2717829999928654,
+      "d2_noncausal_ms": 1.9699929998751031,
+      "d2_noncausal_over_causal": 1.549000890785735,
+      "dense_ms": 1.702034999652824,
+      "dense_over_1d_noncausal": 1.5410785879334756,
+      "rel": 2.3895353644065324e-07
+    },
+    {
+      "grid": "14x14_p16",
+      "correctness": "PASS",
+      "tokens": 196,
+      "d1_causal_ms": 1.7871780000859872,
+      "d1_noncausal_ms": 3.51478299990049,
+      "d1_noncausal_over_causal": 1.9666664426998215,
+      "d2_causal_ms": 6.868972999654943,
+      "d2_noncausal_ms": 9.28487800001676,
+      "d2_noncausal_over_causal": 1.3517126942387425,
+      "dense_ms": 5.322086999967723,
+      "dense_over_1d_noncausal": 1.514200734474476,
+      "rel": 5.246478235903172e-07
+    },
+    {
+      "grid": "28x28_p8",
+      "correctness": "PASS",
+      "tokens": 784,
+      "d1_causal_ms": 2.248286000394728,
+      "d1_noncausal_ms": 7.180389999575709,
+      "d1_noncausal_over_causal": 3.1937173465987243,
+      "d2_causal_ms": 6.417830999907892,
+      "d2_noncausal_ms": 9.763139999904524,
+      "d2_noncausal_over_causal": 1.5212522735554495,
+      "dense_ms": 6.622123999932228,
+      "dense_over_1d_noncausal": 0.9222512983728642,
+      "rel": 8.787450037244143e-07
+    },
+    {
+      "grid": "56x56_stage1",
+      "correctness": "PASS",
+      "tokens": 3136,
+      "d1_causal_ms": 4.350809000243316,
+      "d1_noncausal_ms": 8.209320999867487,
+      "d1_noncausal_over_causal": 1.8868493191515383,
+      "d2_causal_ms": 10.68777599994064,
+      "d2_noncausal_ms": 12.138134999986505,
+      "d2_noncausal_over_causal": 1.1357026008080557,
+      "dense_ms": null,
+      "dense_over_1d_noncausal": null,
+      "rel": 1.4737774980563682e-06
+    }
+  ]
+}

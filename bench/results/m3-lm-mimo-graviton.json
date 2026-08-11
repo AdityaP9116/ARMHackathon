@@ -1,0 +1,65 @@
+{
+  "meta": {
+    "host": "ip-172-31-38-148",
+    "platform": "Linux-6.17.0-1017-aws-aarch64-with-glibc2.39",
+    "machine": "aarch64",
+    "processor": "aarch64",
+    "torch": "2.13.0+cu130",
+    "threads": 64,
+    "git": "88caa09",
+    "params": 187291968,
+    "model": "state-spaces/mamba3-mimo-187m",
+    "variant": "mimo",
+    "mimo_rank": 4
+  },
+  "rows": [
+    {
+      "len": 128,
+      "correctness": "PASS",
+      "max_abs": 5.817413330078125e-05,
+      "kernel_ms": 171.9491259998449,
+      "ref_eager_ms": 5437.20964299996,
+      "ref_compile_ms": 6090.184297000178,
+      "compile_s": 51.97613503000002,
+      "speedup_vs_eager": 31.62103681181179,
+      "speedup_vs_compile": 35.41852429657404,
+      "tokens_per_s": 744.4062262934413
+    },
+    {
+      "len": 256,
+      "correctness": "PASS",
+      "max_abs": 0.00010129809379577637,
+      "kernel_ms": 251.82212899994738,
+      "ref_eager_ms": 10978.96070999991,
+      "ref_compile_ms": 11660.483371000055,
+      "compile_s": 103.5747537719999,
+      "speedup_vs_eager": 43.59807755418589,
+      "speedup_vs_compile": 46.30444281170576,
+      "tokens_per_s": 1016.5905634133269
+    },
+    {
+      "len": 512,
+      "correctness": "PASS",
+      "max_abs": 0.00010129809379577637,
+      "kernel_ms": 465.5767059998652,
+      "ref_eager_ms": 26307.279951000055,
+      "ref_compile_ms": null,
+      "compile_s": null,
+      "speedup_vs_eager": 56.50471686400838,
+      "speedup_vs_compile": null,
+      "tokens_per_s": 1099.7113760243585
+    },
+    {
+      "len": 1024,
+      "correctness": "PASS",
+      "max_abs": 0.0002549886703491211,
+      "kernel_ms": 919.6953600001052,
+      "ref_eager_ms": 50748.37442600005,
+      "ref_compile_ms": null,
+      "compile_s": null,
+      "speedup_vs_eager": 55.179548177772965,
+      "speedup_vs_compile": null,
+      "tokens_per_s": 1113.4121629143403
+    }
+  ]
+}

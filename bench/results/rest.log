@@ -1,0 +1,186 @@
+/home/ubuntu/ARMHackathon/.venv/lib/python3.12/site-packages/torch/_dynamo/variables/functions.py:2431: UserWarning: Dynamo does not know how to trace the builtin `time.perf_counter.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+host Linux-6.17.0-1017-aws-aarch64-with-glibc2.39 / aarch64, torch 2.13.0+cu130, 64 threads
+
+L1_384x320_in96_b1     pair     78.0 ms  legacy     70.7 ms  pair-speedup 0.91x  (scan 0.87x)  overhead 24.6%
+L1_384x320_in96_b4     pair    326.4 ms  legacy    339.3 ms  pair-speedup 1.04x  (scan 1.03x)  overhead 22.6%
+L2_192x160_in192_b1    pair     34.8 ms  legacy     33.0 ms  pair-speedup 0.95x  (scan 1.03x)  overhead 46.1%
+L2_192x160_in192_b4    pair    116.8 ms  legacy    112.2 ms  pair-speedup 0.96x  (scan 0.92x)  overhead 33.0%
+mini_96x80_in96_b1     pair      6.5 ms  legacy      8.0 ms  pair-speedup 1.24x  (scan 1.77x)  overhead 72.0%
+                       torch eager     435.9 ms  (67.5x slower than kernel)
+                       torch.compile SKIPPED (L=7680 > 2048; unrolled graph is impractical — that limitation is itself a result)
+tiny_32x32_in96_b1     pair      4.3 ms  legacy      9.1 ms  pair-speedup 2.09x  (scan 1.79x)  overhead 86.7%
+                       torch eager      66.0 ms  (15.2x slower than kernel)
+                       torch.compile  9439.0 ms  (2177.3x slower than kernel)
+
+traversal-pair rewrite: 0.96x geomean on the real shapes (block total, same kernel both sides)
+P1-7 go/no-go: worst real-shape overhead 46.1% -> fully fused selective_scan_2d JUSTIFIED (15% rule)
+results written to bench/results/ss2d_graviton-c8g.json
+environment:
+  platform: Linux-6.17.0-1017-aws-aarch64-with-glibc2.39
+  machine: aarch64
+  processor: aarch64
+  cpu_count: 64
+  torch: 2.13.0+cu130
+  torch_threads: 64
+  python: 3.12.3
+  kernel_lib: /home/ubuntu/ARMHackathon/kernel/target/release/libarm_scan_ffi.so
+  tag: graviton-c8g
+  git_sha: 88caa09
+  timestamp_utc: 2026-08-11T04:42:29Z
+
+bidirectional scan — suite=sweep-len reps=10 warmup=3 compile_max_len=512
+  vs eager / vs torch.compile : kernel (fused) vs stock PyTorch
+  exp-sharing speedup         : fused vs two-call — the Stage-3 win (exp computed once, not twice; projected ~1.7x)
+
+=== B1_D768_L128_N16 ===
+  fused == two-call: rel 0.0e+00 (bit-identical)   kernel-vs-ref max_abs 4.292e-06
+  ref_eager_bidi            19.802 ms
+  scan_fwd                   0.165 ms
+  bidirectional_twocall      0.955 ms
+  bidirectional              0.666 ms
+  ref_compile_bidi       35.068 ms (one-time compile 1.9s)
+  => 29.74x vs eager, 52.66x vs torch.compile
+     (exp-sharing: fused won 1.434x over the two-call path)
+
+=== B1_D768_L512_N16 ===
+  fused == two-call: rel 0.0e+00 (bit-identical)   kernel-vs-ref max_abs 6.914e-06
+  ref_eager_bidi            79.694 ms
+  scan_fwd                   0.283 ms
+  bidirectional_twocall      1.180 ms
+  bidirectional              0.813 ms
+  ref_compile_bidi       67.515 ms (one-time compile 5.3s)
+  => 98.01x vs eager, 83.03x vs torch.compile
+     (exp-sharing: fused won 1.451x over the two-call path)
+
+=== B1_D768_L1024_N16 ===
+  fused == two-call: rel 0.0e+00 (bit-identical)   kernel-vs-ref max_abs 8.106e-06
+  ref_eager_bidi           186.805 ms
+  scan_fwd                   0.639 ms
+  bidirectional_twocall      1.534 ms
+  bidirectional              1.045 ms
+  ref_compile_bidi    skipped (L=1024 > compile_max_len=512)
+  => 178.76x vs eager
+     (exp-sharing: fused won 1.468x over the two-call path)
+
+=== B1_D768_L2048_N16 ===
+  fused == two-call: rel 0.0e+00 (bit-identical)   kernel-vs-ref max_abs 7.629e-06
+  ref_eager_bidi           395.785 ms
+  scan_fwd                   1.017 ms
+  bidirectional_twocall      2.223 ms
+  bidirectional              1.379 ms
+  ref_compile_bidi    skipped (L=2048 > compile_max_len=512)
+  => 287.07x vs eager
+     (exp-sharing: fused won 1.612x over the two-call path)
+
+=== B1_D768_L4096_N16 ===
+  fused == two-call: rel 0.0e+00 (bit-identical)   kernel-vs-ref max_abs 6.914e-06
+  ref_eager_bidi           809.326 ms
+  scan_fwd                   1.710 ms
+  bidirectional_twocall      3.777 ms
+  bidirectional              2.420 ms
+  ref_compile_bidi    skipped (L=4096 > compile_max_len=512)
+  => 334.40x vs eager
+     (exp-sharing: fused won 1.560x over the two-call path)
+
+=== B1_D768_L8192_N16 ===
+  fused == two-call: rel 0.0e+00 (bit-identical)   kernel-vs-ref max_abs 8.583e-06
+  ref_eager_bidi          1759.408 ms
+  scan_fwd                   3.178 ms
+  bidirectional_twocall      6.907 ms
+  bidirectional              4.315 ms
+  ref_compile_bidi    skipped (L=8192 > compile_max_len=512)
+  => 407.76x vs eager
+     (exp-sharing: fused won 1.601x over the two-call path)
+
+==============================================================
+bidirectional (fused) vs eager        : 29.74x – 407.76x
+bidirectional (fused) vs torch.compile: 52.66x – 83.03x   <- the headline
+exp-sharing: fused vs two-call        : 1.434x – 1.612x   <- the Stage-3 win (projected ~1.7x)
+
+torch.compile COST (the recurrence is unrolled into an L-step graph):
+       L     compile    run/iter   iters to amortize vs our kernel
+     128        1.9s      35.07ms                                56
+     512        5.3s      67.51ms                                79
+
+  L=[1024, 2048, 4096, 8192] skipped: compile time grows with L (--compile-max-len=512). Raise the cap to measure them — and note that having to is itself the finding.
+
+Headline: the vs-torch.compile row. The exp-sharing speedup is the Stage-3 fused-kernel win (one exp sweep, not two) and doubles as the SS2D substrate — see BIDIRECTIONAL_LOG.md.
+
+results written to bench/results/bidir_graviton-c8g.json
+host Linux-6.17.0-1017-aws-aarch64-with-glibc2.39 / aarch64, torch 2.13.0+cu130, 64 threads
+backbone: model_channels=64, 2 blocks/level, d_state=16
+
+Latency is prior-independent: an untrained net of the same shape costs the same to
+evaluate. Reconstruction columns are PROJECTED as per_nfe x NFE.
+
+  384x320  L=122880   0.8M params  6 blocks  per-NFE   0.436s   NFE=18:     7.9s  NFE=69:    30.1s  NFE=256:   111.7s
+  192x160  L= 30720   0.8M params  6 blocks  per-NFE   0.115s   NFE=18:     2.1s  NFE=69:     7.9s  NFE=256:    29.5s
+  128x128  L= 16384   0.8M params  6 blocks  per-NFE   0.071s   NFE=18:     1.3s  NFE=69:     4.9s  NFE=256:    18.3s
+    64x64  L=  4096   0.8M params  6 blocks  per-NFE   0.059s   NFE=18:     1.1s  NFE=69:     4.1s  NFE=256:    15.2s
+
+quality rows SKIPPED — pass --checkpoint with a trained prior.
+(An untrained net would produce numbers, and they would be meaningless.)
+
+results written to bench/results/diffusion_graviton-c8g.json
+===== RERUN: mamba3 kernel, higher reps =====
+host Linux-6.17.0-1017-aws-aarch64-with-glibc2.39 (aarch64), torch 2.13.0+cu130, 64 threads, git 88caa09, ABI 7
+reps=15 warmup=5
+
+187m_L256  (b=1 h=24 dv=64 dqk=128 L=256)
+  kernel             6.15 ms
+  ref_eager     skipped (python-loop reference too slow at this shape; that skip is itself a result)
+
+187m_L1024  (b=1 h=24 dv=64 dqk=128 L=1024)
+  kernel             5.05 ms
+  ref_eager     skipped (python-loop reference too slow at this shape; that skip is itself a result)
+
+small_L512  (b=1 h=16 dv=32 dqk=64 L=512)
+  vs reference  max_abs=2.861e-06 (rel 1.10e-07)
+  kernel             2.10 ms
+  ref_eager         66.05 ms  ( 31.51x)
+  ref_compile       45.88 ms  ( 21.89x)  [compile 15.2s]
+
+small_L2048  (b=1 h=16 dv=32 dqk=64 L=2048)
+  kernel             3.42 ms
+  ref_eager     skipped (python-loop reference too slow at this shape; that skip is itself a result)
+
+wrote bench/results/m3-kernel-graviton-r15.json
+===== RERUN: noncausal, higher reps =====
+Causal vs non-causal 2D Mamba-3 — and scan-form vs dense-form
+aarch64  torch 2.13.0+cu130  threads 64  git 88caa09
+
+No authoritative non-causal implementation exists (VNCT unreleased);
+these time OUR reading of the operator.
+
+1D columns isolate the cost of dropping causality (1 scan vs 2).
+2D columns are the four-direction cross-scan, which ALREADY runs
+both directions -- so there non-causal only adds a diagonal pass.
+
+         grid   tokens   1D causal      1D nc   nc/causal   2D causal      2D nc   2D ratio   dense ms   dense/1Dnc    rel err
+------------------------------------------------------------------------------------------------------------------------------
+          8x8       64        0.68       1.10       1.61x        1.27       1.97      1.55x       1.70        1.54x   2.39e-07
+    14x14_p16      196        1.79       3.51       1.97x        6.87       9.28      1.35x       5.32        1.51x   5.25e-07
+     28x28_p8      784        2.25       7.18       3.19x        6.42       9.76      1.52x       6.62        0.92x   8.79e-07
+ 56x56_stage1     3136        4.35       8.21       1.89x       10.69      12.14      1.14x          -            -   1.47e-06
+
+NOTE: 8x8 time under 1 ms per call. Medians that short are
+dominated by dispatch overhead on an unquiesced box — read those rows as
+order-of-magnitude only, not to two significant figures.
+
+The cost of dropping causality:
+  8x8               64 tok   1D 1.61x   2D 1.55x
+  14x14_p16        196 tok   1D 1.97x   2D 1.35x
+  28x28_p8         784 tok   1D 3.19x   2D 1.52x
+  56x56_stage1    3136 tok   1D 1.89x   2D 1.14x
+
+Scan form vs dense form (vs 1D non-causal):
+  8x8               64 tok   dense/scan 1.54x   -> scan wins
+  14x14_p16        196 tok   dense/scan 1.51x   -> scan wins
+  28x28_p8         784 tok   dense/scan 0.92x   -> dense wins
+  56x56_stage1    3136 tok   dense skipped (the (L,L) mask is the limit)
+
+wrote bench/results/m3-noncausal-graviton-r15.json
+REST_FINISHED

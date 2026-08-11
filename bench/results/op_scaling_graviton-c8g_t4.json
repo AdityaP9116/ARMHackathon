@@ -1,0 +1,54 @@
+{
+  "kind": "op",
+  "env": {
+    "platform": "Linux-6.17.0-1017-aws-aarch64-with-glibc2.39",
+    "machine": "aarch64",
+    "processor": "aarch64",
+    "cpu_count": 64,
+    "torch": "2.13.0+cu130",
+    "torch_threads": 64,
+    "python": "3.12.3",
+    "kernel_lib": "/home/ubuntu/ARMHackathon/kernel/target/release/libarm_scan_ffi.so",
+    "tag": "graviton-c8g-t4",
+    "git_sha": "88caa09",
+    "timestamp_utc": "2026-08-11T04:37:00Z"
+  },
+  "reps": 7,
+  "suite": "scaling-point",
+  "args": {
+    "suite": "scaling-point",
+    "shapes": null,
+    "quick": false,
+    "reps": 7,
+    "warmup": null,
+    "compile_max_len": 512,
+    "no_compile": true,
+    "torch_threads": null,
+    "tag": "graviton-c8g-t4"
+  },
+  "shapes": [
+    {
+      "shape": [
+        1,
+        1536,
+        512,
+        16
+      ],
+      "baselines": {
+        "ref_eager": {
+          "median_s": 0.0639991689999988,
+          "min_s": 0.06096310600014476,
+          "max_s": 0.06656881499975498,
+          "reps": 7
+        },
+        "kernel": {
+          "median_s": 0.004396972999984428,
+          "min_s": 0.004197105000002921,
+          "max_s": 0.004444521000095847,
+          "reps": 7
+        }
+      },
+      "kernel_vs_ref_max_abs": 6.67572021484375e-06
+    }
+  ]
+}

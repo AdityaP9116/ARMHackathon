@@ -1,0 +1,77 @@
+{
+  "kind": "diffusion",
+  "tag": "graviton-c8g",
+  "host": "Linux-6.17.0-1017-aws-aarch64-with-glibc2.39",
+  "machine": "aarch64",
+  "torch": "2.13.0+cu130",
+  "threads": 64,
+  "reps": 3,
+  "edm_source": "edm_min (in-repo)",
+  "prior": "untrained (timing only)",
+  "cases": [
+    {
+      "res": "384x320",
+      "height": 384,
+      "width": 320,
+      "tokens": 122880,
+      "params": 844210,
+      "ss2d_blocks": 6,
+      "kernel_calls_per_nfe": 24,
+      "per_nfe_s": 0.4363160319999224,
+      "peak_rss_mb": 2985.4609375,
+      "projected_s": {
+        "18": 7.8536885759986035,
+        "69": 30.105806207994647,
+        "256": 111.69690419198014
+      }
+    },
+    {
+      "res": "192x160",
+      "height": 192,
+      "width": 160,
+      "tokens": 30720,
+      "params": 844210,
+      "ss2d_blocks": 6,
+      "kernel_calls_per_nfe": 24,
+      "per_nfe_s": 0.11505949399997917,
+      "peak_rss_mb": 2985.4609375,
+      "projected_s": {
+        "18": 2.071070891999625,
+        "69": 7.939105085998563,
+        "256": 29.455230463994667
+      }
+    },
+    {
+      "res": "128x128",
+      "height": 128,
+      "width": 128,
+      "tokens": 16384,
+      "params": 844210,
+      "ss2d_blocks": 6,
+      "kernel_calls_per_nfe": 24,
+      "per_nfe_s": 0.07144520099973306,
+      "peak_rss_mb": 2985.4609375,
+      "projected_s": {
+        "18": 1.286013617995195,
+        "69": 4.929718868981581,
+        "256": 18.289971455931664
+      }
+    },
+    {
+      "res": "64x64",
+      "height": 64,
+      "width": 64,
+      "tokens": 4096,
+      "params": 844210,
+      "ss2d_blocks": 6,
+      "kernel_calls_per_nfe": 24,
+      "per_nfe_s": 0.05932206399984352,
+      "peak_rss_mb": 2985.4609375,
+      "projected_s": {
+        "18": 1.0677971519971834,
+        "69": 4.093222415989203,
+        "256": 15.186448383959942
+      }
+    }
+  ]
+}

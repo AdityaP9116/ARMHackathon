@@ -1,0 +1,276 @@
+{
+  "kind": "bidirectional-fused-exp-sharing",
+  "env": {
+    "platform": "Linux-6.17.0-1017-aws-aarch64-with-glibc2.39",
+    "machine": "aarch64",
+    "processor": "aarch64",
+    "cpu_count": 64,
+    "torch": "2.13.0+cu130",
+    "torch_threads": 64,
+    "python": "3.12.3",
+    "kernel_lib": "/home/ubuntu/ARMHackathon/kernel/target/release/libarm_scan_ffi.so",
+    "tag": "graviton-c8g",
+    "git_sha": "88caa09",
+    "timestamp_utc": "2026-08-11T04:42:29Z"
+  },
+  "reps": 10,
+  "suite": "sweep-len",
+  "shapes": [
+    {
+      "shape": [
+        1,
+        768,
+        128,
+        16
+      ],
+      "timings": {
+        "ref_eager_bidi": {
+          "median_s": 0.019801793499937048,
+          "min_s": 0.019586954999795125,
+          "max_s": 0.019944541999848298,
+          "reps": 10
+        },
+        "scan_fwd": {
+          "median_s": 0.00016463299994029512,
+          "min_s": 0.00015567099990221323,
+          "max_s": 0.00017789100002119085,
+          "reps": 10
+        },
+        "bidirectional_twocall": {
+          "median_s": 0.0009545699999762292,
+          "min_s": 0.0008034509996832639,
+          "max_s": 0.0011233969999011606,
+          "reps": 10
+        },
+        "bidirectional": {
+          "median_s": 0.000665885500211516,
+          "min_s": 0.0005557939998652728,
+          "max_s": 0.0008702149998498498,
+          "reps": 10
+        },
+        "ref_compile_bidi": {
+          "median_s": 0.03506779150006878,
+          "min_s": 0.03489186200022232,
+          "max_s": 0.03517673299984381,
+          "reps": 10,
+          "compile_s": 1.9376025000001391
+        }
+      },
+      "kernel_vs_ref_max_abs": 4.291534423828125e-06,
+      "fused_vs_twocall_max_abs": 0.0,
+      "speedup_vs_eager": 29.737535197338104,
+      "exp_sharing_speedup": 1.4335347438456214,
+      "speedup_vs_compile": 52.663395567150246
+    },
+    {
+      "shape": [
+        1,
+        768,
+        512,
+        16
+      ],
+      "timings": {
+        "ref_eager_bidi": {
+          "median_s": 0.07969425349983794,
+          "min_s": 0.07868347000021458,
+          "max_s": 0.08078290000003108,
+          "reps": 10
+        },
+        "scan_fwd": {
+          "median_s": 0.0002829845000178466,
+          "min_s": 0.0002671010001904506,
+          "max_s": 0.0005492100003721134,
+          "reps": 10
+        },
+        "bidirectional_twocall": {
+          "median_s": 0.0011801499999819498,
+          "min_s": 0.00092930399978286,
+          "max_s": 0.0013818970001011621,
+          "reps": 10
+        },
+        "bidirectional": {
+          "median_s": 0.0008131600000069739,
+          "min_s": 0.0006522190001305717,
+          "max_s": 0.0008679980001033982,
+          "reps": 10
+        },
+        "ref_compile_bidi": {
+          "median_s": 0.06751462550005272,
+          "min_s": 0.06711240200002067,
+          "max_s": 0.06844804999991538,
+          "reps": 10,
+          "compile_s": 5.2544201789996805
+        }
+      },
+      "kernel_vs_ref_max_abs": 6.9141387939453125e-06,
+      "fused_vs_twocall_max_abs": 0.0,
+      "speedup_vs_eager": 98.00562435333079,
+      "exp_sharing_speedup": 1.4513133946232335,
+      "speedup_vs_compile": 83.02747983112019
+    },
+    {
+      "shape": [
+        1,
+        768,
+        1024,
+        16
+      ],
+      "timings": {
+        "ref_eager_bidi": {
+          "median_s": 0.18680499800007055,
+          "min_s": 0.18480749499985905,
+          "max_s": 0.1888800579999952,
+          "reps": 10
+        },
+        "scan_fwd": {
+          "median_s": 0.0006392650000179856,
+          "min_s": 0.0005702720000044792,
+          "max_s": 0.0008391920000576647,
+          "reps": 10
+        },
+        "bidirectional_twocall": {
+          "median_s": 0.0015340329998707602,
+          "min_s": 0.0014024229999449744,
+          "max_s": 0.0020014470001115114,
+          "reps": 10
+        },
+        "bidirectional": {
+          "median_s": 0.0010449965000134398,
+          "min_s": 0.0009801000001061766,
+          "max_s": 0.0013506450000022596,
+          "reps": 10
+        }
+      },
+      "kernel_vs_ref_max_abs": 8.106231689453125e-06,
+      "fused_vs_twocall_max_abs": 0.0,
+      "speedup_vs_eager": 178.76136235639837,
+      "exp_sharing_speedup": 1.4679790792132135
+    },
+    {
+      "shape": [
+        1,
+        768,
+        2048,
+        16
+      ],
+      "timings": {
+        "ref_eager_bidi": {
+          "median_s": 0.39578513400010706,
+          "min_s": 0.3920751170003314,
+          "max_s": 0.3987776059998396,
+          "reps": 10
+        },
+        "scan_fwd": {
+          "median_s": 0.0010174725000524631,
+          "min_s": 0.0010067030002574029,
+          "max_s": 0.0010367899999437213,
+          "reps": 10
+        },
+        "bidirectional_twocall": {
+          "median_s": 0.0022231180000744644,
+          "min_s": 0.0021998289998919063,
+          "max_s": 0.0023965730001691554,
+          "reps": 10
+        },
+        "bidirectional": {
+          "median_s": 0.0013786935001007805,
+          "min_s": 0.001337917999990168,
+          "max_s": 0.0014352990001498256,
+          "reps": 10
+        }
+      },
+      "kernel_vs_ref_max_abs": 7.62939453125e-06,
+      "fused_vs_twocall_max_abs": 0.0,
+      "speedup_vs_eager": 287.07260458628093,
+      "exp_sharing_speedup": 1.6124816718958621
+    },
+    {
+      "shape": [
+        1,
+        768,
+        4096,
+        16
+      ],
+      "timings": {
+        "ref_eager_bidi": {
+          "median_s": 0.809326159999955,
+          "min_s": 0.8046583870000177,
+          "max_s": 0.8167743720000544,
+          "reps": 10
+        },
+        "scan_fwd": {
+          "median_s": 0.0017099839999445976,
+          "min_s": 0.0016904669996620214,
+          "max_s": 0.0017630620000090858,
+          "reps": 10
+        },
+        "bidirectional_twocall": {
+          "median_s": 0.0037767610001537832,
+          "min_s": 0.003735904000222945,
+          "max_s": 0.0040076870000120834,
+          "reps": 10
+        },
+        "bidirectional": {
+          "median_s": 0.0024202345000503556,
+          "min_s": 0.0023364819999187603,
+          "max_s": 0.002646449999701872,
+          "reps": 10
+        }
+      },
+      "kernel_vs_ref_max_abs": 6.9141387939453125e-06,
+      "fused_vs_twocall_max_abs": 0.0,
+      "speedup_vs_eager": 334.3998938876031,
+      "exp_sharing_speedup": 1.560493828211772
+    },
+    {
+      "shape": [
+        1,
+        768,
+        8192,
+        16
+      ],
+      "timings": {
+        "ref_eager_bidi": {
+          "median_s": 1.7594078669999362,
+          "min_s": 1.7455380869996588,
+          "max_s": 1.7702246599997125,
+          "reps": 10
+        },
+        "scan_fwd": {
+          "median_s": 0.0031777355000031093,
+          "min_s": 0.003157699999974284,
+          "max_s": 0.0032084949998534285,
+          "reps": 10
+        },
+        "bidirectional_twocall": {
+          "median_s": 0.006907428999966214,
+          "min_s": 0.006638527000177419,
+          "max_s": 0.007746026000404527,
+          "reps": 10
+        },
+        "bidirectional": {
+          "median_s": 0.004314840499773709,
+          "min_s": 0.00419319100001303,
+          "max_s": 0.005138094999892928,
+          "reps": 10
+        }
+      },
+      "kernel_vs_ref_max_abs": 8.58306884765625e-06,
+      "fused_vs_twocall_max_abs": 0.0,
+      "speedup_vs_eager": 407.75733589508303,
+      "exp_sharing_speedup": 1.600853843920412
+    }
+  ],
+  "compile_cost": [
+    {
+      "len": 128,
+      "compile_s": 1.9376025000001391,
+      "median_s": 0.03506779150006878
+    },
+    {
+      "len": 512,
+      "compile_s": 5.2544201789996805,
+      "median_s": 0.06751462550005272
+    }
+  ]
+}
