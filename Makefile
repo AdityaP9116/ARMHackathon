@@ -74,6 +74,12 @@ test-mamba3:
 	$(PY) tests/check_mamba3_mimo_op.py
 	$(PY) tests/check_mamba3_noncausal.py
 
+# The one visual artifact: what the 2D cross-scan actually computes, drawn as
+# an impulse response. Needs matplotlib; add --reference to run it without a
+# built cdylib.
+viz:
+	$(PY) bench/viz_ss2d.py
+
 # Path A end to end: the published 187M checkpoint, on CPU, through our kernel.
 # Kept OUT of `test-mamba3` because it downloads ~357 MB, which no CI job
 # should do on every push. `check_mamba3_block` is the cheap proxy that runs

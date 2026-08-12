@@ -20,3 +20,6 @@
 
 torch>=2.4
 transformers>=4.44
+
+# Optional, for `make viz` only (bench/viz_ss2d.py).
+matplotlib>=3.7

@@ -189,6 +189,32 @@ layout over `mamba3_scan_pair` — **no new kernel code**:
 **Correctness and throughput only**: no 2D Mamba-3 weights have ever been published, so no
 accuracy claim is available and we do not make one.
 
+### What the cross-scan actually computes
+
+![SS2D cross-scan, drawn from the kernel's impulse response](bench/results/ss2d_scans.png)
+
+```bash
+make viz          # -> bench/results/ss2d_scans.png
+```
+
+A scan is an operator, so the honest way to show one is its **impulse response**: put a 1 in a
+single cell, run it, and look at where the energy goes. **No weights, no dataset, no downstream
+task** — which is just as well, since no 2D Mamba-3 weights exist to build a segmentation demo
+from.
+
+Each direction reaches only what precedes it *in its own traversal*: the row scans smear
+horizontally, the column scans vertically, and each is blind on one side. Summing all four is
+what closes those blind spots — visible in the cross that the combined panel forms, and in the
+scene panels where one direction leaves a directional smear and four do not.
+
+The faint offset band is worth a look: both orderings are plain **raster** scans rather than
+boustrophedon, so state survives the jump from the end of one line to the start of the next.
+
+`q`, `k` and the RoPE angles are held constant so `q·k` is uniform; what remains is the
+propagation envelope rather than noise in their dot products. The kernel is unmodified —
+only its inputs are chosen to make one property legible. Pass `--reference` to render the same
+figure through the PyTorch reference on a clone with no cdylib built.
+
 The **causal-vs-non-causal comparison** — which nobody has published for any Mamba generation —
 now measured: dropping causality costs **~2× in 1D** (1.61–3.19×) but only **1.14–1.55× in 2D**,
 because the four-direction cross-scan already runs both directions. It needed no new kernel,
