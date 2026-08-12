@@ -176,6 +176,22 @@ below, where the honest framing takes a paragraph rather than a table row.
 Decode is ~1× and that is expected, not a miss: single-token decode runs
 `mamba_selective_state_update`, which we deliberately leave to upstream.
 
+### What the 1D scan actually computes
+
+![The 1D selective scan: memory length, selectivity, reach, and flat memory](bench/results/scan_1d.png)
+
+The word doing the work in "selective scan" is **selective**. An SSM before Mamba had one fixed
+decay for every token, so its memory behaved the same no matter what it read. Making the step
+size `dt` a function of the input makes `α = exp(dt·A)` per-token — so the model can decide, at
+each position, whether to hold what it has or dump it and start fresh.
+
+Panel 2 is that decision, drawn: a single high-`dt` token wipes the state, and everything before
+it is forgotten. **That is also precisely what stops the scan being a convolution**, and so what
+makes a hand-written kernel necessary at all — see [§2](docs/learn/02_mamba_and_selective_scan.md).
+
+Panel 4 is the constant-memory claim on measured numbers: **12.88 GB of intermediates against
+~17 KB of chunk scratch** at L=131,072.
+
 **2D Mamba-3** — as far as we can tell the first CPU implementation of any 2D Mamba-3.
 `arm_scan.ss2d_scan_mamba3` runs the four-direction cross-scan on the Mamba-3 recurrence as pure
 layout over `mamba3_scan_pair` — **no new kernel code**:
@@ -248,6 +264,22 @@ artifact. We do not have an explanation.
 Mamba-3's second published family uses a **rank-*r*** state update where SISO's is rank-1.
 Both `state-spaces` families now run end to end on Arm CPU through our kernel, and **that
 coverage — not a speedup — is what Path B claims.**
+
+![MIMO: a rank-r state update, its measured rank, and its arithmetic intensity](bench/results/mimo_rank.png)
+
+The discretization is *identical* to SISO — same `α`, same `γ`, same forward-looking scale. Only
+the state update changes: **`r` outer products absorbed into the same state instead of one.**
+
+Panel 2 is the panel that proves rather than illustrates: a sum of `r` outer products has
+**exactly `r` non-zero singular values**, and the spectrum drops eight orders of magnitude right
+after index `r`. Panel 4 is the structural check — with the rotation removed, a rank-1 MIMO scan
+*is* a SISO scan, to **1.8e-16**. (CI runs that same comparison kernel-to-kernel in
+`tests/check_mamba3_mimo_op.py`.)
+
+Panel 3 is the argument, and the disappointment. The state loaded per step is the **same size**
+at every rank while the arithmetic scales with `r` — higher arithmetic intensity, which is what
+a memory-bound CPU wants. Our MIMO path is scalar-only, so it executes `r`× the operations
+without exploiting that density, and the advantage never materialises.
 
 **What it delivers.** These are the tightest numbers in the project:
 

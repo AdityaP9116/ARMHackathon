@@ -78,6 +78,8 @@ test-mamba3:
 # an impulse response. Needs matplotlib; add --reference to run it without a
 # built cdylib.
 viz:
+	$(PY) bench/viz_1d.py
+	$(PY) bench/viz_mimo.py
 	$(PY) bench/viz_ss2d.py
 
 # Path A end to end: the published 187M checkpoint, on CPU, through our kernel.
