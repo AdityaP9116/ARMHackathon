@@ -162,7 +162,9 @@ out: the transpose is free.
 | …vs `torch.compile` | 1.64× | 3.05× | — | — |
 | …`torch.compile` **compile time** | 48.9 s | 88.2 s | — | — |
 | …tokens/s | 957 | 1,802 | 2,742 | **3,820** |
-| `mimo-187m` vs the recurrence | 31.6× | 43.6× | 56.5× | 55.2× |
+
+`mimo-187m` also runs end to end — see [MIMO](#mimo-a-correctness-result-not-a-speed-one)
+below, where the honest framing takes a paragraph rather than a table row.
 
 **Drop-in, on a stock Hugging Face model** — one `arm_scan.patch()` call, mamba-130m:
 
@@ -215,10 +217,54 @@ rejected. That is the highest-value remaining kernel work.
 times the tokens in less time. It reproduced at `reps=15 warmup=5`, so it is not a warm-up
 artifact. We do not have an explanation.
 
-**MIMO's ratios are a floor, not a result.** The 31–56× above is the **scalar** path measured
-against a slow PyTorch baseline: `mamba3/mimo.rs` has no blocked or NEON kernel. In absolute
-terms MIMO is **3.4× slower than SISO** at L=1024. The arithmetic-intensity argument for MIMO
-on CPU remains a prediction, and that gap is what an optimised kernel would have to close.
+## MIMO: a correctness result, not a speed one
+
+Mamba-3's second published family uses a **rank-*r*** state update where SISO's is rank-1.
+Both `state-spaces` families now run end to end on Arm CPU through our kernel, and **that
+coverage — not a speedup — is what Path B claims.**
+
+**What it delivers.** These are the tightest numbers in the project:
+
+| Gate | MIMO | SISO, for scale |
+|---|---|---|
+| Reference vs the official **TileLang** kernel | **2.40 bf16 ULP** | 4.47 |
+| Rust kernel **through the real C ABI** | **1.90 bf16 ULP** | — |
+| `mamba3-mimo-187m` argmax agreement | **96.48%** | 98.05% |
+| …against the reference-vs-**itself** floor | 95.31% | 98.83% |
+| rank-1 MIMO collapses to SISO | **2.41e-07** | — |
+
+Two of those deserve reading twice. The Rust kernel sits **closer to the official GPU kernel
+than our own PyTorch reference does** (1.90 vs 2.40 ULP). And at 96.48% against a 95.31% floor,
+**we agree with the reference more closely than the reference agrees with itself** across
+processes — the official kernel is `triton.autotune`d and so is not reproducible run to run.
+
+Setting *r*=1 reproduces the SISO kernel to 2.41e-07, which is a structural proof that the
+generalisation is right rather than merely close.
+
+**What it does not deliver: speed.** `mamba3/mimo.rs` is the **scalar path only** — no NEON, no
+cache blocking — and dispatch routes MIMO before the backend match so it says so rather than
+silently substituting. Measured on Graviton4:
+
+| | L=128 | L=512 | L=1024 |
+|---|---|---|---|
+| MIMO | 171.95 ms | 465.58 ms | 919.70 ms |
+| SISO | 133.76 ms | 186.74 ms | 268.09 ms |
+| **MIMO is slower by** | 1.29× | 2.49× | **3.43×** |
+
+Its ratio against the PyTorch baseline reaches 31–56×, and **we do not quote that number**,
+because the MIMO reference is itself ~10× slower than the SISO reference (50,748 ms vs 5,064 ms
+at L=1024). That ratio measures a pathological baseline, not a fast kernel.
+
+**Why the gap exists, and why it is the opposite of a fundamental limit.** MIMO loads the same
+state as SISO and does *r*× more arithmetic with it — roughly *r*× the arithmetic intensity.
+That is precisely the regime a memory-bound CPU is weakest in and should benefit most from. A
+scalar implementation cannot exploit arithmetic density at all; it simply executes *r*× more
+scalar operations, which converts MIMO's theoretical advantage into a straight slowdown.
+
+The work an optimised kernel would vectorise — a rank-*r* outer-product accumulation and an
+*r*×*r* diagonal contraction — is dense, regular and register-friendly, i.e. close to an ideal
+NEON target. **We have not built it, so the arithmetic-intensity argument for MIMO on CPU
+remains a prediction. The table above is the gap such a kernel would have to close.**
 
 ## Where to look
 

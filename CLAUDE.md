@@ -70,7 +70,8 @@ Not done, in priority order:
    `mamba3-mimo-187m` running on CPU at **96.48%** argmax — *better than the reference
    reproduces itself* (95.31%). But `mamba3/mimo.rs` is the **scalar path only**: no blocked or
    NEON MIMO kernel, and dispatch routes MIMO before the backend match to say so rather than
-   silently substituting. So MIMO is ~2x slower than SISO in absolute terms, and **the
+   silently substituting. On Graviton4 MIMO is **3.43x slower than SISO** at L=1024 (920ms vs
+   268ms), delivering 29% of its throughput, and **the
    arithmetic-intensity argument for MIMO on CPU remains untested** — it is a prediction about
    what an optimised kernel would do, not a result.
 

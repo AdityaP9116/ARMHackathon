@@ -107,8 +107,14 @@ selective reporting is the fastest way to destroy that.
 Current unflattering rows we publish:
 
 - **MIMO is slow.** Correct everywhere, but scalar-path only — no NEON or blocked
-  MIMO kernel. So it is ~2× slower than SISO, and the arithmetic-intensity
-  argument for MIMO on CPU remains a **prediction, not a result**.
+  MIMO kernel. On Graviton4 it is **3.43× slower than SISO** at L=1024. Its ratio
+  against the PyTorch baseline reaches 31–56×, and we deliberately **do not quote
+  that**: the MIMO reference is itself ~10× slower than the SISO reference, so the
+  ratio describes a pathological baseline rather than a fast kernel. The
+  arithmetic-intensity argument for MIMO on CPU remains a **prediction, not a
+  result** — which is exactly why the honest framing of Path B is coverage and
+  correctness (**1.90 bf16 ULP through the C ABI**, tighter than our own PyTorch
+  reference) rather than speed.
 - **`TILE = 32` has never been swept.** It is a placeholder. It can only be tuned
   on Arm, since x86 does not execute that path.
 - **No scalar → blocked → NEON ablation for Mamba-3.** It needs a backend selector

@@ -34,7 +34,7 @@ What is left is not kernel work:
    `mamba3-mimo-187m` runs on CPU at **96.48%** argmax — better than the
    reference reproduces itself (95.31%) — through ABI v7. But `mamba3/mimo.rs`
    is the **scalar path only**; there is no blocked or NEON MIMO kernel, so
-   MIMO is ~2x slower than SISO in absolute terms and the arithmetic-intensity
+   on Graviton4 MIMO is **3.43x slower than SISO** at L=1024 and the arithmetic-intensity
    argument for MIMO on CPU is **still untested**. That kernel is the highest-
    value remaining Path B work.
 

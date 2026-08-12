@@ -277,21 +277,44 @@ never showed it (1536 is already a multiple); MIMO-187M asks for 1264 and the ch
 1280. Loading non-strictly would have left twelve randomly-initialised MLPs in the model and
 produced plausible garbage.
 
-**Throughput** (`bench/bench_mamba3_lm.py --model state-spaces/mamba3-mimo-187m`, x86, 16
-threads):
+### Throughput — and why Path B does not claim one
 
-| L | our kernel | PyTorch eager | speedup | `torch.compile` | vs compiled |
-|---|---|---|---|---|---|
-| 128 | 259 ms | 505 ms | 1.95× | 366 ms | 1.41× |
-| 256 | 386 ms | 581 ms | 1.50× | 783 ms | **2.03×** |
-| 512 | 695 ms | 1893 ms | 2.72× | *(skipped)* | — |
-| 1024 | 1280 ms | 2381 ms | 1.86× | *(skipped)* | — |
+Measured on **Graviton4 `c8g.16xlarge`, 64 threads** (superseding the earlier x86 run):
 
-**MIMO is ~2× slower in absolute terms than SISO** (259 ms vs 126 ms at L=128) and its speedup
-is lower. Both are expected and neither is hidden: MIMO does `r`× the state arithmetic, *and*
-our MIMO path is unoptimised scalar with no blocked or NEON kernel behind it. The
-arithmetic-intensity argument for MIMO on CPU is therefore **still untested** — it predicts MIMO
-should close the gap once the kernel is optimised, and that remains a prediction, not a result.
+| L | MIMO | SISO | MIMO slower by |
+|---|---|---|---|
+| 128 | 171.95 ms | 133.76 ms | 1.29× |
+| 256 | 251.82 ms | 142.03 ms | 1.77× |
+| 512 | 465.58 ms | 186.74 ms | 2.49× |
+| 1024 | 919.70 ms | 268.09 ms | **3.43×** |
+
+MIMO delivers **1,113 tok/s against SISO's 3,820** at L=1024 — 29% — and the gap *widens* with
+length.
+
+**Against the PyTorch baseline MIMO scores 31–56×, and we deliberately do not quote it.** The
+MIMO reference is itself ~10× slower than the SISO reference (50,748 ms vs 5,064 ms at L=1024),
+and `torch.compile` makes it worse rather than better (6,090 ms vs 219 ms for compiled SISO at
+L=128). A 55× against that is a statement about the baseline, not about our kernel. Anyone who
+divides two columns of our own results table will see it, and a headline number that collapses
+under thirty seconds of scrutiny would discredit the figures that do hold.
+
+**So Path B's claim is coverage and correctness, not speed:**
+
+> Both published Mamba-3 families run end to end on Arm CPU through our kernel, with the MIMO
+> path matching the official TileLang kernel to **1.90 bf16 ULP through the C ABI** — tighter
+> than our own PyTorch reference manages, and tighter than the SISO path's 4.47.
+
+**Why the speed gap exists, and why it is the opposite of a fundamental limit.** Per timestep
+MIMO loads the *same* state as SISO and does `r`× more arithmetic with it — roughly `r`× the
+arithmetic intensity. That is the regime a memory-bound CPU is weakest in and should gain most
+from. A scalar implementation cannot exploit arithmetic density at all: it simply executes `r`×
+more scalar operations, turning MIMO's theoretical advantage into a straight slowdown.
+
+The work an optimised kernel would vectorise — the rank-`r` outer-product accumulation and the
+`r`×`r` diagonal contraction — is dense, regular and register-resident, i.e. close to an ideal
+NEON target. Nothing about MIMO is hostile to this machine; we simply have not written that
+kernel. **The table above is the gap it would have to close, and until it exists the
+arithmetic-intensity argument stays a prediction.**
 
 ### What B2 shipped, and the one thing it deliberately did not
 
