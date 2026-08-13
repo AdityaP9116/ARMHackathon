@@ -328,6 +328,7 @@ remains a prediction. The table above is the gap such a kernel would have to clo
 
 | | |
 |---|---|
+| [`RUNNING_THE_KERNEL.md`](./RUNNING_THE_KERNEL.md) | Fresh-machine setup, build, validation, usage, benchmarking, and troubleshooting |
 | [`MAMBA3_IMPLEMENTATION_PLAN.md`](./MAMBA3_IMPLEMENTATION_PLAN.md) | Current plan: stages, prior art, claims policy |
 | [`THREE_PATHS_INTEGRATION.md`](./THREE_PATHS_INTEGRATION.md) | The three demonstrations, scoped: what each can and cannot claim |
 | [`MAMBA3_KERNEL_WORKPLAN.md`](./MAMBA3_KERNEL_WORKPLAN.md) | File-by-file execution, and the audit of the existing kernel |
