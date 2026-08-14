@@ -17,6 +17,140 @@ PyTorch custom ops — for both the deployed **Mamba-1** ecosystem and the newes
 **[Mamba-3](https://arxiv.org/abs/2603.15569)** (ICLR 2026), whose official kernels are
 Triton, TileLang and CuTe and have **no CPU path at all**.
 
+## Project story
+
+### Inspiration
+
+Transformers reshaped AI, but their inference memory grows with context because they retain an
+expanding key-value cache. State-space models such as Mamba offer a compelling alternative:
+linear-time sequence processing with a fixed-size recurrent state.
+
+That architecture should be a natural fit for CPUs. In practice, the selective scan at the
+heart of Mamba remains heavily GPU-oriented. Existing PyTorch implementations of Mamba-1 fall
+back to a slow sequential recurrence on CPU, while the official Mamba-3 implementations depend
+on Triton, TileLang, or CuTe GPU kernels and provide no native CPU path.
+
+We built Arm Scan around one question: **what could Mamba do if Arm64 cloud CPUs were treated
+as a first-class AI target rather than a fallback?** Arm processors already power an expanding
+share of cloud infrastructure, including AWS Graviton, but optimized AI inference still often
+assumes CUDA and a GPU-specific software stack. That adds cost, operational complexity, and a
+barrier to experimentation.
+
+Arm Scan targets the **Cloud AI track** by closing that gap inside the PyTorch ecosystem. It is
+not a standalone inference engine and does not require model conversion. Existing applications
+and checkpoints can use an optimized Arm implementation with minimal code changes.
+
+### What it does
+
+Arm Scan is a PyTorch-native selective-scan engine built from safe Rust kernels, Arm NEON
+vectorization, and multicore execution. It provides separate native implementations for
+Mamba-1 and Mamba-3 and supports:
+
+- Mamba-1 selective scan
+- Mamba-3 SISO and rank-*r* MIMO
+- Forward, reverse, bidirectional, and non-causal traversal
+- Four-direction 2D cross-scans
+- PyTorch and NumPy interfaces
+
+We tested the library with three published pretrained checkpoints: Hugging Face
+`mamba-130m-hf`, `state-spaces/mamba3-siso-187m`, and
+`state-spaces/mamba3-mimo-187m`. We did **not** create, train, fine-tune, or alter their
+weights. Arm Scan replaces or supplies the CPU scan path while leaving the pretrained weights
+unchanged.
+
+The headline measurements were collected on a dedicated 64-vCPU AWS Graviton4
+`c8g.16xlarge`. They include 38.69× multicore scaling, up to 18.89× faster Mamba-3 SISO
+scanning, 10.14× faster Mamba-1 prefill at 2,048 tokens, and up to 92.5× faster 2D Mamba-3
+operator execution. Full measurements, baselines, and limitations are reported below.
+
+### Why it belongs in Cloud AI
+
+- **Arm64 cloud infrastructure:** the kernels are designed for server-class Arm processors and
+  measured on Graviton4, rather than merely cross-compiled for Arm.
+- **AI inference performance:** the project targets prefill and long-sequence processing, with
+  operator, full-model, long-context, eager-PyTorch, and `torch.compile` comparisons.
+- **Framework integration:** a PyTorch custom operation and a drop-in Hugging Face Mamba-1 patch
+  let developers keep their existing framework, application code, and model format.
+- **Production-oriented workflows:** the repository includes a versioned C ABI, deterministic
+  golden vectors, reproducible benchmarks, platform packaging, and CI on Linux Arm64, Apple
+  Silicon, and x86.
+
+The project may eventually enable local and edge use cases, but those are not the basis of this
+submission. Its implementation, measurements, integration, and developer workflow are centered
+on **Arm64 cloud inference**.
+
+### Why it matters
+
+Arm Scan is enabling infrastructure rather than a language, healthcare, or financial model. It
+creates another deployment option for Mamba-based inference when a GPU is unavailable,
+unnecessary, or operationally undesirable. Potential uses include long records and biosignals,
+financial and enterprise time series, private cloud services, CPU-based testing and continuous
+integration, education, and long-sequence scientific computing.
+
+It does not make every model suitable for every computer, and it does not replace GPUs where
+their throughput is required. Its contribution is narrower and measurable: turning Mamba's weak
+or missing CPU scan path into a native, validated Arm implementation that works with existing
+PyTorch checkpoints. The included MRI pipeline demonstrates a 2D execution topology; it is
+**not** a clinically validated medical product.
+
+### How we built it
+
+Arm Scan has four layers:
+
+1. Safe Rust implementations of the Mamba-1 and Mamba-3 recurrences.
+2. Arm NEON kernels for the expensive numerical operations.
+3. Rayon parallelism across independent batches, channels, and heads.
+4. A narrow C interface and Python integration that expose the kernels as PyTorch custom ops.
+
+Mamba-1 and Mamba-3 have different mathematical state representations, so they use separate
+kernels while sharing packaging, threading infrastructure, and correctness gates. Bidirectional
+and 2D execution are expressed as traversal patterns over the scan primitive: flatten a grid in
+four orders, run forward and reverse scans, then restore and combine the grid outputs.
+
+Correctness was part of the design from the beginning. Validation includes ground truth captured
+from the official Mamba-3 GPU kernels, an independent high-precision CPU reference, scalar and
+NEON parity checks, real-C-ABI replay, traversal properties, thread determinism, real pretrained
+models, and cross-platform continuous integration.
+
+### Challenges and lessons
+
+Mamba-3 had no authoritative CPU reference, so we had to capture official GPU ground truth and
+independently reconstruct the recurrence. During that work we identified an upstream revision
+issue that could silently corrupt forward-pass results on Blackwell GPUs, replaced
+framework-dependent random inputs with deterministic test generation, and measured numerical
+error floors instead of hiding normal NEON and BF16 differences.
+
+Target hardware also changed our conclusions. A traversal-pair optimization that looked faster
+on four-core x86 slightly regressed on 64-core Graviton4 because it exposed less parallel work.
+That reinforced a central lesson: cloud optimization must be measured on the architecture where
+it will run.
+
+No official 2D Mamba-3 weights or authoritative public 2D implementation are available. We
+therefore validate two independent operator formulations to approximately `2.99e-16`, while
+making no downstream vision-accuracy claim. The current MIMO implementation is likewise framed
+as a correctness result: both published model families run end to end, but MIMO still needs its
+own cache-blocked NEON microkernel before it can become a speed result.
+
+We are proud not only of the headline acceleration, but also of publishing negative and
+surprising results, reproducibility limits, and claim boundaries. Trustworthy Cloud AI
+infrastructure requires all of them.
+
+### What's next
+
+The highest-value next step is a fully fused 2D selective-scan kernel; Graviton4 measurements
+show layout and dispatch overhead reaching 46.1% at real application shapes. We also plan to:
+
+- Add cache blocking and NEON vectorization to rank-*r* MIMO
+- Investigate BF16 state storage and SVE2 acceleration
+- Expand prebuilt Arm64 wheels and cloud-platform coverage
+- Integrate more Mamba-based PyTorch architectures
+- Add containerized deployment paths for Arm cloud instances
+- Evaluate 2D Mamba-3 with real vision checkpoints when authoritative weights appear
+
+Arm Scan began as an attempt to accelerate one missing operation. It has become a reusable
+foundation for running the broader PyTorch Mamba ecosystem natively on Arm64 servers—with
+existing models, existing weights, and reproducible cloud-oriented workflows.
+
 ## Two kernels, one library
 
 They are separate code, deliberately: Mamba-3's state is a **matrix per head** where Mamba-1's
@@ -71,7 +205,7 @@ ships.
 
 ## Correctness, and why it is unusually strong here
 
-Mamba-3 has **no CPU reference anywhere** — upstream's module imports GPU kernels and asserts
+Mamba-3 has **no authoritative CPU reference** — upstream's module imports GPU kernels and asserts
 if they are missing — so there was nothing to diff a CPU implementation against. We captured
 ground truth directly from the official Triton kernels, driven by the real
 `state-spaces/mamba3-siso-187m` checkpoint: 10 cases across 7 shapes, committed, replayable
@@ -100,7 +234,13 @@ NEON `exp` polynomials and FMA reassociation mean results match the reference to
 tolerance, not bit-exactly. Every golden records its own error floor and every change is gated
 against it. Patched HF mamba-130m produces **token-identical** greedy output.
 
-## Try it
+## Run Arm Scan
+
+> **New here?** Follow [`RUNNING_THE_KERNEL.md`](RUNNING_THE_KERNEL.md) for the complete
+> fresh-machine guide: prerequisites, Arm64 setup, building, validation, Python usage,
+> real-model tests, benchmarking, AWS Graviton instructions, and troubleshooting.
+
+For an existing Linux or macOS development environment, the shortest validation path is:
 
 ```bash
 git clone https://github.com/AdityaP9116/Arm-Scan && cd Arm-Scan
