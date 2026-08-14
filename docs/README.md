@@ -20,7 +20,7 @@ but they are not current instructions.
 |---|---|---|
 | [`project/`](project/) | Contributors and reviewers | Current decisions, the three-path design, implementation sequence, and kernel workplan |
 | [`learn/`](learn/) | Students and new contributors | A professional, first-principles path from SSMs through Mamba, kernels, NEON, correctness, and benchmarking |
-| [`presentation/`](presentation/) | Submission reviewers | Browser-based presentation deck and its visual assets |
+| [`presentation/`](presentation/README.md) | Submission reviewers | Browser-based presentation deck, fact-checked narration, and recording notes |
 | [`roadmap/`](roadmap/) | Future contributors | Work deliberately deferred beyond the current submission |
 | [`archive/`](archive/) | Maintainers and auditors | Superseded plans, investigation logs, diagnoses, and historical session notes |
 
