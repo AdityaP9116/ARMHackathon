@@ -192,7 +192,7 @@ nproc && uname -m && lscpu | grep -i "model name"
 # Phase 3 — Run the session
 
 ```bash
-git clone https://github.com/AdityaP9116/ARMHackathon && cd ARMHackathon
+git clone https://github.com/AdityaP9116/Arm-Scan && cd Arm-Scan
 bash bench/setup_ampere.sh
 ```
 
@@ -222,14 +222,14 @@ first, because that is the part with no Arm numbers of any kind.
 ## 4.1 Pack up (on the instance)
 
 ```bash
-cd ~/ARMHackathon && tar czf results-graviton.tgz bench/results session.log \
+cd ~/Arm-Scan && tar czf results-graviton.tgz bench/results session.log \
     ct.log mamba3.log m3-model.log bench/profile/out
 ```
 
 ## 4.2 Copy to your laptop (run this on your laptop, not the instance)
 
 ```bash
-scp -i ~/Downloads/graviton-key.pem ubuntu@<PUBLIC-IP>:~/ARMHackathon/results-graviton.tgz .
+scp -i ~/Downloads/graviton-key.pem ubuntu@<PUBLIC-IP>:~/Arm-Scan/results-graviton.tgz .
 ```
 
 - [ ] The archive is on your laptop and opens

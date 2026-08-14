@@ -1,41 +1,51 @@
-# docs/ — the working record
+# Documentation
 
-The repository root holds only what a reader needs to evaluate the project. Everything else
-lives here, kept rather than deleted: how a decision was reached is itself evidence, and
-several of these documents record measurements that superseded an earlier belief.
+This directory separates current project guidance from teaching material, future roadmaps, and
+the historical record. The distinction matters: archived plans explain how decisions were made,
+but they are not current instructions.
 
-## `archive/` — history, superseded plans, and measurement logs
+## Start here
 
-| Document | What it is | Status |
-|---|---|---|
-| `SUBMISSION_ENDGAME_PLAN.md` | The Aug 4 ten-day plan, built around the MRI application and a Graviton session | **Superseded** by the Mamba-3 pivot (Aug 6). Its Part 1 "holes" analysis and the measurement-hygiene note are still worth reading |
-| `ROADMAP.md` | Week-by-week schedule and the free-tier compute strategy | **Superseded twice.** The compute-tier table (§1) is still accurate and still the plan for hardware |
-| `APPLICATIONS.md` | The brainstorm that chose one demo per scan topology | **Decision made.** Superseded by `MAMBA3_IMPLEMENTATION_PLAN.md` §0 |
-| `MRI_DIFFUSION_IMPLEMENTATION_PLAN.md` | The SS2D-Mamba diffusion MRI application, component by component | **Demoted, not abandoned.** The code still lives in `apps/mri_diffusion/` and is still CI-gated; it is simply not on the current critical path |
-| `SPIKE_FINDINGS.md` | Timeboxed feasibility check of three candidate demos | **Findings absorbed** into `MAMBA3_IMPLEMENTATION_PLAN.md`'s prior-art table. Notable for catching `mamba-rs` and for the SEMamba "outer bidirectional" result |
-| `INTEGRATION_PLAN.md` | The original build plan, Phases 0–6 | **Landed.** Goldens → scalar → NEON → rayon → C ABI → torch op → wheels → CI |
-| `TOPOLOGY_IMPLEMENTATION_PLAN.md` | How 1D bidirectional and SS2D were to be built | §2 landed (fused bidirectional). §3.1 landed (SS2D via pairs). §3.2 (fused `selective_scan_2d`) **cut by measurement** |
-| `BIDIRECTIONAL_LOG.md` | Build log for the fused bidirectional kernel | The exp-sharing result (1.58–1.75×) that SS2D is now built on |
-| `BIDIRECTIONAL_SPEEDUP_IDEAS.md` | Design options considered for that kernel | Superseded by the log |
-| `OPTIMIZATION_LOG.md` | Per-optimization measured attribution | Historical; `bench/results/` is now the live record |
-| `BASELINE_TEST_PLAN.md` | Benchmark methodology — the three surfaces | Still the governing methodology; `bench/README.md` is the practical version |
-| `BASELINE_REPORT.md` | First baseline write-up | Superseded by `bench/results/RESULTS.md` |
-| `PROFILING.md`, `PROFILING_EXPLAINED.md` | How to profile, and how to read it | Still accurate; `bench/ARM_BASELINE.md` §7 is the current entry point |
-| `IMPROVEMENT_IDEAS.md` | Kernel optimization backlog | Partly **retired by measurement** — §3.6 (vectorised transpose) targets 0.1% of runtime |
-| `SS2D_REPOSITIONING_PLAN.md` | The Jul 17 pivot to SS2D | **Executed** |
-| `MAMBA_DIFFUSION_MRI_PLAN.md` | MRI strategy | Superseded by `MRI_DIFFUSION_IMPLEMENTATION_PLAN.md` |
-| `PHASE_D_DIAGNOSIS.md` | Why the reconstruction quality gate fails | **Still live** — read before touching the sampler |
-
-## `roadmap/` — after the submission
-
-| Document | What it is |
+| Document | Purpose |
 |---|---|
-| `MAMBA3_KERNEL_PLAN.md` | Staged program for a Mamba-3 kernel: SSD substrate → M3 core → 2D |
-| `MAMBA2_SSD_PLAN.md` | The SSD substrate that is ~90% of the above |
-| `RESEARCH_TRIAGE_MAMBA2_2D.md` | External research survey, verified and triaged |
+| [`../README.md`](../README.md) | Project overview, claims, measured results, and architecture |
+| [`../RUNNING_THE_KERNEL.md`](../RUNNING_THE_KERNEL.md) | Fresh-machine setup, build, validation, usage, benchmarking, and troubleshooting |
+| [`project/STATUS.md`](project/STATUS.md) | Concise current capabilities, limitations, and next work |
+| [`project/README.md`](project/README.md) | Index of the active design and implementation documents |
+| [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | Correctness, safety, benchmarking, and pull-request expectations |
 
-**One correction worth carrying:** these documents state that no public Mamba-3 checkpoints
-exist. That was true when written (Jul 18) and is **no longer true** — `state-spaces` has
-published SISO and MIMO checkpoints (arXiv 2603.15569). What remains true is that there is
-**no CPU implementation of Mamba-3 anywhere**, which is what makes the plan interesting
-rather than obsolete.
+## Directory map
+
+| Directory | Audience | Contents |
+|---|---|---|
+| [`project/`](project/) | Contributors and reviewers | Current decisions, the three-path design, implementation sequence, and kernel workplan |
+| [`learn/`](learn/) | Students and new contributors | A professional, first-principles path from SSMs through Mamba, kernels, NEON, correctness, and benchmarking |
+| [`presentation/`](presentation/) | Submission reviewers | Browser-based presentation deck and its visual assets |
+| [`roadmap/`](roadmap/) | Future contributors | Work deliberately deferred beyond the current submission |
+| [`archive/`](archive/) | Maintainers and auditors | Superseded plans, investigation logs, diagnoses, and historical session notes |
+
+Operational benchmark instructions live beside the code in [`../bench/`](../bench/), while raw
+dedicated-machine bundles are preserved in [`../bench/artifacts/`](../bench/artifacts/).
+
+## Archive policy
+
+Documents enter `archive/` when their execution plan is no longer current. They are retained
+because measurements, failed approaches, and decision history are useful evidence. A document
+in `archive/` may still contain accurate technical analysis, but it must not override the root
+README, `project/STATUS.md`, or the current project documents.
+
+Notable records include:
+
+| Document | Why it remains useful |
+|---|---|
+| [`archive/HANDOFF_2026-08-11.md`](archive/HANDOFF_2026-08-11.md) | Full pre-submission session state before this repository cleanup |
+| [`archive/INTEGRATION_PLAN.md`](archive/INTEGRATION_PLAN.md) | Original Phase 0–6 kernel integration plan; the implementation landed |
+| [`archive/TOPOLOGY_IMPLEMENTATION_PLAN.md`](archive/TOPOLOGY_IMPLEMENTATION_PLAN.md) | Design history for fused bidirectional and SS2D topologies |
+| [`archive/PHASE_D_DIAGNOSIS.md`](archive/PHASE_D_DIAGNOSIS.md) | Live technical diagnosis to read before modifying the MRI sampler |
+| [`archive/SPIKE_FINDINGS.md`](archive/SPIKE_FINDINGS.md) | Feasibility investigation that found the relevant Mamba-3 prior art |
+| [`archive/BASELINE_TEST_PLAN.md`](archive/BASELINE_TEST_PLAN.md) | Benchmark methodology behind the practical guidance in `bench/README.md` |
+
+One historical correction should be carried when reading older files: public Mamba-3 SISO and
+MIMO checkpoints now exist under `state-spaces`. The project does not claim to be the first
+Mamba-3 CPU or Rust implementation; its claims are narrower and listed precisely in the root
+README.

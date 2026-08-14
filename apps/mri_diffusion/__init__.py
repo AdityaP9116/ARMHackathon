@@ -1,6 +1,6 @@
 """SS2D-Mamba diffusion MRI reconstruction — DEMOTED, not abandoned.
 
-This is no longer on the project's critical path (see PROJECT_CONCEPT.md, the
+This is no longer on the project's critical path (see docs/project/PROJECT_CONCEPT.md, the
 Aug 6-7 amendment). It is kept, and kept CI-gated, for one concrete reason: it
 is the **only end-to-end exercise of the SS2D cross-scan kernel** in the repo,
 so deleting it would remove that coverage rather than merely tidy up.

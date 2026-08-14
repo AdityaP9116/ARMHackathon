@@ -132,7 +132,7 @@ running the scalar path — ~32 Melem/s per Arm core vs ~5.6 per x86 thread.
 
 ```bash
 # any Arm Linux host (Ampere A1 = the headline target):
-git clone https://github.com/AdityaP9116/ARMHackathon && cd ARMHackathon
+git clone https://github.com/AdityaP9116/Arm-Scan && cd Arm-Scan
 bash bench/setup_ampere.sh
 bash bench/run_baseline.sh ampere-a1
 ```

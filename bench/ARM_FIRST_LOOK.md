@@ -1,7 +1,7 @@
 # ARM_FIRST_LOOK — the first Arm measurements this project has had
 
 **Aug 4, 2026.** Source: the `Profile kernel` workflow, run
-[30915946873](https://github.com/AdityaP9116/ARMHackathon/actions/runs/30915946873),
+[30915946873](https://github.com/AdityaP9116/Arm-Scan/actions/runs/30915946873),
 commit `e13e03f`, artifact `kernel-profile`.
 
 > **Provisional, not headline.** This is a **4-core shared GitHub Actions runner**, which

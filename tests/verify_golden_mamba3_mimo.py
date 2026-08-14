@@ -52,7 +52,7 @@ def check_case(path):
 def check_rank1_collapse(siso_dir="tests/golden/mamba3"):
     """Does r=1 MIMO collapse to SISO? NO — and the reason is a real finding.
 
-    `THREE_PATHS_INTEGRATION.md` predicted "r=1 reproduces the SISO goldens
+    `docs/project/THREE_PATHS_INTEGRATION.md` predicted "r=1 reproduces the SISO goldens
     bit-for-bit -- a free correctness check, exactly like lambda=1 collapsing
     the trapezoid". That prediction is **wrong**, and it is worth keeping the
     disproof rather than quietly dropping the check.

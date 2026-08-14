@@ -1,4 +1,4 @@
-# sync.ps1 — one-command GitHub sync for the ARMHackathon repo
+# sync.ps1 — one-command GitHub sync for the Arm Scan repository
 #
 # Usage:
 #   .\sync.ps1              # pull latest from GitHub (run at the START of a session)

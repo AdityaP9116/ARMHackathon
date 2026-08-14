@@ -4,7 +4,7 @@
 
 Companion to [`APPLICATIONS.md`](APPLICATIONS.md) (topology/app brainstorm),
 [`TOPOLOGY_IMPLEMENTATION_PLAN.md`](TOPOLOGY_IMPLEMENTATION_PLAN.md) (how SS2D gets fast in Rust),
-and [`PROJECT_CONCEPT.md`](../../PROJECT_CONCEPT.md) (the decision log this plan proposes to amend).
+and [`PROJECT_CONCEPT.md`](../project/PROJECT_CONCEPT.md) (the decision log this plan proposes to amend).
 
 ---
 
@@ -367,4 +367,4 @@ higher ceiling, and the decision point is the GPU/training budget in Section 8.*
   [ZigMa](https://arxiv.org/abs/2403.13802) · [DiffuSSM](https://arxiv.org/abs/2311.18257) ·
   DiMSUM (NeurIPS 2024) · [VMamba / SS2D](https://github.com/MzeroMiko/VMamba)
 - **In-repo:** [`TOPOLOGY_IMPLEMENTATION_PLAN.md`](TOPOLOGY_IMPLEMENTATION_PLAN.md) §3 (SS2D) ·
-  [`APPLICATIONS.md`](APPLICATIONS.md) (MRI slot) · [`PROJECT_CONCEPT.md`](../../PROJECT_CONCEPT.md) (decision log to amend)
+  [`APPLICATIONS.md`](APPLICATIONS.md) (MRI slot) · [`PROJECT_CONCEPT.md`](../project/PROJECT_CONCEPT.md) (decision log to amend)

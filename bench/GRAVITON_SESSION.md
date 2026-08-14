@@ -68,7 +68,7 @@ dedicated Arm hardware. It is an **Arm** contest.
 ## 1. Bring-up (~20 min, mostly unattended)
 
 ```bash
-git clone https://github.com/AdityaP9116/ARMHackathon && cd ARMHackathon
+git clone https://github.com/AdityaP9116/Arm-Scan && cd Arm-Scan
 bash bench/setup_ampere.sh
 ```
 
@@ -298,7 +298,7 @@ tar czf results-graviton.tgz bench/results session.log ct.log mamba3.log \
 Copy it off the box (from your laptop):
 
 ```bash
-scp -i <key.pem> ubuntu@<instance-ip>:~/ARMHackathon/results-graviton.tgz .
+scp -i <key.pem> ubuntu@<instance-ip>:~/Arm-Scan/results-graviton.tgz .
 ```
 
 - [ ] Archive is on your laptop and opens

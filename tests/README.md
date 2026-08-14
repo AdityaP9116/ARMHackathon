@@ -1,7 +1,8 @@
 # Phase 0 — Correctness Ground Truth
 
 Everything the Rust kernel will be validated against lives here. See
-`INTEGRATION_PLAN.md` (repo root) for how this fits the overall build.
+[`docs/archive/INTEGRATION_PLAN.md`](../docs/archive/INTEGRATION_PLAN.md) for the original
+build sequence and [`docs/project/STATUS.md`](../docs/project/STATUS.md) for current status.
 
 ## Layout
 
@@ -13,7 +14,7 @@ Everything the Rust kernel will be validated against lives here. See
 | `golden/*.npz` | The golden vectors: f32 inputs, f64-computed ground-truth outputs (`out_f64`, `last_state_f64`), plus the upstream-identical f32 outputs (`out_f32`) that establish each case's tolerance floor. |
 | `golden/manifest.json` | One metadata entry per case (shapes, flags, seed, observed f32 floor). |
 | `verify_golden.py` | Independent verifier: recomputes every case with a pure-numpy, loop-based f64 implementation that shares no code with the generator; also redraws every core case's inputs and compares them bit-for-bit. Torch-free end to end, so the determinism check runs in CI's `test` job rather than skipping there. |
-| `gen_golden_2d.py` | 2D cross-scan (SS2D) golden generator, `TOPOLOGY_IMPLEMENTATION_PLAN.md` §3.3. Draws via `golden_inputs` (`CORE_CASES_2D`, `draw_inputs_2d`), same as the 1D generator. Six grid cases — square, non-square, H/W not multiples of 4, degenerate height, and a `state=13` NEON-tail case. Stores the **four direction planes separately, before any merge**, so a kernel bug and a merge-strategy bug can't be confused. Writes to `golden/2d/`, kept apart from the 1D set because the schemas differ and `verify_golden.py` globs `golden/*.npz`. |
+| `gen_golden_2d.py` | 2D cross-scan (SS2D) golden generator, [`docs/archive/TOPOLOGY_IMPLEMENTATION_PLAN.md`](../docs/archive/TOPOLOGY_IMPLEMENTATION_PLAN.md) §3.3. Draws via `golden_inputs` (`CORE_CASES_2D`, `draw_inputs_2d`), same as the 1D generator. Six grid cases — square, non-square, H/W not multiples of 4, degenerate height, and a `state=13` NEON-tail case. Stores the **four direction planes separately, before any merge**, so a kernel bug and a merge-strategy bug can't be confused. Writes to `golden/2d/`, kept apart from the 1D set because the schemas differ and `verify_golden.py` globs `golden/*.npz`. |
 | `golden/2d/manifest.json` | Metadata + recorded f32 floor per 2D case, plus the `input_draw` spec the inputs were drawn by. |
 | `verify_golden_2d.py` | Three checks: every case's inputs redrawn from its name and compared bit-for-bit, an independent numpy re-derivation of the 2D planes, **and** a replay of each case through `arm_scan.ss2d.ss2d_scan` on the real C ABI, reported as a multiple of that case's f32 floor (`--no-kernel` skips only the replay). The first two are torch-free. |
 | `reference/mamba3_ref.py` | Mamba-3 SISO reference — the oracle for the Mamba-3 kernel, reproducing the **official** Triton kernel to 4.47 bf16 ULP. Derived by reading that kernel rather than the paper; the module header records the two details no published description contains (interleaved RoPE pairs, and `theta = cumsum(tanh(angle)*PI*dt)`). |

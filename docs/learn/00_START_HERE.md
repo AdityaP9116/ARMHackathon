@@ -52,7 +52,7 @@ These files are **teaching material**. They are not the source of truth for what
 is done or planned — that lives in:
 
 - [`README.md`](../../README.md) — the pitch, and the precise claims
-- [`CLAUDE.md`](../../CLAUDE.md) — working rules and current status
-- [`HANDOFF.md`](../../HANDOFF.md) — where the work currently stands
+- [`docs/project/STATUS.md`](../project/STATUS.md) — where the work currently stands
+- [`CLAUDE.md`](../../CLAUDE.md) — standing engineering and claims rules
 
 If this folder ever disagrees with those, they win.

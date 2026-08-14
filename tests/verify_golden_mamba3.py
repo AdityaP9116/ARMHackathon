@@ -6,7 +6,8 @@ produced.
 
 THE TOLERANCE, AND WHY IT IS NOT 1e-4
 -------------------------------------
-`MAMBA3_IMPLEMENTATION_PLAN.md` originally set this gate at "< 1e-4 at f64".
+`docs/project/MAMBA3_IMPLEMENTATION_PLAN.md` originally set this gate at
+"< 1e-4 at f64".
 That is unsatisfiable and was corrected: the kernel emits **bf16**, whose
 relative epsilon is ~0.4% (8 mantissa bits) — four orders of magnitude above
 1e-4. Holding to it would mean hunting a bug that does not exist.

@@ -1,11 +1,11 @@
 # PROJECT CONCEPT — Decisions & Rationale
 
-**Repo:** https://github.com/AdityaP9116/ARMHackathon
+**Repo:** https://github.com/AdityaP9116/Arm-Scan
 **Competition:** [Arm Create: AI Optimization Challenge](https://arm-ai-optimization-challenge.devpost.com/) — Deadline **Aug 14, 2026**
 **Track:** Cloud AI
 
 > This document is the **decision log** — what we chose, what we rejected, and why.
-> For the pitch and deliverables see [`README.md`](./README.md); for the build/test plan and schedule see [`ROADMAP.md`](docs/archive/ROADMAP.md). This file avoids duplicating those.
+> For the pitch and deliverables see [`README.md`](../../README.md); for the historical build/test plan and schedule see [`ROADMAP.md`](../archive/ROADMAP.md). This file avoids duplicating those.
 
 ---
 

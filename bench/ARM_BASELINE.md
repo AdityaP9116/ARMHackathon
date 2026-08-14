@@ -30,7 +30,7 @@ sudo apt-get update
 sudo apt-get install -y build-essential python3-venv git linux-tools-generic
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source ~/.cargo/env
-git clone https://github.com/AdityaP9116/ARMHackathon && cd ARMHackathon
+git clone https://github.com/AdityaP9116/Arm-Scan && cd Arm-Scan
 ```
 
 ---

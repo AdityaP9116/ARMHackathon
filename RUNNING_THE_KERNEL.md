@@ -7,8 +7,8 @@ and uses commands that exist in the current tree.
 The shortest correct path on an Arm64 Ubuntu machine is:
 
 ```bash
-git clone https://github.com/AdityaP9116/ARMHackathon
-cd ARMHackathon
+git clone https://github.com/AdityaP9116/Arm-Scan
+cd Arm-Scan
 bash bench/setup_ampere.sh
 source .venv/bin/activate
 source "$HOME/.cargo/env"
@@ -109,8 +109,8 @@ benchmark session, use
 The repository provides a one-time provisioning script for Arm Linux:
 
 ```bash
-git clone https://github.com/AdityaP9116/ARMHackathon
-cd ARMHackathon
+git clone https://github.com/AdityaP9116/Arm-Scan
+cd Arm-Scan
 bash bench/setup_ampere.sh
 ```
 
@@ -125,7 +125,7 @@ That script:
 Activate both environments after setup and whenever you reconnect:
 
 ```bash
-cd ~/ARMHackathon
+cd ~/Arm-Scan
 source .venv/bin/activate
 source "$HOME/.cargo/env"
 ```
@@ -175,8 +175,8 @@ rustup component add rustfmt clippy
 ### 4.3 Clone and create the Python environment
 
 ```bash
-git clone https://github.com/AdityaP9116/ARMHackathon
-cd ARMHackathon
+git clone https://github.com/AdityaP9116/Arm-Scan
+cd Arm-Scan
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip setuptools wheel

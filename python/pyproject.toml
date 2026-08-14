@@ -27,7 +27,7 @@ dependencies = ["numpy>=1.22"]
 torch = ["torch>=2.4"]
 
 [project.urls]
-Repository = "https://github.com/AdityaP9116/ARMHackathon"
+Repository = "https://github.com/AdityaP9116/Arm-Scan"
 
 [tool.setuptools]
 packages = ["arm_scan"]

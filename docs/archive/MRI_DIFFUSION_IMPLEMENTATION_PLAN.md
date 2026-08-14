@@ -432,6 +432,5 @@ reproducibility; `make validate`; Devpost writeup; reconcile `PROJECT_CONCEPT.md
   [DH-Mamba](https://github.com/XiaoMengLiLiLi/DH-Mamba).
 - **In-repo:** [`MAMBA_DIFFUSION_MRI_PLAN.md`](MAMBA_DIFFUSION_MRI_PLAN.md) (strategy) ·
   [`TOPOLOGY_IMPLEMENTATION_PLAN.md`](TOPOLOGY_IMPLEMENTATION_PLAN.md) §3 (SS2D kernel) ·
-  [`PROJECT_CONCEPT.md`](../../PROJECT_CONCEPT.md) (decision log to amend) ·
+  [`PROJECT_CONCEPT.md`](../project/PROJECT_CONCEPT.md) (decision log to amend) ·
   [`BASELINE_TEST_PLAN.md`](BASELINE_TEST_PLAN.md) (benchmark surfaces).
-```

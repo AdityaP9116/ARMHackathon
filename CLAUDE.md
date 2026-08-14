@@ -1,10 +1,10 @@
 # CLAUDE.md — working guidelines for this repo
 
 > **Resuming in a fresh session, or on a different machine? Read
-> [`HANDOFF.md`](HANDOFF.md) first.** It carries the state that lives in a chat
-> log rather than in the code: what is blocked and why, the full nine-stage
-> Mamba-3 plan, decisions already settled, and the traps that have already cost
-> us time. This file is the standing rules; that one is where we currently are.
+> [`docs/project/STATUS.md`](docs/project/STATUS.md) first.** It is the concise,
+> maintained statement of current capabilities, limitations, and next work. The full
+> August 11 session record is preserved at
+> [`docs/archive/HANDOFF_2026-08-11.md`](docs/archive/HANDOFF_2026-08-11.md).
 
 ## The goal
 
@@ -20,10 +20,10 @@ both would be half-ignored on every call. They share threading, the C ABI, packa
 whole correctness harness. **They are not cross-compatible**: Mamba-1 uses a per-state-element
 decay vector, Mamba-3 a scalar decay per head, so no input massaging bridges them.
 
-## Where things stand (Aug 7, 2026)
+## Where things stand (consolidated Aug 13, 2026)
 
-**Sequencing lives in [`MAMBA3_IMPLEMENTATION_PLAN.md`](MAMBA3_IMPLEMENTATION_PLAN.md);
-file-level execution in [`MAMBA3_KERNEL_WORKPLAN.md`](MAMBA3_KERNEL_WORKPLAN.md).** Earlier
+**Sequencing lives in [`docs/project/MAMBA3_IMPLEMENTATION_PLAN.md`](docs/project/MAMBA3_IMPLEMENTATION_PLAN.md);
+file-level execution in [`docs/project/MAMBA3_KERNEL_WORKPLAN.md`](docs/project/MAMBA3_KERNEL_WORKPLAN.md).** Earlier
 schedules (`ROADMAP.md`, `SUBMISSION_ENDGAME_PLAN.md`, `APPLICATIONS.md`) are in
 `docs/archive/` — read for history, not for what to do next.
 
@@ -51,7 +51,7 @@ the logits match to **98.05%** argmax against a measured reference-vs-itself flo
 bit-identical within one). First x86 numbers: **1.85–3.66×** over the PyTorch recurrence,
 **1.39–1.60×** over `torch.compile`.
 
-Not done, in priority order:
+Status details and remaining work:
 
 1. ~~No dedicated-hardware numbers.~~ **DONE Aug 11** — `c8g.16xlarge` (Graviton4,
    Neoverse-V2, 64 vCPU). Core scaling 1→64 at 100/99.8/98.3% efficiency through 8 cores then
@@ -78,8 +78,9 @@ Not done, in priority order:
    Two things to know before touching that kernel: the families use **different RoPE
    conventions** (SISO interleaved `(2i, 2i+1)`, MIMO split-halves `(i, i+n/2)` over the first
    `n/4` lanes), and re-capturing goldens needs `tools/setup_cuda_toolchain.sh` at bf16.
-4. **Performance is unmeasured and untuned.** `TILE = 32` in the blocked kernel is a placeholder
-   that has never been swept, and there is no phase profile for Mamba-3.
+4. **Performance is measured on Graviton4 but further tuning remains.** `TILE = 32` in the
+   blocked kernel is still a placeholder that has not been swept, and MIMO has no blocked or
+   NEON implementation. Treat the current MIMO result as a correctness floor, not a tuned result.
 
 **Demoted, not abandoned:** the SS2D-Mamba diffusion MRI app (`apps/mri_diffusion/`). It stays
 CI-gated because it is the only end-to-end exercise of the SS2D kernel, but it is off the
@@ -89,7 +90,8 @@ critical path and its quality gate has never passed — see
 ## Rules of engagement
 
 **Claims policy (never over-claim).** Prior art is real and was verified repo by repo, not by
-search summary — the table is in `README.md` and in `MAMBA3_IMPLEMENTATION_PLAN.md` §1.
+search summary — the table is in `README.md` and in
+`docs/project/MAMBA3_IMPLEMENTATION_PLAN.md` §1.
 
 May claim, to the best of our knowledge: (1) first Arm/NEON `selective_scan` exposed as a
 **PyTorch custom op**; (2) first fast CPU **SS2D cross-scan**; (3) first **PyTorch-callable,
@@ -147,18 +149,20 @@ tools/                   capture_mamba3_goldens.py (GPU-only, --mimo for the MIM
 .github/workflows/ci.yml arm64 + macOS + x86: fmt, clippy, tests, golden-through-C-ABI, wheels, bench
 ```
 
-Docs live in three places — **root is judge-facing and current only**:
+Docs are separated by audience and lifecycle:
 
-- **root** — `README.md` (pitch), `PROJECT_CONCEPT.md` (decision log),
-  `MAMBA3_IMPLEMENTATION_PLAN.md` (the plan), `MAMBA3_KERNEL_WORKPLAN.md` (kernel execution),
-  `THREE_PATHS_INTEGRATION.md` (the three demonstrations),
-  `HANDOFF.md` (session state).
+- **root** — `README.md` (pitch and evidence), `RUNNING_THE_KERNEL.md` (runbook),
+  `CONTRIBUTING.md` (change rules), and build/package entry points.
+- **`docs/project/`** — current status, decision log, implementation sequence, kernel workplan,
+  and the three demonstrations.
+- **`docs/learn/`** — professional first-principles teaching material.
 - **`docs/archive/`** — the working record: superseded plans, build logs, measurement history,
   diagnoses. Kept because how a decision was reached is itself evidence. **Not** judge-facing,
   and **not** a source of instructions — a plan in here has been superseded by definition.
 - **`docs/roadmap/`** — programs deferred past the current push.
 
-**One sequencing table, and only one.** It is in `MAMBA3_IMPLEMENTATION_PLAN.md`. The repo
+**One sequencing table, and only one.** It is in
+`docs/project/MAMBA3_IMPLEMENTATION_PLAN.md`. The repo
 previously carried schedules in six documents at once and they disagreed; when a plan changes,
 move the old one to `docs/archive/` rather than leaving two versions live.
 

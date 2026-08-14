@@ -32,7 +32,7 @@ Provision an aarch64 Ubuntu 22.04/24.04 instance (Oracle:
 VM.Standard.A1.Flex, 4 OCPU / 24 GB — Always Free tier), then:
 
 ```bash
-git clone https://github.com/AdityaP9116/ARMHackathon && cd ARMHackathon
+git clone https://github.com/AdityaP9116/Arm-Scan && cd Arm-Scan
 bash bench/setup_ampere.sh          # one-time: apt deps, rustup, venv, build
 bash bench/run_baseline.sh ampere-a1   # the full tagged baseline suite
 ```

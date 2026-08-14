@@ -1,6 +1,10 @@
-# ARMHackathon — Arm-Optimized Selective Scan for the PyTorch Mamba Ecosystem
+# Arm Scan — Arm-Optimized Selective Scan for the PyTorch Mamba Ecosystem
 
 **Arm Create: AI Optimization Challenge 2026 — Cloud AI track**
+
+[Run the kernel](RUNNING_THE_KERNEL.md) · [Current status](docs/project/STATUS.md) ·
+[Project documentation](docs/project/README.md) · [Learn from first principles](docs/learn/00_START_HERE.md) ·
+[Contributing](CONTRIBUTING.md)
 
 State-space models run in **linear time with constant memory** — exactly what a CPU is good
 at, and exactly what a transformer's growing KV cache is not. But in PyTorch, where these
@@ -99,7 +103,7 @@ against it. Patched HF mamba-130m produces **token-identical** greedy output.
 ## Try it
 
 ```bash
-git clone https://github.com/AdityaP9116/ARMHackathon && cd ARMHackathon
+git clone https://github.com/AdityaP9116/Arm-Scan && cd Arm-Scan
 make validate      # kernel + SS2D + diffusion gates, ~5 min, no data, no AWS account
 make test-mamba3   # all 7 Mamba-3 gates (SISO, MIMO, 2D causal + non-causal), ~20s
 ```
@@ -329,11 +333,13 @@ remains a prediction. The table above is the gap such a kernel would have to clo
 | | |
 |---|---|
 | [`RUNNING_THE_KERNEL.md`](./RUNNING_THE_KERNEL.md) | Fresh-machine setup, build, validation, usage, benchmarking, and troubleshooting |
-| [`MAMBA3_IMPLEMENTATION_PLAN.md`](./MAMBA3_IMPLEMENTATION_PLAN.md) | Current plan: stages, prior art, claims policy |
-| [`THREE_PATHS_INTEGRATION.md`](./THREE_PATHS_INTEGRATION.md) | The three demonstrations, scoped: what each can and cannot claim |
-| [`MAMBA3_KERNEL_WORKPLAN.md`](./MAMBA3_KERNEL_WORKPLAN.md) | File-by-file execution, and the audit of the existing kernel |
-| [`PROJECT_CONCEPT.md`](./PROJECT_CONCEPT.md) | Decision log — what was chosen, what was rejected, why |
-| [`docs/`](./docs/README.md) | The working record: superseded plans, measurement logs, diagnoses |
+| [`docs/project/STATUS.md`](./docs/project/STATUS.md) | Current capabilities, limitations, and highest-value remaining work |
+| [`docs/project/MAMBA3_IMPLEMENTATION_PLAN.md`](./docs/project/MAMBA3_IMPLEMENTATION_PLAN.md) | Current plan: stages, prior art, claims policy |
+| [`docs/project/THREE_PATHS_INTEGRATION.md`](./docs/project/THREE_PATHS_INTEGRATION.md) | The three demonstrations, scoped: what each can and cannot claim |
+| [`docs/project/MAMBA3_KERNEL_WORKPLAN.md`](./docs/project/MAMBA3_KERNEL_WORKPLAN.md) | File-by-file execution, and the audit of the existing kernel |
+| [`docs/project/PROJECT_CONCEPT.md`](./docs/project/PROJECT_CONCEPT.md) | Decision log — what was chosen, what was rejected, why |
+| [`docs/`](./docs/README.md) | Documentation hub: current design, learning path, roadmaps, and history |
+| [`CONTRIBUTING.md`](./CONTRIBUTING.md) | Correctness, safety, benchmarking, and contribution rules |
 | [`apps/mri_diffusion/`](./apps/mri_diffusion/) | SS2D-Mamba diffusion MRI — **demoted, still CI-gated** ([plan](./docs/archive/MRI_DIFFUSION_IMPLEMENTATION_PLAN.md)) |
 
 ## License

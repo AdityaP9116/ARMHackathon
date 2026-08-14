@@ -47,4 +47,4 @@ learned combine — and is the form the 2D goldens check, per direction, before
 any merge.
 
 See the repository root for the kernel, benchmarks, and correctness
-methodology: https://github.com/AdityaP9116/ARMHackathon
+methodology: https://github.com/AdityaP9116/Arm-Scan

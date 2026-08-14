@@ -189,7 +189,7 @@ blocker was never "MIMO is broken on Blackwell":
 | `cicc: not found` | CUDA 13 split `cicc` out of `cuda_nvcc` into **libnvvm** | Install libnvvm too |
 | `unsupported GNU version` | nvcc 13 refuses host gcc > 13; box has gcc 15 | gcc-13 shim |
 
-All four are scripted in **[`tools/setup_cuda_toolchain.sh`](tools/setup_cuda_toolchain.sh)**
+All four are scripted in **[`tools/setup_cuda_toolchain.sh`](../../tools/setup_cuda_toolchain.sh)**
 (no sudo, no full toolkit, ~80 MB). Note the pip wheel `nvidia-cuda-nvcc-cu12` does *not*
 solve this — it ships `ptxas` and headers but not the `nvcc` driver binary.
 

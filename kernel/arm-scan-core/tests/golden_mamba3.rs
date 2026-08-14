@@ -1,6 +1,6 @@
 //! Mamba-3 golden test: the Rust kernel must reproduce ground truth captured
 //! from the **official** `mamba3_siso_combined` Triton kernel
-//! (`tests/golden/mamba3/`, see `MAMBA3_IMPLEMENTATION_PLAN.md` §3).
+//! (`tests/golden/mamba3/`, see `docs/project/MAMBA3_IMPLEMENTATION_PLAN.md` §3).
 //!
 //! # Tolerance — read before changing it
 //!

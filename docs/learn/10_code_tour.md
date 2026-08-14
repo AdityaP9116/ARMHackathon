@@ -117,16 +117,17 @@ concrete: the topology layer is **recurrence-agnostic**, so a new recurrence get
 
 ## Docs — where things live
 
-**Root is judge-facing.**
+**Root is judge-facing; current design documents live in `docs/project/`.**
 
 | File | Purpose |
 |---|---|
 | `README.md` | the pitch and the precise claims |
-| `CLAUDE.md` | working rules and current status |
-| `HANDOFF.md` | where the work stands right now |
-| `MAMBA3_IMPLEMENTATION_PLAN.md` | stages, prior art, claims policy |
-| `THREE_PATHS_INTEGRATION.md` | the three demonstrations, scoped |
-| `MAMBA3_KERNEL_WORKPLAN.md` | file-by-file execution |
+| `RUNNING_THE_KERNEL.md` | complete setup and execution runbook |
+| `CONTRIBUTING.md` | correctness, safety, and benchmarking rules |
+| `docs/project/STATUS.md` | where the work stands right now |
+| `docs/project/MAMBA3_IMPLEMENTATION_PLAN.md` | stages, prior art, claims policy |
+| `docs/project/THREE_PATHS_INTEGRATION.md` | the three demonstrations, scoped |
+| `docs/project/MAMBA3_KERNEL_WORKPLAN.md` | file-by-file execution |
 | `docs/learn/` | **this folder** — teaching material |
 | `docs/archive/` | superseded plans and measurement history — real evidence of how decisions were made |
 
@@ -152,5 +153,5 @@ because parallel output must be **bit-identical** to sequential.
 ## Where to go next
 
 - The claims and the pitch: [`README.md`](../../README.md)
-- Current state and open gaps: [`HANDOFF.md`](../../HANDOFF.md)
+- Current state and open gaps: [`docs/project/STATUS.md`](../project/STATUS.md)
 - The Graviton run: [`bench/GRAVITON_SESSION.md`](../../bench/GRAVITON_SESSION.md)

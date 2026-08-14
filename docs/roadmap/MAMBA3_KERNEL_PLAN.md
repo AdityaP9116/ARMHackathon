@@ -52,7 +52,8 @@ checkpoints, and is the contest entry. There are **no public Mamba-3 checkpoints
 models to patch; migrating the shipped kernel or the app to Mamba-3 today would trade a
 working demo for an empty ecosystem. This plan runs on `feature/mamba3`, additively;
 kickoff gate: submission frozen (or verified slack) + a fresh 30-minute prior-art pass
-("Mamba-3 CPU", "SSD SIMD", llama.cpp PRs) recorded in `PROJECT_CONCEPT.md`.
+("Mamba-3 CPU", "SSD SIMD", llama.cpp PRs) recorded in
+[`../project/PROJECT_CONCEPT.md`](../project/PROJECT_CONCEPT.md).
 
 **Claims (to-our-knowledge, re-verified at kickoff):** first CPU/Arm Mamba-3 kernel; first
 PyTorch-callable SSD-family op on Arm; first 2D/non-causal SSD on CPU. Never "first Mamba

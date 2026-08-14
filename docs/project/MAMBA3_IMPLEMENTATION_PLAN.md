@@ -2,7 +2,7 @@
 
 **Rewritten Aug 6, 2026**, after a prior-art sweep that materially changed the
 plan. Supersedes the previous revision and the Mamba-3 sections of
-[`SUBMISSION_ENDGAME_PLAN.md`](docs/archive/SUBMISSION_ENDGAME_PLAN.md). Every external claim
+[`SUBMISSION_ENDGAME_PLAN.md`](../archive/SUBMISSION_ENDGAME_PLAN.md). Every external claim
 below was verified the same day against the actual repositories and APIs, not
 against summaries — three claims from a research digest failed that check, and
 two pieces of prior art nobody had spotted turned up.
@@ -73,7 +73,7 @@ Checked by fetching the repos and papers, not by search summary.
 
 > **Corrected after a code review of the existing kernel (same day).** Two
 > reuse claims that appeared in earlier revisions of this plan and in
-> `HANDOFF.md` do not survive contact with the code: `parallel.rs` is **not**
+> the archived `HANDOFF_2026-08-11.md` do not survive contact with the code: `parallel.rs` is **not**
 > reusable as-is, and Pass B is **not** structurally unchanged. Details in §14.
 > The *guarantees* still hold (heads are independent; the recurrence equation is
 > the same shape); the concrete functions do not.

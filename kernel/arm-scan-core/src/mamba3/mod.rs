@@ -3,7 +3,8 @@
 //! Semantics match `tests/reference/mamba3_ref.py`, which reproduces the
 //! **official** `mamba3_siso_combined` Triton kernel to 4.47 bf16 ULP across
 //! the ground-truth cases in `tests/golden/mamba3/` (captured from the real
-//! `state-spaces/mamba3-siso-187m` checkpoint — see `MAMBA3_IMPLEMENTATION_PLAN.md`).
+//! `state-spaces/mamba3-siso-187m` checkpoint — see
+//! `docs/project/MAMBA3_IMPLEMENTATION_PLAN.md`).
 //!
 //! # Why this is a separate module and not a flag on `selective_scan`
 //!

@@ -2,8 +2,8 @@
 # One-time setup for a rented GPU box, for TRAINING ONLY.
 #
 # Usage (on the instance):
-#   git clone https://github.com/AdityaP9116/ARMHackathon
-#   cd ARMHackathon && bash tools/setup_gpu.sh
+#   git clone https://github.com/AdityaP9116/Arm-Scan
+#   cd Arm-Scan && bash tools/setup_gpu.sh
 #
 # NOTE: this deliberately does NOT install Rust or build the kernel.
 # Training runs on the pure-torch reference scan, because arm_scan registers

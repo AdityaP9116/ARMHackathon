@@ -1,7 +1,7 @@
 # SS2D_REPOSITIONING_PLAN — double down on vision/diffusion Mamba
 
 **Written Jul 17, 2026.** Follows the prior-art verification recorded in
-[`PROJECT_CONCEPT.md`](../../PROJECT_CONCEPT.md) ("Prior-art verification"). This doc is two things:
+[`PROJECT_CONCEPT.md`](../project/PROJECT_CONCEPT.md) ("Prior-art verification"). This doc is two things:
 (1) the repo-wide list of what to change now that the framing is SS2D/diffusion-first, and
 (2) the kernel optimization plan **specialized to the actual workload** the diffusion app runs —
 grounded in the real shapes from `apps/mri_diffusion/backbone/mamba_ss2d.py` and

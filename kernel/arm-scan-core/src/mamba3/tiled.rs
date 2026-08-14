@@ -45,7 +45,7 @@ use crate::{parallel, Float, Threading};
 /// 8 NEON q-registers' worth, which is the natural unit for the vector port.
 ///
 /// **This is a tunable to be swept, not a derived constant** — see
-/// `MAMBA3_KERNEL_WORKPLAN.md` §M4. Sweep {16, 32, 64} at the production shapes
+/// `docs/project/MAMBA3_KERNEL_WORKPLAN.md` §M4. Sweep {16, 32, 64} at the production shapes
 /// before treating it as settled.
 pub(crate) const TILE: usize = 32;
 

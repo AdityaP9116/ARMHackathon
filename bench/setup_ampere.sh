@@ -3,8 +3,8 @@
 # Graviton, etc. — Ubuntu 22.04/24.04 assumed).
 #
 # Usage (on the instance):
-#   git clone https://github.com/AdityaP9116/ARMHackathon
-#   cd ARMHackathon && bash bench/setup_ampere.sh
+#   git clone https://github.com/AdityaP9116/Arm-Scan
+#   cd Arm-Scan && bash bench/setup_ampere.sh
 #
 # Afterwards run the baseline:   bash bench/run_baseline.sh ampere-a1
 set -euo pipefail

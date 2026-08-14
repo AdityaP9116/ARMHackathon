@@ -166,7 +166,7 @@ def _check_shapes(q, k, v, adt, dt, trap, q_bias, k_bias, cos, sin, D, z):
     if groups != 1:
         raise ValueError(
             f"SISO expects one B/C group, got {groups}. Multi-group and MIMO "
-            "are out of scope — see MAMBA3_IMPLEMENTATION_PLAN.md")
+            "are out of scope — see docs/project/MAMBA3_IMPLEMENTATION_PLAN.md")
     if dqk % 2:
         raise ValueError(f"dqk must be even (RoPE lane pairs), got {dqk}")
     if v.dim() != 4:
@@ -289,7 +289,7 @@ def mamba3_mimo_scan(q, k, v, adt, dt, trap, q_bias, k_bias, psi, zeta, phi,
         if q.shape[3] != 1:
             raise ValueError(
                 f"MIMO expects one B/C group, got {q.shape[3]}. Multi-group is "
-                "out of scope — see MAMBA3_IMPLEMENTATION_PLAN.md")
+                "out of scope — see docs/project/MAMBA3_IMPLEMENTATION_PLAN.md")
         q = q[:, :, :, 0, :]
     if k.dim() == 5:
         k = k[:, :, :, 0, :]
